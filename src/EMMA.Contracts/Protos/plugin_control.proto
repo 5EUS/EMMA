@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package emma.plugins;
+
+option csharp_namespace = "EMMA.Contracts.Plugins";
+
+service PluginControl {
+  rpc GetHealth (HealthRequest) returns (HealthResponse);
+  rpc GetCapabilities (CapabilitiesRequest) returns (CapabilitiesResponse);
+}
+
+message HealthRequest {
+}
+
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+  string message = 3;
+}
+
+message CapabilitiesRequest {
+}
+
+message CapabilitiesResponse {
+  repeated string capabilities = 1;
+}
