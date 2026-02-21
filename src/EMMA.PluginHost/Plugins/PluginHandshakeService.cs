@@ -88,6 +88,8 @@ public sealed class PluginHandshakeService(
             var caps = capabilities.Capabilities.ToArray();
             var budgets = capabilities.Budgets;
             var permissions = capabilities.Permissions;
+            var manifestCaps = manifest.Capabilities;
+            var manifestPermissions = manifest.Permissions;
             var message = string.IsNullOrWhiteSpace(health.Message) ? "Handshake ok" : health.Message;
 
             return new PluginHandshakeStatus(
@@ -96,10 +98,10 @@ public sealed class PluginHandshakeService(
                 health.Version,
                 DateTimeOffset.UtcNow,
                 caps,
-                budgets?.CpuBudgetMs ?? 0,
-                budgets?.MemoryMb ?? 0,
-                permissions?.Domains.ToArray() ?? [],
-                permissions?.Paths.ToArray() ?? []);
+                manifestCaps?.CpuBudgetMs ?? budgets?.CpuBudgetMs ?? 0,
+                manifestCaps?.MemoryMb ?? budgets?.MemoryMb ?? 0,
+                manifestPermissions?.Domains?.ToArray() ?? permissions?.Domains.ToArray() ?? [],
+                manifestPermissions?.Paths?.ToArray() ?? permissions?.Paths.ToArray() ?? []);
         }
         catch (Exception ex)
         {

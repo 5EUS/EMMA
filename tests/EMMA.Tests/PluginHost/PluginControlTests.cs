@@ -1,6 +1,7 @@
 using EMMA.Contracts.Plugins;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 
 namespace EMMA.Tests.PluginHost;
 
@@ -27,7 +28,22 @@ public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task GetCapabilities_ReportsEndpoints()
     {
-        var client = CreateClient();
+        using var factory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                var settings = new Dictionary<string, string?>
+                {
+                    ["PluginHost:HandshakeOnStartup"] = "false",
+                    ["PluginHost:ManifestDirectory"] = "",
+                    ["PluginHost:HandshakeTimeoutSeconds"] = "5"
+                };
+
+                config.AddInMemoryCollection(settings);
+            });
+        });
+
+        var client = CreateClient(factory);
 
         var response = await client.GetCapabilitiesAsync(new CapabilitiesRequest());
 
@@ -43,7 +59,12 @@ public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<Pro
 
     private PluginControl.PluginControlClient CreateClient()
     {
-        var httpClient = _factory.CreateDefaultClient();
+        return CreateClient(_factory);
+    }
+
+    private static PluginControl.PluginControlClient CreateClient(WebApplicationFactory<Program> factory)
+    {
+        var httpClient = factory.CreateDefaultClient();
         httpClient.DefaultRequestVersion = new Version(2, 0);
         httpClient.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
 

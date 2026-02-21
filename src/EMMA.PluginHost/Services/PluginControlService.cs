@@ -1,4 +1,5 @@
 using EMMA.Contracts.Plugins;
+using EMMA.PluginHost.Plugins;
 using Grpc.Core;
 
 namespace EMMA.PluginHost.Services;
@@ -6,8 +7,10 @@ namespace EMMA.PluginHost.Services;
 /// <summary>
 /// gRPC control surface for plugin health and capability discovery.
 /// </summary>
-public sealed class PluginControlService : PluginControl.PluginControlBase
+public sealed class PluginControlService(PluginRegistry registry) : PluginControl.PluginControlBase
 {
+    private readonly PluginRegistry _registry = registry;
+
     /// <summary>
     /// Returns basic health information for the host.
     /// </summary>
@@ -30,11 +33,7 @@ public sealed class PluginControlService : PluginControl.PluginControlBase
     {
         var response = new CapabilitiesResponse
         {
-            Budgets = new CapabilityBudgets
-            {
-                CpuBudgetMs = 0,
-                MemoryMb = 0
-            },
+            Budgets = new CapabilityBudgets(),
             Permissions = new CapabilityPermissions()
         };
         response.Capabilities.AddRange(
@@ -43,6 +42,36 @@ public sealed class PluginControlService : PluginControl.PluginControlBase
             "capabilities"
         ]);
 
+        ApplyManifestDefaults(response);
+
         return Task.FromResult(response);
+    }
+
+    private void ApplyManifestDefaults(CapabilitiesResponse response)
+    {
+        var records = _registry.GetSnapshot();
+        if (records.Count != 1)
+        {
+            return;
+        }
+
+        var manifest = records[0].Manifest;
+        var caps = manifest.Capabilities;
+        if (caps is not null)
+        {
+            response.Budgets.CpuBudgetMs = caps.CpuBudgetMs;
+            response.Budgets.MemoryMb = caps.MemoryMb;
+        }
+
+        var permissions = manifest.Permissions;
+        if (permissions?.Domains is not null)
+        {
+            response.Permissions.Domains.AddRange(permissions.Domains);
+        }
+
+        if (permissions?.Paths is not null)
+        {
+            response.Permissions.Paths.AddRange(permissions.Paths);
+        }
     }
 }

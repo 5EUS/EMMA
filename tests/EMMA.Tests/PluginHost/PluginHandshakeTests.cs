@@ -29,7 +29,7 @@ public sealed class PluginHandshakeTests
 
         var address = GetServerAddress(app);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
-        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }}\n}}\n");
+        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }},\n  \"capabilities\": {{\n    \"cpuBudgetMs\": 300,\n    \"memoryMb\": 256\n  }},\n  \"permissions\": {{\n    \"domains\": [\"example.com\"],\n    \"paths\": [\"/data\"]\n  }}\n}}\n");
 
         var options = Options.Create(new PluginHostOptions
         {
@@ -48,8 +48,8 @@ public sealed class PluginHandshakeTests
         Assert.Single(snapshot);
         Assert.True(snapshot[0].Status.Success);
         Assert.Contains("health", snapshot[0].Status.Capabilities);
-        Assert.Equal(250, snapshot[0].Status.CpuBudgetMs);
-        Assert.Equal(128, snapshot[0].Status.MemoryMb);
+        Assert.Equal(300, snapshot[0].Status.CpuBudgetMs);
+        Assert.Equal(256, snapshot[0].Status.MemoryMb);
         Assert.Contains("example.com", snapshot[0].Status.Domains);
         Assert.Contains("/data", snapshot[0].Status.Paths);
 
@@ -121,8 +121,8 @@ public sealed class PluginHandshakeTests
             };
             response.Capabilities.Add("health");
             response.Capabilities.Add("capabilities");
-            response.Permissions.Domains.Add("example.com");
-            response.Permissions.Paths.Add("/data");
+            response.Permissions.Domains.Add("response.example");
+            response.Permissions.Paths.Add("/response");
             return Task.FromResult(response);
         }
     }
