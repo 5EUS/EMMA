@@ -14,24 +14,24 @@ builder.Services.AddSingleton<PluginRegistry>();
 builder.Services.AddSingleton<PluginManifestLoader>();
 builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
-	var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();
 
-	if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) // TODO RuntimeInformation does not report correctly with iOS and Android
-	{
-		return new WindowsPluginSandboxManager(options, sp.GetRequiredService<ILogger<WindowsPluginSandboxManager>>());
-	}
+    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) // TODO RuntimeInformation does not report correctly with iOS and Android
+    {
+        return new WindowsPluginSandboxManager(options, sp.GetRequiredService<ILogger<WindowsPluginSandboxManager>>());
+    }
 
-	if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-	{
-		return new LinuxPluginSandboxManager(options, sp.GetRequiredService<ILogger<LinuxPluginSandboxManager>>());
-	}
+    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+    {
+        return new LinuxPluginSandboxManager(options, sp.GetRequiredService<ILogger<LinuxPluginSandboxManager>>());
+    }
 
-	if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-	{
-		return new MacOsPluginSandboxManager(options, sp.GetRequiredService<ILogger<MacOsPluginSandboxManager>>());
-	}
+    if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+    {
+        return new MacOsPluginSandboxManager(options, sp.GetRequiredService<ILogger<MacOsPluginSandboxManager>>());
+    }
 
-	return new NoOpPluginSandboxManager(options, sp.GetRequiredService<ILogger<NoOpPluginSandboxManager>>());
+    return new NoOpPluginSandboxManager(options, sp.GetRequiredService<ILogger<NoOpPluginSandboxManager>>());
 });
 builder.Services.AddSingleton<PluginHandshakeService>();
 builder.Services.AddHostedService<PluginHandshakeHostedService>();
@@ -42,8 +42,8 @@ app.MapGrpcService<PluginControlService>();
 app.MapGet("/plugins", (PluginRegistry registry) => registry.GetSnapshot());
 app.MapPost("/plugins/refresh", async (PluginHandshakeService handshake, PluginRegistry registry, CancellationToken cancellationToken) =>
 {
-	await handshake.RescanAsync(cancellationToken);
-	return Results.Ok(registry.GetSnapshot());
+    await handshake.RescanAsync(cancellationToken);
+    return Results.Ok(registry.GetSnapshot());
 });
 app.MapProbeEndpoints();
 app.MapGet("/", () => "EMMA plugin host is running.");
