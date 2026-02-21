@@ -13,4 +13,8 @@ public sealed class PluginHostOptions
     public int BudgetWatchIntervalSeconds { get; init; } = 30;
     public int MaxCpuBudgetMs { get; init; } = 0;
     public int MaxMemoryMb { get; init; } = 0;
+    public int StartupTimeoutSeconds { get; init; } = 5;
+    public int StartupProbeIntervalMs { get; init; } = 200;
+    public int TimeoutBackoffSeconds { get; init; } = 5;
+    public int MaxTimeoutRetries { get; init; } = 3;
 }

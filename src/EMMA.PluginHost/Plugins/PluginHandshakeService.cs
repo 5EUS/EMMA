@@ -14,12 +14,14 @@ public sealed class PluginHandshakeService(
     PluginManifestLoader loader,
     PluginRegistry registry,
     IPluginSandboxManager sandboxManager,
+    PluginProcessManager processManager,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
     private readonly PluginManifestLoader _loader = loader;
     private readonly PluginRegistry _registry = registry;
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
+    private readonly PluginProcessManager _processManager = processManager;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -38,8 +40,14 @@ public sealed class PluginHandshakeService(
         foreach (var manifest in manifests)
         {
             await _sandboxManager.PrepareAsync(manifest, cancellationToken);
-            var status = await HandshakeAsync(manifest, cancellationToken);
-            _registry.Upsert(new PluginRecord(manifest, status));
+            var runtime = await _processManager.EnsureStartedAsync(
+                manifest,
+                _registry.GetRuntime(manifest),
+                cancellationToken);
+            _registry.UpdateRuntime(manifest, runtime);
+
+            var status = await HandshakeAsync(manifest, runtime, cancellationToken);
+            _registry.Upsert(manifest, status, runtime);
         }
     }
 
@@ -52,12 +60,21 @@ public sealed class PluginHandshakeService(
         foreach (var manifest in manifests)
         {
             await _sandboxManager.PrepareAsync(manifest, cancellationToken);
-            var status = await HandshakeAsync(manifest, cancellationToken);
-            _registry.Upsert(new PluginRecord(manifest, status));
+            var runtime = await _processManager.EnsureStartedAsync(
+                manifest,
+                _registry.GetRuntime(manifest),
+                cancellationToken);
+            _registry.UpdateRuntime(manifest, runtime);
+
+            var status = await HandshakeAsync(manifest, runtime, cancellationToken);
+            _registry.Upsert(manifest, status, runtime);
         }
     }
 
-    private async Task<PluginHandshakeStatus> HandshakeAsync(PluginManifest manifest, CancellationToken cancellationToken)
+    private async Task<PluginHandshakeStatus> HandshakeAsync(
+        PluginManifest manifest,
+        PluginRuntimeStatus runtime,
+        CancellationToken cancellationToken)
     {
         if (manifest.Entry is null)
         {
@@ -108,6 +125,16 @@ public sealed class PluginHandshakeService(
                 manifestPermissions?.Domains?.ToArray() ?? permissions?.Domains.ToArray() ?? [],
                 manifestPermissions?.Paths?.ToArray() ?? permissions?.Paths.ToArray() ?? []);
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            await HandleTimeoutAsync(manifest, runtime, cancellationToken);
+            return Failed("Handshake timed out.");
+        }
+        catch (Grpc.Core.RpcException ex) when (ex.StatusCode == Grpc.Core.StatusCode.DeadlineExceeded)
+        {
+            await HandleTimeoutAsync(manifest, runtime, cancellationToken);
+            return Failed("Handshake timed out.");
+        }
         catch (Exception ex)
         {
             if (_logger.IsEnabled(LogLevel.Warning))
@@ -116,6 +143,16 @@ public sealed class PluginHandshakeService(
             }
             return Failed(ex.Message);
         }
+    }
+
+    private async Task HandleTimeoutAsync(
+        PluginManifest manifest,
+        PluginRuntimeStatus runtime,
+        CancellationToken cancellationToken)
+    {
+        await _processManager.StopAsync(manifest.Id, cancellationToken);
+        var updated = _processManager.RecordTimeout(runtime);
+        _registry.UpdateRuntime(manifest, updated);
     }
 
     private static HttpClient CreateHttpClient(Uri address)

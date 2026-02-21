@@ -31,6 +31,10 @@ The defaults live in `appsettings.json` under the `PluginHost` section:
 - `BudgetWatchIntervalSeconds`: polling interval for budget warnings.
 - `MaxCpuBudgetMs`: warns when a plugin budget exceeds this (0 disables).
 - `MaxMemoryMb`: warns when a plugin budget exceeds this (0 disables).
+- `StartupTimeoutSeconds`: time to wait for a plugin endpoint to start.
+- `StartupProbeIntervalMs`: port probe interval during startup.
+- `TimeoutBackoffSeconds`: backoff between timeout retries.
+- `MaxTimeoutRetries`: retries before a plugin is quarantined.
 
 ## Example Manifest
 

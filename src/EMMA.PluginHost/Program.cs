@@ -12,6 +12,7 @@ builder.Services.AddGrpc();
 builder.Services.Configure<PluginHostOptions>(builder.Configuration.GetSection("PluginHost"));
 builder.Services.AddSingleton<PluginRegistry>();
 builder.Services.AddSingleton<PluginManifestLoader>();
+builder.Services.AddSingleton<PluginProcessManager>();
 builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();
@@ -36,6 +37,7 @@ builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 builder.Services.AddSingleton<PluginHandshakeService>();
 builder.Services.AddHostedService<PluginHandshakeHostedService>();
 builder.Services.AddHostedService<PluginBudgetWatcher>();
+builder.Services.AddHostedService<PluginLifecycleHostedService>();
 
 var app = builder.Build();
 
