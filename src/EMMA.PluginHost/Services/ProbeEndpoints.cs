@@ -1,6 +1,8 @@
 using EMMA.Contracts.Plugins;
+using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using Grpc.Net.Client;
+using Microsoft.Extensions.Options;
 using System.Net;
 
 namespace EMMA.PluginHost.Services;
@@ -17,6 +19,7 @@ public static class ProbeEndpoints
             string? query,
             string? pluginId,
             PluginRegistry registry,
+            IOptions<PluginHostOptions> options,
             CancellationToken cancellationToken) =>
         {
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
@@ -27,6 +30,7 @@ public static class ProbeEndpoints
 
             try
             {
+                using var cts = CreateProbeTimeout(options, cancellationToken);
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -37,7 +41,7 @@ public static class ProbeEndpoints
                 var response = await client.SearchAsync(new SearchRequest
                 {
                     Query = query ?? string.Empty
-                }, cancellationToken: cancellationToken);
+                }, cancellationToken: cts.Token);
 
                 var results = response.Results.Select(result => new
                 {
@@ -68,6 +72,7 @@ public static class ProbeEndpoints
             int? index,
             string? pluginId,
             PluginRegistry registry,
+            IOptions<PluginHostOptions> options,
             CancellationToken cancellationToken) =>
         {
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
@@ -78,6 +83,7 @@ public static class ProbeEndpoints
 
             try
             {
+                using var cts = CreateProbeTimeout(options, cancellationToken);
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -88,7 +94,7 @@ public static class ProbeEndpoints
                 var searchResponse = await searchClient.SearchAsync(new SearchRequest
                 {
                     Query = query ?? string.Empty
-                }, cancellationToken: cancellationToken);
+                }, cancellationToken: cts.Token);
 
                 var results = searchResponse.Results.Select(result => new
                 {
@@ -117,7 +123,7 @@ public static class ProbeEndpoints
                 var chapters = await pageClient.GetChaptersAsync(new ChaptersRequest
                 {
                     MediaId = selected.Id
-                }, cancellationToken: cancellationToken);
+                }, cancellationToken: cts.Token);
 
                 var chapterList = chapters.Chapters.Select(chapter => new
                 {
@@ -139,7 +145,7 @@ public static class ProbeEndpoints
                         MediaId = selected.Id,
                         ChapterId = selectedChapter.Id,
                         Index = index ?? 0
-                    }, cancellationToken: cancellationToken);
+                    }, cancellationToken: cts.Token);
 
                     page = pageResponse.Page;
                 }
@@ -182,6 +188,7 @@ public static class ProbeEndpoints
             int? index,
             string? pluginId,
             PluginRegistry registry,
+            IOptions<PluginHostOptions> options,
             CancellationToken cancellationToken) =>
         {
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
@@ -199,6 +206,7 @@ public static class ProbeEndpoints
 
             try
             {
+                using var cts = CreateProbeTimeout(options, cancellationToken);
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -209,7 +217,7 @@ public static class ProbeEndpoints
                 var chapters = await client.GetChaptersAsync(new ChaptersRequest
                 {
                     MediaId = mediaId
-                }, cancellationToken: cancellationToken);
+                }, cancellationToken: cts.Token);
 
                 MediaPage? page = null;
                 if (!string.IsNullOrWhiteSpace(chapterId))
@@ -219,7 +227,7 @@ public static class ProbeEndpoints
                         MediaId = mediaId,
                         ChapterId = chapterId,
                         Index = pageIndex
-                    }, cancellationToken: cancellationToken);
+                    }, cancellationToken: cts.Token);
 
                     page = pageResponse.Page;
                 }
@@ -260,6 +268,7 @@ public static class ProbeEndpoints
             int? sequence,
             string? pluginId,
             PluginRegistry registry,
+            IOptions<PluginHostOptions> options,
             CancellationToken cancellationToken) =>
         {
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
@@ -277,6 +286,7 @@ public static class ProbeEndpoints
 
             try
             {
+                using var cts = CreateProbeTimeout(options, cancellationToken);
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -287,7 +297,7 @@ public static class ProbeEndpoints
                 var streams = await client.GetStreamsAsync(new StreamRequest
                 {
                     MediaId = mediaId
-                }, cancellationToken: cancellationToken);
+                }, cancellationToken: cts.Token);
 
                 SegmentResponse? segment = null;
                 if (!string.IsNullOrWhiteSpace(streamId))
@@ -297,7 +307,7 @@ public static class ProbeEndpoints
                         MediaId = mediaId,
                         StreamId = streamId,
                         Sequence = segmentSequence
-                    }, cancellationToken: cancellationToken);
+                    }, cancellationToken: cts.Token);
                 }
 
                 var streamResults = streams.Streams.Select(stream => new
@@ -408,5 +418,15 @@ public static class ProbeEndpoints
         return ex is Grpc.Core.RpcException rpcEx
             ? Results.Problem($"gRPC call failed: {rpcEx.Status.Detail}")
             : Results.Problem($"Probe failed: {ex.Message}");
+    }
+
+    private static CancellationTokenSource CreateProbeTimeout(
+        IOptions<PluginHostOptions> options,
+        CancellationToken cancellationToken)
+    {
+        var timeoutSeconds = Math.Max(1, options.Value.ProbeTimeoutSeconds);
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        return cts;
     }
 }

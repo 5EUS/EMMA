@@ -12,6 +12,83 @@ public static class PluginHostEndpoints
     {
         app.MapGet("/plugins", (PluginRegistry registry) => registry.GetSnapshot());
 
+        app.MapPost("/plugins/start", async (
+            string? pluginId,
+            bool? reset,
+            PluginManifestLoader loader,
+            PluginProcessManager processManager,
+            PluginHandshakeService handshake,
+            PluginRegistry registry,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(pluginId))
+            {
+                return Results.BadRequest(new { message = "pluginId is required." });
+            }
+
+            var manifests = await loader.LoadManifestsAsync(cancellationToken);
+            var manifest = manifests.FirstOrDefault(item =>
+                string.Equals(item.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+            if (manifest is null)
+            {
+                return Results.NotFound(new { message = "Plugin manifest not found." });
+            }
+
+            var currentRuntime = registry.GetRuntime(manifest);
+            if (currentRuntime.State == PluginRuntimeState.Quarantined && reset != true)
+            {
+                return Results.Conflict(new { message = "Plugin is quarantined. Pass reset=true to override." });
+            }
+
+            if (reset == true)
+            {
+                currentRuntime = PluginRuntimeStatus.Unknown();
+                registry.UpdateRuntime(manifest, currentRuntime);
+            }
+
+            var runtime = await processManager.EnsureStartedAsync(manifest, currentRuntime, cancellationToken);
+            registry.UpdateRuntime(manifest, runtime);
+            var status = await handshake.HandshakeSingleAsync(manifest, cancellationToken);
+            registry.Upsert(manifest, status, runtime);
+
+            return Results.Ok(new
+            {
+                manifest.Id,
+                RuntimeState = runtime.State.ToString().ToLowerInvariant(),
+                runtime.LastErrorCode,
+                runtime.LastErrorMessage,
+                status.Message
+            });
+        });
+
+        app.MapPost("/plugins/stop", async (
+            string? pluginId,
+            PluginManifestLoader loader,
+            PluginProcessManager processManager,
+            PluginRegistry registry,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(pluginId))
+            {
+                return Results.BadRequest(new { message = "pluginId is required." });
+            }
+
+            var manifests = await loader.LoadManifestsAsync(cancellationToken);
+            var manifest = manifests.FirstOrDefault(item =>
+                string.Equals(item.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+            if (manifest is null)
+            {
+                return Results.NotFound(new { message = "Plugin manifest not found." });
+            }
+
+            await processManager.StopAsync(pluginId, cancellationToken);
+            registry.UpdateRuntime(manifest, PluginRuntimeStatus.Stopped());
+
+            return Results.Ok(new { manifest.Id, State = "stopped" });
+        });
+
         app.MapPost("/plugins/refresh", async (
             PluginHandshakeService handshake,
             PluginRegistry registry,
@@ -19,6 +96,25 @@ public static class PluginHostEndpoints
         {
             await handshake.RescanAsync(cancellationToken);
             return Results.Ok(registry.GetSnapshot());
+        });
+
+        app.MapGet("/plugins/logs", (
+            string? pluginId,
+            int? take,
+            PluginProcessManager processManager) =>
+        {
+            if (string.IsNullOrWhiteSpace(pluginId))
+            {
+                return Results.BadRequest(new { message = "pluginId is required." });
+            }
+
+            var lines = processManager.GetLogs(pluginId, take);
+            if (lines.Count == 0)
+            {
+                return Results.NotFound(new { message = "No logs recorded for plugin." });
+            }
+
+            return Results.Ok(new { PluginId = pluginId, Lines = lines });
         });
 
         app.MapGet("/plugins/status", (PluginRegistry registry) =>
@@ -33,6 +129,9 @@ public static class PluginHostEndpoints
                 RuntimeState = record.Runtime.State.ToString().ToLowerInvariant(),
                 record.Runtime.LastErrorCode,
                 record.Runtime.LastErrorMessage,
+                record.Runtime.RetryCount,
+                record.Runtime.TimeoutCount,
+                record.Runtime.NextRetryAt,
                 record.Status.Message,
                 LastHandshake = record.Status.Timestamp,
                 record.Status.CpuBudgetMs,

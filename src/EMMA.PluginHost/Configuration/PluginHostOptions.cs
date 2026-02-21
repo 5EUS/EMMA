@@ -17,4 +17,6 @@ public sealed class PluginHostOptions
     public int StartupProbeIntervalMs { get; init; } = 200;
     public int TimeoutBackoffSeconds { get; init; } = 5;
     public int MaxTimeoutRetries { get; init; } = 3;
+    public int ProbeTimeoutSeconds { get; init; } = 5;
+    public int PluginLogMaxLines { get; init; } = 200;
 }

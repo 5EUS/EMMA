@@ -13,10 +13,48 @@ namespace EMMA.PluginHost.Plugins;
 public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, ILogger<PluginProcessManager> logger)
 {
     private sealed record ProcessHandle(Process Process, string StartupCommand, DateTimeOffset StartedAt);
+    private sealed class LogBuffer(int maxLines)
+    {
+        private readonly int _maxLines = Math.Max(10, maxLines);
+        private readonly Queue<string> _lines = new();
+        private readonly Lock _lock = new();
+
+        public void Append(string line)
+        {
+            lock (_lock)
+            {
+                _lines.Enqueue(line);
+                while (_lines.Count > _maxLines)
+                {
+                    _lines.Dequeue();
+                }
+            }
+        }
+
+        public IReadOnlyList<string> Snapshot(int? take)
+        {
+            lock (_lock)
+            {
+                if (_lines.Count == 0)
+                {
+                    return [];
+                }
+
+                var list = _lines.ToList();
+                if (take is null || take <= 0 || take >= list.Count)
+                {
+                    return list;
+                }
+
+                return list.Skip(Math.Max(0, list.Count - take.Value)).ToList();
+            }
+        }
+    }
 
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginProcessManager> _logger = logger;
     private readonly Dictionary<string, ProcessHandle> _processes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, LogBuffer> _logs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _lock = new();
 
     public async Task<PluginRuntimeStatus> EnsureStartedAsync(
@@ -74,6 +112,7 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         }
 
         AddProcess(manifest.Id, process, manifest.Entry.Startup);
+        AttachLogCapture(manifest.Id, process);
 
         if (string.IsNullOrWhiteSpace(manifest.Entry.Endpoint)
             || !Uri.TryCreate(manifest.Entry.Endpoint, UriKind.Absolute, out var address))
@@ -174,6 +213,7 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         lock (_lock)
         {
             _processes[pluginId] = new ProcessHandle(process, command, DateTimeOffset.UtcNow);
+            _logs.TryAdd(pluginId, new LogBuffer(_options.PluginLogMaxLines));
         }
     }
 
@@ -182,6 +222,19 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         lock (_lock)
         {
             _processes.Remove(pluginId);
+        }
+    }
+
+    public IReadOnlyList<string> GetLogs(string pluginId, int? take)
+    {
+        lock (_lock)
+        {
+            if (!_logs.TryGetValue(pluginId, out var buffer))
+            {
+                return [];
+            }
+
+            return buffer.Snapshot(take);
         }
     }
 
@@ -205,7 +258,9 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
             {
                 FileName = fileName,
                 Arguments = arguments,
-                UseShellExecute = false
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
             };
         }
 
@@ -216,7 +271,9 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
             {
                 FileName = "cmd.exe",
                 Arguments = $"/c {startup}",
-                UseShellExecute = false
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
             };
         }
 
@@ -224,8 +281,36 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         {
             FileName = "/bin/sh",
             Arguments = $"-c {startup}",
-            UseShellExecute = false
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
         };
+    }
+
+    private void AttachLogCapture(string pluginId, Process process)
+    {
+        if (!_logs.TryGetValue(pluginId, out var buffer))
+        {
+            return;
+        }
+
+        process.OutputDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Data))
+            {
+                buffer.Append(args.Data);
+            }
+        };
+        process.ErrorDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Data))
+            {
+                buffer.Append(args.Data);
+            }
+        };
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
     }
 
     private static bool TryParseCommandLine(

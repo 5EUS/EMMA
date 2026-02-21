@@ -13,6 +13,9 @@ plugins and performs a lightweight startup handshake against plugin endpoints.
 
 - gRPC: `PluginControl` (health + capabilities).
 - HTTP: `GET /plugins` returns the current manifest/handshake snapshot.
+- HTTP: `POST /plugins/start?pluginId=demo&reset=true` starts a managed plugin.
+- HTTP: `POST /plugins/stop?pluginId=demo` stops a managed plugin.
+- HTTP: `GET /plugins/logs?pluginId=demo&take=100` returns recent process logs.
 - HTTP: `GET /plugins/status` returns a summarized lifecycle snapshot.
 - HTTP: `GET /probe/search?query=demo&pluginId=demo` forwards a search to a plugin.
 - HTTP: `GET /probe/pages?mediaId=demo-1&chapterId=ch-1&index=0&pluginId=demo` fetches chapters and a page.
@@ -35,6 +38,8 @@ The defaults live in `appsettings.json` under the `PluginHost` section:
 - `StartupProbeIntervalMs`: port probe interval during startup.
 - `TimeoutBackoffSeconds`: backoff between timeout retries.
 - `MaxTimeoutRetries`: retries before a plugin is quarantined.
+- `ProbeTimeoutSeconds`: max time for probe gRPC calls.
+- `PluginLogMaxLines`: number of log lines retained per plugin.
 
 ## Example Manifest
 

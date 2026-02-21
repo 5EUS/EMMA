@@ -9,6 +9,7 @@ public sealed record PluginRuntimeStatus(
     string? LastErrorMessage,
     DateTimeOffset Timestamp,
     int RetryCount,
+    int TimeoutCount,
     DateTimeOffset? NextRetryAt,
     int? ExitCode)
 {
@@ -17,6 +18,7 @@ public sealed record PluginRuntimeStatus(
         null,
         null,
         DateTimeOffset.UtcNow,
+        0,
         0,
         null,
         null);
@@ -27,6 +29,7 @@ public sealed record PluginRuntimeStatus(
         null,
         DateTimeOffset.UtcNow,
         0,
+        0,
         null,
         null);
 
@@ -35,6 +38,7 @@ public sealed record PluginRuntimeStatus(
         null,
         null,
         DateTimeOffset.UtcNow,
+        0,
         0,
         null,
         null);
@@ -45,6 +49,7 @@ public sealed record PluginRuntimeStatus(
         null,
         DateTimeOffset.UtcNow,
         0,
+        0,
         null,
         null);
 
@@ -54,6 +59,7 @@ public sealed record PluginRuntimeStatus(
         null,
         DateTimeOffset.UtcNow,
         0,
+        0,
         null,
         null);
 
@@ -62,6 +68,7 @@ public sealed record PluginRuntimeStatus(
         code,
         message,
         DateTimeOffset.UtcNow,
+        0,
         0,
         null,
         exitCode);
@@ -92,6 +99,7 @@ public sealed record PluginRuntimeStatus(
             LastErrorMessage = message,
             Timestamp = DateTimeOffset.UtcNow,
             RetryCount = retryCount,
+            TimeoutCount = TimeoutCount + 1,
             NextRetryAt = nextRetryAt
         };
 

@@ -57,6 +57,18 @@ public sealed class PluginHandshakeService(
     public async Task RescanAsync(CancellationToken cancellationToken)
     {
         var manifests = await _loader.LoadManifestsAsync(cancellationToken);
+        var manifestIds = manifests.Select(manifest => manifest.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var snapshot = _registry.GetSnapshot();
+        foreach (var record in snapshot)
+        {
+            if (!manifestIds.Contains(record.Manifest.Id))
+            {
+                await _processManager.StopAsync(record.Manifest.Id, cancellationToken);
+                _registry.UpdateRuntime(record.Manifest, PluginRuntimeStatus.Stopped());
+            }
+        }
+
         foreach (var manifest in manifests)
         {
             await _sandboxManager.PrepareAsync(manifest, cancellationToken);
@@ -71,11 +83,26 @@ public sealed class PluginHandshakeService(
         }
     }
 
+    public async Task<PluginHandshakeStatus> HandshakeSingleAsync(
+        PluginManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var runtime = _registry.GetRuntime(manifest);
+        var status = await HandshakeAsync(manifest, runtime, cancellationToken);
+        _registry.Upsert(manifest, status, runtime);
+        return status;
+    }
+
     private async Task<PluginHandshakeStatus> HandshakeAsync(
         PluginManifest manifest,
         PluginRuntimeStatus runtime,
         CancellationToken cancellationToken)
     {
+        if (runtime.State is PluginRuntimeState.Quarantined or PluginRuntimeState.Disabled)
+        {
+            return Failed($"Plugin is {runtime.State.ToString().ToLowerInvariant()}.");
+        }
+
         if (manifest.Entry is null)
         {
             return Failed("Missing entry section.");
