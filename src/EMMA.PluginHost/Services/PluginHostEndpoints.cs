@@ -62,6 +62,30 @@ public static class PluginHostEndpoints
             });
         });
 
+        app.MapPost("/plugins/reset", async (
+            string? pluginId,
+            PluginManifestLoader loader,
+            PluginRegistry registry,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(pluginId))
+            {
+                return Results.BadRequest(new { message = "pluginId is required." });
+            }
+
+            var manifests = await loader.LoadManifestsAsync(cancellationToken);
+            var manifest = manifests.FirstOrDefault(item =>
+                string.Equals(item.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+            if (manifest is null)
+            {
+                return Results.NotFound(new { message = "Plugin manifest not found." });
+            }
+
+            registry.UpdateRuntime(manifest, PluginRuntimeStatus.Unknown());
+            return Results.Ok(new { manifest.Id, State = "reset" });
+        });
+
         app.MapPost("/plugins/stop", async (
             string? pluginId,
             PluginManifestLoader loader,
@@ -136,6 +160,28 @@ public static class PluginHostEndpoints
                 LastHandshake = record.Status.Timestamp,
                 record.Status.CpuBudgetMs,
                 record.Status.MemoryMb
+            });
+
+            return Results.Ok(results);
+        });
+
+        app.MapGet("/plugins/summary", (PluginRegistry registry) =>
+        {
+            var snapshot = registry.GetSnapshot();
+            var results = snapshot.Select(record => new
+            {
+                record.Manifest.Id,
+                record.Manifest.Name,
+                record.Manifest.Version,
+                Health = record.Status.Success ? "healthy" : "unhealthy",
+                Runtime = record.Runtime.State.ToString().ToLowerInvariant(),
+                record.Status.Message,
+                record.Runtime.LastErrorCode,
+                record.Runtime.LastErrorMessage,
+                record.Runtime.TimeoutCount,
+                record.Runtime.RetryCount,
+                record.Runtime.NextRetryAt,
+                LastHandshake = record.Status.Timestamp
             });
 
             return Results.Ok(results);

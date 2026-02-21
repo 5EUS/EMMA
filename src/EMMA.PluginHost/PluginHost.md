@@ -15,8 +15,10 @@ plugins and performs a lightweight startup handshake against plugin endpoints.
 - HTTP: `GET /plugins` returns the current manifest/handshake snapshot.
 - HTTP: `POST /plugins/start?pluginId=demo&reset=true` starts a managed plugin.
 - HTTP: `POST /plugins/stop?pluginId=demo` stops a managed plugin.
+- HTTP: `POST /plugins/reset?pluginId=demo` clears quarantine/runtime state.
 - HTTP: `GET /plugins/logs?pluginId=demo&take=100` returns recent process logs.
 - HTTP: `GET /plugins/status` returns a summarized lifecycle snapshot.
+- HTTP: `GET /plugins/summary` returns combined handshake/runtime state for dashboards.
 - HTTP: `GET /probe/search?query=demo&pluginId=demo` forwards a search to a plugin.
 - HTTP: `GET /probe/pages?mediaId=demo-1&chapterId=ch-1&index=0&pluginId=demo` fetches chapters and a page.
 - HTTP: `GET /probe/video?mediaId=demo-video-1&streamId=stream-1&sequence=0&pluginId=demo` fetches streams and a segment.
