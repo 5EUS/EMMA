@@ -33,6 +33,12 @@ public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<Pro
 
         Assert.Contains("health", response.Capabilities);
         Assert.Contains("capabilities", response.Capabilities);
+        Assert.NotNull(response.Budgets);
+        Assert.Equal(0, response.Budgets.CpuBudgetMs);
+        Assert.Equal(0, response.Budgets.MemoryMb);
+        Assert.NotNull(response.Permissions);
+        Assert.Empty(response.Permissions.Domains);
+        Assert.Empty(response.Permissions.Paths);
     }
 
     private PluginControl.PluginControlClient CreateClient()

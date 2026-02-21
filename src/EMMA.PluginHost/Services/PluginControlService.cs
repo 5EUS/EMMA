@@ -28,12 +28,20 @@ public sealed class PluginControlService : PluginControl.PluginControlBase
     /// </summary>
     public override Task<CapabilitiesResponse> GetCapabilities(CapabilitiesRequest request, ServerCallContext context)
     {
-        var response = new CapabilitiesResponse();
-        response.Capabilities.AddRange(new[]
+        var response = new CapabilitiesResponse
         {
+            Budgets = new CapabilityBudgets
+            {
+                CpuBudgetMs = 0,
+                MemoryMb = 0
+            },
+            Permissions = new CapabilityPermissions()
+        };
+        response.Capabilities.AddRange(
+        [
             "health",
             "capabilities"
-        });
+        ]);
 
         return Task.FromResult(response);
     }

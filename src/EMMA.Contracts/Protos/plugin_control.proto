@@ -23,4 +23,16 @@ message CapabilitiesRequest {
 
 message CapabilitiesResponse {
   repeated string capabilities = 1;
+  CapabilityBudgets budgets = 2;
+  CapabilityPermissions permissions = 3;
+}
+
+message CapabilityBudgets {
+  int32 cpu_budget_ms = 1;
+  int32 memory_mb = 2;
+}
+
+message CapabilityPermissions {
+  repeated string domains = 1;
+  repeated string paths = 2;
 }

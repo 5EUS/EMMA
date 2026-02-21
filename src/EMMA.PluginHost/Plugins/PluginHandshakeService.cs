@@ -39,6 +39,19 @@ public sealed class PluginHandshakeService(
         }
     }
 
+    /// <summary>
+    /// Reloads manifests and performs a handshake regardless of startup settings.
+    /// </summary>
+    public async Task RescanAsync(CancellationToken cancellationToken)
+    {
+        var manifests = await _loader.LoadManifestsAsync(cancellationToken);
+        foreach (var manifest in manifests)
+        {
+            var status = await HandshakeAsync(manifest, cancellationToken);
+            _registry.Upsert(new PluginRecord(manifest, status));
+        }
+    }
+
     private async Task<PluginHandshakeStatus> HandshakeAsync(PluginManifest manifest, CancellationToken cancellationToken)
     {
         if (manifest.Entry is null)
@@ -73,9 +86,20 @@ public sealed class PluginHandshakeService(
             var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest(), cancellationToken: cts.Token);
 
             var caps = capabilities.Capabilities.ToArray();
+            var budgets = capabilities.Budgets;
+            var permissions = capabilities.Permissions;
             var message = string.IsNullOrWhiteSpace(health.Message) ? "Handshake ok" : health.Message;
 
-            return new PluginHandshakeStatus(true, message, health.Version, DateTimeOffset.UtcNow, caps);
+            return new PluginHandshakeStatus(
+                true,
+                message,
+                health.Version,
+                DateTimeOffset.UtcNow,
+                caps,
+                budgets?.CpuBudgetMs ?? 0,
+                budgets?.MemoryMb ?? 0,
+                permissions?.Domains.ToArray() ?? [],
+                permissions?.Paths.ToArray() ?? []);
         }
         catch (Exception ex)
         {
@@ -106,6 +130,6 @@ public sealed class PluginHandshakeService(
 
     private static PluginHandshakeStatus Failed(string message)
     {
-        return new PluginHandshakeStatus(false, message, null, DateTimeOffset.UtcNow, []);
+        return new PluginHandshakeStatus(false, message, null, DateTimeOffset.UtcNow, [], 0, 0, [], []);
     }
 }

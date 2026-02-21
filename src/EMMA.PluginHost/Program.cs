@@ -17,6 +17,11 @@ var app = builder.Build();
 
 app.MapGrpcService<PluginControlService>();
 app.MapGet("/plugins", (PluginRegistry registry) => registry.GetSnapshot());
+app.MapPost("/plugins/refresh", async (PluginHandshakeService handshake, PluginRegistry registry, CancellationToken cancellationToken) =>
+{
+	await handshake.RescanAsync(cancellationToken);
+	return Results.Ok(registry.GetSnapshot());
+});
 app.MapGet("/", () => "EMMA plugin host is running.");
 
 app.Run();

@@ -8,7 +8,11 @@ public sealed record PluginHandshakeStatus(
     string Message,
     string? Version,
     DateTimeOffset Timestamp,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    int CpuBudgetMs,
+    int MemoryMb,
+    IReadOnlyList<string> Domains,
+    IReadOnlyList<string> Paths);
 
 /// <summary>
 /// Represents a plugin manifest with its last handshake result.
