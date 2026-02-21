@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package emma.plugins;
+
+option csharp_namespace = "EMMA.Contracts.Plugins";
+
+service SearchProvider {
+  rpc Search (SearchRequest) returns (SearchResponse);
+}
+
+message SearchRequest {
+  string query = 1;
+}
+
+message SearchResponse {
+  repeated MediaSummary results = 1;
+}
+
+message MediaSummary {
+  string id = 1;
+  string source = 2;
+  string title = 3;
+  string media_type = 4;
+}

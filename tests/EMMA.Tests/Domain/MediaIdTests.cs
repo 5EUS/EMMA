@@ -1,5 +1,4 @@
 using EMMA.Domain;
-using Xunit;
 
 namespace EMMA.Tests.Domain;
 

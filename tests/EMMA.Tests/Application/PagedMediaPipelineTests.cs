@@ -1,7 +1,6 @@
 using EMMA.Application.Pipelines;
 using EMMA.Application.Ports;
 using EMMA.Domain;
-using Xunit;
 
 namespace EMMA.Tests.Application;
 

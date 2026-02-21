@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package emma.plugins;
+
+option csharp_namespace = "EMMA.Contracts.Plugins";
+
+service VideoProvider {
+  rpc GetStreams (StreamRequest) returns (StreamResponse);
+  rpc GetSegment (SegmentRequest) returns (SegmentResponse);
+}
+
+message StreamRequest {
+  string media_id = 1;
+}
+
+message StreamResponse {
+  repeated StreamInfo streams = 1;
+}
+
+message SegmentRequest {
+  string media_id = 1;
+  string stream_id = 2;
+  int32 sequence = 3;
+}
+
+message SegmentResponse {
+  bytes payload = 1;
+  string content_type = 2;
+}
+
+message StreamInfo {
+  string id = 1;
+  string label = 2;
+  string playlist_uri = 3;
+}

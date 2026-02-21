@@ -19,3 +19,12 @@
 
 - Pipeline caching is intentionally small and in-memory only.
 - Request contracts are placeholders and will grow with IPC.
+
+## Status
+
+Completed on 2026-02-20.
+
+Validation summary:
+- CLI smoke flow executed and outputs verified for search, chapters, and page URI.
+- Policy denial behavior confirmed via tests.
+- Native AOT publish succeeded for the CLI.

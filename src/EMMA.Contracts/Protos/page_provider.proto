@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package emma.plugins;
+
+option csharp_namespace = "EMMA.Contracts.Plugins";
+
+service PageProvider {
+  rpc GetChapters (ChaptersRequest) returns (ChaptersResponse);
+  rpc GetPage (PageRequest) returns (PageResponse);
+}
+
+message ChaptersRequest {
+  string media_id = 1;
+}
+
+message ChaptersResponse {
+  repeated MediaChapter chapters = 1;
+}
+
+message PageRequest {
+  string media_id = 1;
+  string chapter_id = 2;
+  int32 index = 3;
+}
+
+message PageResponse {
+  MediaPage page = 1;
+}
+
+message MediaChapter {
+  string id = 1;
+  int32 number = 2;
+  string title = 3;
+}
+
+message MediaPage {
+  string id = 1;
+  int32 index = 2;
+  string content_uri = 3;
+}
