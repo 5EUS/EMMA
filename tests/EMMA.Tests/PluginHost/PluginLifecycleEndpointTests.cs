@@ -55,6 +55,13 @@ public sealed class PluginLifecycleEndpointTests
             var logsResponse = await client.GetAsync("/plugins/logs?pluginId=demo");
             Assert.True(logsResponse.StatusCode is HttpStatusCode.OK or HttpStatusCode.NotFound);
 
+            if (logsResponse.StatusCode == HttpStatusCode.OK)
+            {
+                using var doc = JsonDocument.Parse(await logsResponse.Content.ReadAsStringAsync());
+                var root = doc.RootElement;
+                Assert.Equal("demo", root.GetProperty("pluginId").GetString());
+            }
+
             var stopResponse = await client.PostAsync("/plugins/stop?pluginId=demo", content: null);
             stopResponse.EnsureSuccessStatusCode();
         }
@@ -117,6 +124,61 @@ public sealed class PluginLifecycleEndpointTests
             TryDelete(tempRoot);
         }
     }
+
+    [Fact]
+    public async Task SummaryEndpoint_ReturnsFields()
+    {
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+        var tempRoot = Path.Combine(Path.GetTempPath(), "emma-lifecycle-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        var pluginApp = BuildPluginServer();
+        await pluginApp.StartAsync();
+
+        try
+        {
+            var address = GetServerAddress(pluginApp);
+            var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
+            await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }}\n}}\n");
+
+            await using var factory = new WebApplicationFactory<global::Program>()
+                .WithWebHostBuilder(builder =>
+                {
+                    builder.ConfigureAppConfiguration((_, config) =>
+                    {
+                        var settings = new Dictionary<string, string?>
+                        {
+                            ["PluginHost:ManifestDirectory"] = tempRoot,
+                            ["PluginHost:HandshakeOnStartup"] = "false",
+                            ["PluginHost:HandshakeTimeoutSeconds"] = "5"
+                        };
+
+                        config.AddInMemoryCollection(settings);
+                    });
+                });
+
+            var client = factory.CreateClient();
+            var response = await client.GetAsync("/plugins/summary");
+            response.EnsureSuccessStatusCode();
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var root = doc.RootElement;
+            if (root.GetArrayLength() > 0)
+            {
+                var first = root[0];
+                Assert.True(first.TryGetProperty("health", out _));
+                Assert.True(first.TryGetProperty("runtime", out _));
+                Assert.True(first.TryGetProperty("lastHandshake", out _));
+            }
+        }
+        finally
+        {
+            await pluginApp.StopAsync();
+            TryDelete(tempRoot);
+        }
+    }
+
 
     private static WebApplication BuildPluginServer()
     {

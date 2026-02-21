@@ -16,6 +16,17 @@ namespace EMMA.Tests.PluginHost;
 public sealed class ProbeEndpointTests
 {
     [Fact]
+    public async Task ProbeRespectsTimeouts()
+    {
+        await using var harness = await ProbeHarness.CreateAsync(additionalSettings: new Dictionary<string, string?>
+        {
+            ["PluginHost:ProbeTimeoutSeconds"] = "1"
+        });
+
+        var response = await harness.Client.GetAsync("/probe/search?query=demo&pluginId=demo");
+        response.EnsureSuccessStatusCode();
+    }
+    [Fact]
     public async Task ProbeSearch_ReturnsResults()
     {
         await using var harness = await ProbeHarness.CreateAsync();
@@ -106,7 +117,7 @@ public sealed class ProbeEndpointTests
         public WebApplication PluginApp { get; }
         public string TempRoot { get; }
 
-        public static async Task<ProbeHarness> CreateAsync()
+        public static async Task<ProbeHarness> CreateAsync(Dictionary<string, string?>? additionalSettings = null)
         {
             AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
@@ -131,6 +142,14 @@ public sealed class ProbeEndpointTests
                             ["PluginHost:HandshakeOnStartup"] = "false",
                             ["PluginHost:HandshakeTimeoutSeconds"] = "5"
                         };
+
+                        if (additionalSettings is not null)
+                        {
+                            foreach (var entry in additionalSettings)
+                            {
+                                settings[entry.Key] = entry.Value;
+                            }
+                        }
 
                         config.AddInMemoryCollection(settings);
                     });
