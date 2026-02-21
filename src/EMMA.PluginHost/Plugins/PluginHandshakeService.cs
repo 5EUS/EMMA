@@ -47,6 +47,7 @@ public sealed class PluginHandshakeService(
             _registry.UpdateRuntime(manifest, runtime);
 
             var status = await HandshakeAsync(manifest, runtime, cancellationToken);
+            runtime = _registry.GetRuntime(manifest);
             _registry.Upsert(manifest, status, runtime);
         }
     }
@@ -79,6 +80,7 @@ public sealed class PluginHandshakeService(
             _registry.UpdateRuntime(manifest, runtime);
 
             var status = await HandshakeAsync(manifest, runtime, cancellationToken);
+            runtime = _registry.GetRuntime(manifest);
             _registry.Upsert(manifest, status, runtime);
         }
     }
@@ -89,6 +91,7 @@ public sealed class PluginHandshakeService(
     {
         var runtime = _registry.GetRuntime(manifest);
         var status = await HandshakeAsync(manifest, runtime, cancellationToken);
+        runtime = _registry.GetRuntime(manifest);
         _registry.Upsert(manifest, status, runtime);
         return status;
     }
@@ -157,7 +160,9 @@ public sealed class PluginHandshakeService(
             await HandleTimeoutAsync(manifest, runtime, cancellationToken);
             return Failed("Handshake timed out.");
         }
-        catch (Grpc.Core.RpcException ex) when (ex.StatusCode == Grpc.Core.StatusCode.DeadlineExceeded)
+        catch (Grpc.Core.RpcException ex) when (
+            ex.StatusCode == Grpc.Core.StatusCode.DeadlineExceeded
+            || ex.StatusCode == Grpc.Core.StatusCode.Cancelled)
         {
             await HandleTimeoutAsync(manifest, runtime, cancellationToken);
             return Failed("Handshake timed out.");
