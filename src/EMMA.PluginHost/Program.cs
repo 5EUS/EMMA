@@ -35,16 +35,12 @@ builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 });
 builder.Services.AddSingleton<PluginHandshakeService>();
 builder.Services.AddHostedService<PluginHandshakeHostedService>();
+builder.Services.AddHostedService<PluginBudgetWatcher>();
 
 var app = builder.Build();
 
 app.MapGrpcService<PluginControlService>();
-app.MapGet("/plugins", (PluginRegistry registry) => registry.GetSnapshot());
-app.MapPost("/plugins/refresh", async (PluginHandshakeService handshake, PluginRegistry registry, CancellationToken cancellationToken) =>
-{
-    await handshake.RescanAsync(cancellationToken);
-    return Results.Ok(registry.GetSnapshot());
-});
+app.MapPluginHostEndpoints();
 app.MapProbeEndpoints();
 app.MapGet("/", () => "EMMA plugin host is running.");
 

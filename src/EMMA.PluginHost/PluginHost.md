@@ -13,7 +13,11 @@ plugins and performs a lightweight startup handshake against plugin endpoints.
 
 - gRPC: `PluginControl` (health + capabilities).
 - HTTP: `GET /plugins` returns the current manifest/handshake snapshot.
+- HTTP: `GET /plugins/status` returns a summarized lifecycle snapshot.
 - HTTP: `GET /probe/search?query=demo&pluginId=demo` forwards a search to a plugin.
+- HTTP: `GET /probe/pages?mediaId=demo-1&chapterId=ch-1&index=0&pluginId=demo` fetches chapters and a page.
+- HTTP: `GET /probe/video?mediaId=demo-video-1&streamId=stream-1&sequence=0&pluginId=demo` fetches streams and a segment.
+- HTTP: `GET /probe/pipeline?query=demo&pluginId=demo` runs search + first page.
 
 ## Configuration
 
@@ -24,6 +28,9 @@ The defaults live in `appsettings.json` under the `PluginHost` section:
 - `HandshakeOnStartup`: enable/disable startup handshake.
 - `SandboxRootDirectory`: root directory for per-plugin sandbox folders.
 - `SandboxEnabled`: enables sandbox enforcement when implemented.
+- `BudgetWatchIntervalSeconds`: polling interval for budget warnings.
+- `MaxCpuBudgetMs`: warns when a plugin budget exceeds this (0 disables).
+- `MaxMemoryMb`: warns when a plugin budget exceeds this (0 disables).
 
 ## Example Manifest
 

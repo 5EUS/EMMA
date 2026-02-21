@@ -10,4 +10,7 @@ public sealed class PluginHostOptions
     public bool HandshakeOnStartup { get; init; } = true;
     public string SandboxRootDirectory { get; init; } = "sandbox";
     public bool SandboxEnabled { get; init; } = false; // TODO default to true once sandboxing is implemented and stable
+    public int BudgetWatchIntervalSeconds { get; init; } = 30;
+    public int MaxCpuBudgetMs { get; init; } = 0;
+    public int MaxMemoryMb { get; init; } = 0;
 }

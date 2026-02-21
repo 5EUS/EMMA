@@ -61,6 +61,121 @@ public static class ProbeEndpoints
             }
         });
 
+        // TODO: Deprecate once the runtime pipeline is wired.
+        app.MapGet("/probe/pipeline", async (
+            string? query,
+            string? chapterId,
+            int? index,
+            string? pluginId,
+            PluginRegistry registry,
+            CancellationToken cancellationToken) =>
+        {
+            var (record, address, error) = TryResolvePlugin(registry, pluginId);
+            if (error is not null || record is null || address is null)
+            {
+                return error ?? Results.Problem("Plugin resolution failed.");
+            }
+
+            try
+            {
+                using var httpClient = CreateHttpClient(address);
+                using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
+                {
+                    HttpClient = httpClient
+                });
+
+                var searchClient = new SearchProvider.SearchProviderClient(channel);
+                var searchResponse = await searchClient.SearchAsync(new SearchRequest
+                {
+                    Query = query ?? string.Empty
+                }, cancellationToken: cancellationToken);
+
+                var results = searchResponse.Results.Select(result => new
+                {
+                    result.Id,
+                    result.Source,
+                    result.Title,
+                    result.MediaType
+                }).ToList();
+
+                var selected = searchResponse.Results.FirstOrDefault();
+                if (selected is null)
+                {
+                    return Results.Ok(new
+                    {
+                        PluginId = record.Manifest.Id,
+                        Query = query ?? string.Empty,
+                        SearchCount = searchResponse.Results.Count,
+                        Results = results,
+                        Selected = (object?)null,
+                        Chapters = Array.Empty<object>(),
+                        Page = (object?)null
+                    });
+                }
+
+                var pageClient = new PageProvider.PageProviderClient(channel);
+                var chapters = await pageClient.GetChaptersAsync(new ChaptersRequest
+                {
+                    MediaId = selected.Id
+                }, cancellationToken: cancellationToken);
+
+                var chapterList = chapters.Chapters.Select(chapter => new
+                {
+                    chapter.Id,
+                    chapter.Number,
+                    chapter.Title
+                }).ToList();
+
+                var selectedChapter = string.IsNullOrWhiteSpace(chapterId)
+                    ? chapters.Chapters.FirstOrDefault()
+                    : chapters.Chapters.FirstOrDefault(chapter =>
+                        string.Equals(chapter.Id, chapterId, StringComparison.OrdinalIgnoreCase));
+
+                MediaPage? page = null;
+                if (selectedChapter is not null)
+                {
+                    var pageResponse = await pageClient.GetPageAsync(new PageRequest
+                    {
+                        MediaId = selected.Id,
+                        ChapterId = selectedChapter.Id,
+                        Index = index ?? 0
+                    }, cancellationToken: cancellationToken);
+
+                    page = pageResponse.Page;
+                }
+
+                var pageResult = page is null
+                    ? null
+                    : new
+                    {
+                        page.Id,
+                        page.Index,
+                        page.ContentUri
+                    };
+
+                return Results.Ok(new
+                {
+                    PluginId = record.Manifest.Id,
+                    Query = query ?? string.Empty,
+                    SearchCount = searchResponse.Results.Count,
+                    Results = results,
+                    Selected = new
+                    {
+                        selected.Id,
+                        selected.Source,
+                        selected.Title,
+                        selected.MediaType
+                    },
+                    Chapters = chapterList,
+                    Page = pageResult
+                });
+            }
+            catch (Exception ex)
+            {
+                return HandleProbeException(ex);
+            }
+        });
+
         app.MapGet("/probe/pages", async (
             string? mediaId,
             string? chapterId,
