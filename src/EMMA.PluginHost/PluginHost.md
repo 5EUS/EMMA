@@ -13,6 +13,7 @@ plugins and performs a lightweight startup handshake against plugin endpoints.
 
 - gRPC: `PluginControl` (health + capabilities).
 - HTTP: `GET /plugins` returns the current manifest/handshake snapshot.
+- HTTP: `GET /probe/search?query=demo&pluginId=demo` forwards a search to a plugin.
 
 ## Configuration
 

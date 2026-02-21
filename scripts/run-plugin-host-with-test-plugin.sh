@@ -4,10 +4,15 @@ set -euo pipefail
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 plugin_host_manifest_dir="$root_dir/src/EMMA.PluginHost/plugins"
+log_dir="$root_dir/.tmp"
+plugin_log="$log_dir/test-plugin.log"
+
+mkdir -p "$log_dir"
 
 dotnet build "$root_dir/EMMA.sln"
 
-dotnet run --no-build --project "$root_dir/src/EMMA.TestPlugin/EMMA.TestPlugin.csproj" &
+dotnet run --no-build --project "$root_dir/src/EMMA.TestPlugin/EMMA.TestPlugin.csproj" \
+  >"$plugin_log" 2>&1 &
 plugin_pid=$!
 
 wait_for_port() {
@@ -32,6 +37,16 @@ trap cleanup EXIT
 
 if ! wait_for_port "localhost" 5005; then
   echo "Test plugin did not start on port 5005." >&2
+  if ! kill -0 "$plugin_pid" 2>/dev/null; then
+    echo "Test plugin exited early. Logs:" >&2
+    tail -n 50 "$plugin_log" >&2 || true
+  fi
+  exit 1
+fi
+
+if ! kill -0 "$plugin_pid" 2>/dev/null; then
+  echo "Test plugin exited before host start. Logs:" >&2
+  tail -n 50 "$plugin_log" >&2 || true
   exit 1
 fi
 

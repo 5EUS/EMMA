@@ -50,3 +50,7 @@ package.json
 
 # VS Code settings
 .vscode/settings.json
+
+# Logs
+.tmp/
+logs/

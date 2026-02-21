@@ -2,16 +2,30 @@ using EMMA.Contracts.Plugins;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using PluginHostProgram = global::Program;
 
 namespace EMMA.Tests.PluginHost;
 
-public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<PluginHostProgram>>
 {
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly WebApplicationFactory<PluginHostProgram> _factory;
 
-    public PluginControlTests(WebApplicationFactory<Program> factory)
+    public PluginControlTests(WebApplicationFactory<PluginHostProgram> factory)
     {
-        _factory = factory;
+        _factory = factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                var settings = new Dictionary<string, string?>
+                {
+                    ["PluginHost:HandshakeOnStartup"] = "false",
+                    ["PluginHost:ManifestDirectory"] = "",
+                    ["PluginHost:HandshakeTimeoutSeconds"] = "5"
+                };
+
+                config.AddInMemoryCollection(settings);
+            });
+        });
     }
 
     [Fact]
@@ -28,22 +42,7 @@ public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<Pro
     [Fact]
     public async Task GetCapabilities_ReportsEndpoints()
     {
-        using var factory = _factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureAppConfiguration((_, config) =>
-            {
-                var settings = new Dictionary<string, string?>
-                {
-                    ["PluginHost:HandshakeOnStartup"] = "false",
-                    ["PluginHost:ManifestDirectory"] = "",
-                    ["PluginHost:HandshakeTimeoutSeconds"] = "5"
-                };
-
-                config.AddInMemoryCollection(settings);
-            });
-        });
-
-        var client = CreateClient(factory);
+        var client = CreateClient(_factory);
 
         var response = await client.GetCapabilitiesAsync(new CapabilitiesRequest());
 
@@ -62,7 +61,7 @@ public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<Pro
         return CreateClient(_factory);
     }
 
-    private static PluginControl.PluginControlClient CreateClient(WebApplicationFactory<Program> factory)
+    private static PluginControl.PluginControlClient CreateClient(WebApplicationFactory<PluginHostProgram> factory)
     {
         var httpClient = factory.CreateDefaultClient();
         httpClient.DefaultRequestVersion = new Version(2, 0);

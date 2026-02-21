@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\EMMA.Application\EMMA.Application.csproj" />
     <ProjectReference Include="..\..\src\EMMA.Contracts\EMMA.Contracts.csproj" />
     <ProjectReference Include="..\..\src\EMMA.PluginHost\EMMA.PluginHost.csproj" />
+    <ProjectReference Include="..\..\src\EMMA.TestPlugin\EMMA.TestPlugin.csproj" />
   </ItemGroup>
 
 </Project>
