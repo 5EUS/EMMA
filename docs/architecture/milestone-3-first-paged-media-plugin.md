@@ -57,3 +57,4 @@ In progress (started 2026-02-21).
 
 Completed:
 - Item 1: plugin contract implementation (test plugin services, normalization, request context/timeout handling).
+- Item 2: plugin host integration (registry registration, startup checks, per-call limits, correlation-aware probes).

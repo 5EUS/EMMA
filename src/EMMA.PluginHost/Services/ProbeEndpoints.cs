@@ -1,8 +1,11 @@
 using EMMA.Contracts.Plugins;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
+using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 using System.Net;
 
 namespace EMMA.PluginHost.Services;
@@ -13,6 +16,10 @@ namespace EMMA.PluginHost.Services;
 /// </summary>
 public static class ProbeEndpoints
 {
+    private const string CorrelationIdHeader = "x-correlation-id";
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _pluginLimits =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public static WebApplication MapProbeEndpoints(this WebApplication app)
     {
         app.MapGet("/probe/search", async (
@@ -20,8 +27,10 @@ public static class ProbeEndpoints
             string? pluginId,
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
+            var logger = loggerFactory.CreateLogger("ProbeEndpoints");
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
             if (error is not null || record is null || address is null)
             {
@@ -31,6 +40,13 @@ public static class ProbeEndpoints
             try
             {
                 using var cts = CreateProbeTimeout(options, cancellationToken);
+                using var lease = await AcquireLeaseAsync(record, options.Value, cts.Token);
+                if (lease is null)
+                {
+                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+                }
+
+                var correlationId = CreateCorrelationId();
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -41,7 +57,13 @@ public static class ProbeEndpoints
                 var response = await client.SearchAsync(new SearchRequest
                 {
                     Query = query ?? string.Empty
-                }, cancellationToken: cts.Token);
+                }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
+
+                logger.LogInformation(
+                    "Probe search {CorrelationId} pluginId={PluginId} query={Query}",
+                    correlationId,
+                    record.Manifest.Id,
+                    query ?? string.Empty);
 
                 var results = response.Results.Select(result => new
                 {
@@ -53,6 +75,7 @@ public static class ProbeEndpoints
 
                 return Results.Ok(new
                 {
+                    CorrelationId = correlationId,
                     PluginId = record.Manifest.Id,
                     Query = query ?? string.Empty,
                     Count = response.Results.Count,
@@ -73,8 +96,10 @@ public static class ProbeEndpoints
             string? pluginId,
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
+            var logger = loggerFactory.CreateLogger("ProbeEndpoints");
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
             if (error is not null || record is null || address is null)
             {
@@ -84,6 +109,13 @@ public static class ProbeEndpoints
             try
             {
                 using var cts = CreateProbeTimeout(options, cancellationToken);
+                using var lease = await AcquireLeaseAsync(record, options.Value, cts.Token);
+                if (lease is null)
+                {
+                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+                }
+
+                var correlationId = CreateCorrelationId();
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -94,7 +126,7 @@ public static class ProbeEndpoints
                 var searchResponse = await searchClient.SearchAsync(new SearchRequest
                 {
                     Query = query ?? string.Empty
-                }, cancellationToken: cts.Token);
+                }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                 var results = searchResponse.Results.Select(result => new
                 {
@@ -123,7 +155,7 @@ public static class ProbeEndpoints
                 var chapters = await pageClient.GetChaptersAsync(new ChaptersRequest
                 {
                     MediaId = selected.Id
-                }, cancellationToken: cts.Token);
+                }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                 var chapterList = chapters.Chapters.Select(chapter => new
                 {
@@ -145,7 +177,7 @@ public static class ProbeEndpoints
                         MediaId = selected.Id,
                         ChapterId = selectedChapter.Id,
                         Index = index ?? 0
-                    }, cancellationToken: cts.Token);
+                    }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                     page = pageResponse.Page;
                 }
@@ -159,8 +191,15 @@ public static class ProbeEndpoints
                         page.ContentUri
                     };
 
+                logger.LogInformation(
+                    "Probe pipeline {CorrelationId} pluginId={PluginId} query={Query}",
+                    correlationId,
+                    record.Manifest.Id,
+                    query ?? string.Empty);
+
                 return Results.Ok(new
                 {
+                    CorrelationId = correlationId,
                     PluginId = record.Manifest.Id,
                     Query = query ?? string.Empty,
                     SearchCount = searchResponse.Results.Count,
@@ -189,8 +228,10 @@ public static class ProbeEndpoints
             string? pluginId,
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
+            var logger = loggerFactory.CreateLogger("ProbeEndpoints");
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
             if (error is not null || record is null || address is null)
             {
@@ -207,6 +248,13 @@ public static class ProbeEndpoints
             try
             {
                 using var cts = CreateProbeTimeout(options, cancellationToken);
+                using var lease = await AcquireLeaseAsync(record, options.Value, cts.Token);
+                if (lease is null)
+                {
+                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+                }
+
+                var correlationId = CreateCorrelationId();
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -217,7 +265,7 @@ public static class ProbeEndpoints
                 var chapters = await client.GetChaptersAsync(new ChaptersRequest
                 {
                     MediaId = mediaId
-                }, cancellationToken: cts.Token);
+                }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                 MediaPage? page = null;
                 if (!string.IsNullOrWhiteSpace(chapterId))
@@ -227,7 +275,7 @@ public static class ProbeEndpoints
                         MediaId = mediaId,
                         ChapterId = chapterId,
                         Index = pageIndex
-                    }, cancellationToken: cts.Token);
+                    }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                     page = pageResponse.Page;
                 }
@@ -248,8 +296,15 @@ public static class ProbeEndpoints
                         page.ContentUri
                     };
 
+                logger.LogInformation(
+                    "Probe pages {CorrelationId} pluginId={PluginId} mediaId={MediaId}",
+                    correlationId,
+                    record.Manifest.Id,
+                    mediaId);
+
                 return Results.Ok(new
                 {
+                    CorrelationId = correlationId,
                     PluginId = record.Manifest.Id,
                     MediaId = mediaId,
                     Chapters = chapterResults,
@@ -269,8 +324,10 @@ public static class ProbeEndpoints
             string? pluginId,
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
+            var logger = loggerFactory.CreateLogger("ProbeEndpoints");
             var (record, address, error) = TryResolvePlugin(registry, pluginId);
             if (error is not null || record is null || address is null)
             {
@@ -287,6 +344,13 @@ public static class ProbeEndpoints
             try
             {
                 using var cts = CreateProbeTimeout(options, cancellationToken);
+                using var lease = await AcquireLeaseAsync(record, options.Value, cts.Token);
+                if (lease is null)
+                {
+                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+                }
+
+                var correlationId = CreateCorrelationId();
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -297,7 +361,7 @@ public static class ProbeEndpoints
                 var streams = await client.GetStreamsAsync(new StreamRequest
                 {
                     MediaId = mediaId
-                }, cancellationToken: cts.Token);
+                }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                 SegmentResponse? segment = null;
                 if (!string.IsNullOrWhiteSpace(streamId))
@@ -307,7 +371,7 @@ public static class ProbeEndpoints
                         MediaId = mediaId,
                         StreamId = streamId,
                         Sequence = segmentSequence
-                    }, cancellationToken: cts.Token);
+                    }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
                 }
 
                 var streamResults = streams.Streams.Select(stream => new
@@ -329,8 +393,15 @@ public static class ProbeEndpoints
                     };
                 }
 
+                logger.LogInformation(
+                    "Probe video {CorrelationId} pluginId={PluginId} mediaId={MediaId}",
+                    correlationId,
+                    record.Manifest.Id,
+                    mediaId);
+
                 return Results.Ok(new
                 {
+                    CorrelationId = correlationId,
                     PluginId = record.Manifest.Id,
                     MediaId = mediaId,
                     Streams = streamResults,
@@ -344,6 +415,37 @@ public static class ProbeEndpoints
         });
 
         return app;
+    }
+
+    private sealed class CallLease(SemaphoreSlim semaphore) : IDisposable
+    {
+        private readonly SemaphoreSlim _semaphore = semaphore;
+
+        public void Dispose()
+        {
+            _semaphore.Release();
+        }
+    }
+
+    private static async Task<CallLease?> AcquireLeaseAsync(
+        PluginRecord record,
+        PluginHostOptions options,
+        CancellationToken cancellationToken)
+    {
+        var maxConcurrent = Math.Max(1, options.MaxConcurrentCallsPerPlugin);
+        var semaphore = _pluginLimits.GetOrAdd(
+            record.Manifest.Id,
+            _ => new SemaphoreSlim(maxConcurrent, maxConcurrent));
+
+        try
+        {
+            await semaphore.WaitAsync(cancellationToken);
+            return new CallLease(semaphore);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     private static PluginRecord? ResolvePluginRecord(PluginRegistry registry, string? pluginId)
@@ -412,6 +514,13 @@ public static class ProbeEndpoints
 
         return httpClient;
     }
+
+    private static string CreateCorrelationId() => Guid.NewGuid().ToString("n");
+
+    private static Metadata CreateHeaders(string correlationId) => new()
+    {
+        { CorrelationIdHeader, correlationId }
+    };
 
     private static IResult HandleProbeException(Exception ex)
     {

@@ -18,5 +18,6 @@ public sealed class PluginHostOptions
     public int TimeoutBackoffSeconds { get; init; } = 5;
     public int MaxTimeoutRetries { get; init; } = 3;
     public int ProbeTimeoutSeconds { get; init; } = 5;
+    public int MaxConcurrentCallsPerPlugin { get; init; } = 8;
     public int PluginLogMaxLines { get; init; } = 200;
 }

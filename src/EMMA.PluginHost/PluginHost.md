@@ -41,6 +41,7 @@ The defaults live in `appsettings.json` under the `PluginHost` section:
 - `TimeoutBackoffSeconds`: backoff between timeout retries.
 - `MaxTimeoutRetries`: retries before a plugin is quarantined.
 - `ProbeTimeoutSeconds`: max time for probe gRPC calls.
+- `MaxConcurrentCallsPerPlugin`: concurrent probe calls allowed per plugin.
 - `PluginLogMaxLines`: number of log lines retained per plugin.
 
 ## Example Manifest

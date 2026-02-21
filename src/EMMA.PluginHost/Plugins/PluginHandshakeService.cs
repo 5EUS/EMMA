@@ -4,6 +4,7 @@ using EMMA.PluginHost.Configuration;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
 using EMMA.PluginHost.Sandboxing;
+using Grpc.Core;
 
 namespace EMMA.PluginHost.Plugins;
 
@@ -30,13 +31,18 @@ public sealed class PluginHandshakeService(
     /// </summary>
     public async Task HandshakeAllAsync(CancellationToken cancellationToken)
     {
+        var manifests = await _loader.LoadManifestsAsync(cancellationToken);
+        foreach (var manifest in manifests)
+        {
+            _registry.Upsert(manifest, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(manifest));
+        }
+
         if (!_options.HandshakeOnStartup)
         {
             _logger.LogInformation("Plugin handshake is disabled by configuration.");
             return;
         }
 
-        var manifests = await _loader.LoadManifestsAsync(cancellationToken);
         foreach (var manifest in manifests)
         {
             await _sandboxManager.PrepareAsync(manifest, cancellationToken);
@@ -134,8 +140,10 @@ public sealed class PluginHandshakeService(
             });
 
             var client = new PluginControl.PluginControlClient(channel);
-            var health = await client.GetHealthAsync(new HealthRequest(), cancellationToken: cts.Token);
-            var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest(), cancellationToken: cts.Token);
+            var correlationId = CreateCorrelationId();
+            var headers = CreateHeaders(correlationId);
+            var health = await client.GetHealthAsync(new HealthRequest(), headers: headers, cancellationToken: cts.Token);
+            var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest(), headers: headers, cancellationToken: cts.Token);
 
             var caps = capabilities.Capabilities.ToArray();
             var budgets = capabilities.Budgets;
@@ -203,6 +211,13 @@ public sealed class PluginHandshakeService(
 
         return httpClient;
     }
+
+    private static string CreateCorrelationId() => Guid.NewGuid().ToString("n");
+
+    private static Metadata CreateHeaders(string correlationId) => new()
+    {
+        { "x-correlation-id", correlationId }
+    };
 
     private static PluginHandshakeStatus Failed(string message)
     {
