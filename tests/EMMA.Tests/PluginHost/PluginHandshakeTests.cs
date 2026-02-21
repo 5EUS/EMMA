@@ -2,6 +2,7 @@ using System.Net;
 using EMMA.Contracts.Plugins;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
+using EMMA.PluginHost.Sandboxing;
 using Grpc.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -35,12 +36,14 @@ public sealed class PluginHandshakeTests
         {
             ManifestDirectory = tempRoot,
             HandshakeOnStartup = true,
-            HandshakeTimeoutSeconds = 5
+            HandshakeTimeoutSeconds = 5,
+            SandboxRootDirectory = Path.Combine(tempRoot, "sandbox")
         });
 
         var registry = new PluginRegistry();
         var loader = new PluginManifestLoader(options, NullLogger<PluginManifestLoader>.Instance);
-        var handshake = new PluginHandshakeService(loader, registry, options, NullLogger<PluginHandshakeService>.Instance);
+        var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var handshake = new PluginHandshakeService(loader, registry, sandbox, options, NullLogger<PluginHandshakeService>.Instance);
 
         await handshake.HandshakeAllAsync(CancellationToken.None);
 

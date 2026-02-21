@@ -3,6 +3,7 @@ using EMMA.Contracts.Plugins;
 using EMMA.PluginHost.Configuration;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
+using EMMA.PluginHost.Sandboxing;
 
 namespace EMMA.PluginHost.Plugins;
 
@@ -12,11 +13,13 @@ namespace EMMA.PluginHost.Plugins;
 public sealed class PluginHandshakeService(
     PluginManifestLoader loader,
     PluginRegistry registry,
+    IPluginSandboxManager sandboxManager,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
     private readonly PluginManifestLoader _loader = loader;
     private readonly PluginRegistry _registry = registry;
+    private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -34,6 +37,7 @@ public sealed class PluginHandshakeService(
         var manifests = await _loader.LoadManifestsAsync(cancellationToken);
         foreach (var manifest in manifests)
         {
+            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
             var status = await HandshakeAsync(manifest, cancellationToken);
             _registry.Upsert(new PluginRecord(manifest, status));
         }
@@ -47,6 +51,7 @@ public sealed class PluginHandshakeService(
         var manifests = await _loader.LoadManifestsAsync(cancellationToken);
         foreach (var manifest in manifests)
         {
+            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
             var status = await HandshakeAsync(manifest, cancellationToken);
             _registry.Upsert(new PluginRecord(manifest, status));
         }

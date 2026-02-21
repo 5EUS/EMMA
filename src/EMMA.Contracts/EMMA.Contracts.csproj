@@ -17,6 +17,9 @@
 
   <ItemGroup>
     <Protobuf Include="Protos\plugin_control.proto" GrpcServices="Both" />
+    <Protobuf Include="Protos\search_provider.proto" GrpcServices="Both" />
+    <Protobuf Include="Protos\page_provider.proto" GrpcServices="Both" />
+    <Protobuf Include="Protos\video_provider.proto" GrpcServices="Both" />
   </ItemGroup>
 
 </Project>

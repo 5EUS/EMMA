@@ -21,6 +21,8 @@ The defaults live in `appsettings.json` under the `PluginHost` section:
 - `ManifestDirectory`: directory containing `*.plugin.json` manifests.
 - `HandshakeTimeoutSeconds`: timeout for handshake RPCs.
 - `HandshakeOnStartup`: enable/disable startup handshake.
+- `SandboxRootDirectory`: root directory for per-plugin sandbox folders.
+- `SandboxEnabled`: enables sandbox enforcement when implemented.
 
 ## Example Manifest
 
