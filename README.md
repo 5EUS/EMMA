@@ -39,14 +39,18 @@ untrusted plugins, and streaming-friendly pipelines for paged and video media.
 dotnet build
 ```
 
-### Run (development)
+### Run CLI (development)
 
 ```bash
-dotnet run --project EMMA.csproj
+dotnet run --project src/EMMA.Cli/EMMA.Cli.csproj
 ```
 
 The development host exposes a gRPC endpoint. See the default gRPC template
 message at http://localhost:5000/ for basic connectivity guidance.
+Run:
+```bash
+dotnet run --project src/EMMA.PluginHost/EMMA.PluginHost.csproj
+```
 
 ### Tests
 
