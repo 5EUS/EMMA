@@ -15,13 +15,17 @@ public sealed class PagedMediaPipeline(
     IPageProviderPort pages,
     IPolicyEvaluator policy,
     ICachePort cache,
-    PagedMediaPipelineOptions? options = null)
+    PagedMediaPipelineOptions? options = null,
+    IPageAssetCachePort? pageAssetCache = null,
+    IPageAssetFetcherPort? pageAssetFetcher = null)
 {
     private readonly IMediaSearchPort _search = search;
     private readonly IPageProviderPort _pages = pages;
     private readonly IPolicyEvaluator _policy = policy;
     private readonly ICachePort _cache = cache;
     private readonly PagedMediaPipelineOptions _options = options ?? PagedMediaPipelineOptions.Default;
+    private readonly IPageAssetCachePort? _pageAssetCache = pageAssetCache;
+    private readonly IPageAssetFetcherPort? _pageAssetFetcher = pageAssetFetcher;
 
     /// <summary>
     /// Searches for media summaries matching the given query. Results are cached for 5 minutes.
@@ -90,6 +94,35 @@ public sealed class PagedMediaPipeline(
     {
         EnsureNetworkAllowed("page");
         return GetPageWithRetryAsync(mediaId, chapterId, pageIndex, cancellationToken);
+    }
+
+    /// <summary>
+    /// Fetches page assets using the configured cache and fetcher ports.
+    /// </summary>
+    /// <param name="page"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    public async Task<MediaPageAsset> GetPageAssetAsync(MediaPage page, CancellationToken cancellationToken)
+    {
+        if (_pageAssetCache is null || _pageAssetFetcher is null)
+        {
+            throw new InvalidOperationException("Page asset cache or fetcher is not configured.");
+        }
+
+        EnsureNetworkAllowed("page-asset");
+        EnsureCacheAllowed("page-asset");
+
+        var cacheKey = $"page-asset:{page.ContentUri}";
+        var cached = await _pageAssetCache.GetAsync(cacheKey, cancellationToken);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        var asset = await _pageAssetFetcher.FetchAsync(page.ContentUri, cancellationToken);
+        await _pageAssetCache.SetAsync(cacheKey, asset, cancellationToken);
+        return asset;
     }
 
     private async Task<MediaPage> GetPageWithRetryAsync(
@@ -163,6 +196,15 @@ public sealed class PagedMediaPipeline(
         if (!decision.Allowed)
         {
             throw new InvalidOperationException(decision.Reason ?? "Network access denied.");
+        }
+    }
+
+    private void EnsureCacheAllowed(string target)
+    {
+        var decision = _policy.Evaluate(new CapabilityRequest(CapabilityKind.Cache, target));
+        if (!decision.Allowed)
+        {
+            throw new InvalidOperationException(decision.Reason ?? "Cache access denied.");
         }
     }
 }
