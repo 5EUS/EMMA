@@ -5,6 +5,7 @@
     <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
     <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
     <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="..\EMMA.Storage\EMMA.Storage.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

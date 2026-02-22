@@ -3,6 +3,7 @@ using EMMA.Application.Ports;
 using EMMA.Domain;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
+using EMMA.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +12,8 @@ builder.Services.AddSingleton<IMediaSearchPort, InMemorySearchPort>();
 builder.Services.AddSingleton<IPageProviderPort, InMemoryPageProvider>();
 builder.Services.AddSingleton<IPolicyEvaluator, AllowAllPolicyEvaluator>();
 builder.Services.AddSingleton<ICachePort, InMemoryCachePort>();
+builder.Services.AddSingleton(StorageOptions.Default);
+builder.Services.AddSingleton<StorageInitializer>();
 
 builder.Services.AddSingleton(sp =>
 {
@@ -25,6 +28,9 @@ builder.Services.AddSingleton(sp =>
 });
 
 var app = builder.Build();
+
+var storageInitializer = app.Services.GetRequiredService<StorageInitializer>();
+await storageInitializer.InitializeAsync(CancellationToken.None);
 
 app.MapGet("/", () => "EMMA API host is running.");
 
