@@ -357,7 +357,19 @@ public sealed class PluginLifecycleEndpointTests
 
         public override async Task<HealthResponse> GetHealth(HealthRequest request, ServerCallContext context)
         {
-            await Task.Delay(Delay, context.CancellationToken);
+            try
+            {
+                await Task.Delay(Delay, context.CancellationToken);
+            }
+            catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+            {
+                return new HealthResponse
+                {
+                    Status = "canceled",
+                    Version = "slow",
+                    Message = "canceled"
+                };
+            }
             return new HealthResponse
             {
                 Status = "ok",
@@ -368,7 +380,18 @@ public sealed class PluginLifecycleEndpointTests
 
         public override async Task<CapabilitiesResponse> GetCapabilities(CapabilitiesRequest request, ServerCallContext context)
         {
-            await Task.Delay(Delay, context.CancellationToken);
+            try
+            {
+                await Task.Delay(Delay, context.CancellationToken);
+            }
+            catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+            {
+                return new CapabilitiesResponse
+                {
+                    Budgets = new CapabilityBudgets(),
+                    Permissions = new CapabilityPermissions()
+                };
+            }
             return new CapabilitiesResponse
             {
                 Budgets = new CapabilityBudgets(),
