@@ -31,7 +31,13 @@
    - Add page asset cache boundaries and eviction policy.
    - Ensure decoded images are not retained beyond budget.
 
-5) Fixtures and sample data
+5) Storage integration
+   - Register EMMA.Storage services in the plugin host and pipeline.
+   - Store page assets and normalized metadata via EMMA.Storage APIs.
+   - Define storage keys/paths for media, chapter, and page records.
+   - Add retention/cleanup rules for temp and cached assets.
+
+6) Fixtures and sample data
    - Controlled dataset for search and page retrieval.
    - Deterministic media IDs for stable tests.
 
@@ -45,6 +51,7 @@
 
 - Plugin host gRPC endpoints available for paged media.
 - Cache service available to the pipeline.
+- EMMA.Storage baseline APIs available for page assets and metadata.
 
 ## Open questions
 
