@@ -14,12 +14,14 @@ public sealed class PagedMediaPipeline(
     IMediaSearchPort search,
     IPageProviderPort pages,
     IPolicyEvaluator policy,
-    ICachePort cache)
+    ICachePort cache,
+    PagedMediaPipelineOptions? options = null)
 {
     private readonly IMediaSearchPort _search = search;
     private readonly IPageProviderPort _pages = pages;
     private readonly IPolicyEvaluator _policy = policy;
     private readonly ICachePort _cache = cache;
+    private readonly PagedMediaPipelineOptions _options = options ?? PagedMediaPipelineOptions.Default;
 
     /// <summary>
     /// Searches for media summaries matching the given query. Results are cached for 5 minutes.
@@ -87,7 +89,67 @@ public sealed class PagedMediaPipeline(
         CancellationToken cancellationToken)
     {
         EnsureNetworkAllowed("page");
-        return _pages.GetPageAsync(mediaId, chapterId, pageIndex, cancellationToken);
+        return GetPageWithRetryAsync(mediaId, chapterId, pageIndex, cancellationToken);
+    }
+
+    private async Task<MediaPage> GetPageWithRetryAsync(
+        MediaId mediaId,
+        string chapterId,
+        int pageIndex,
+        CancellationToken cancellationToken)
+    {
+        var retryCount = Math.Max(0, _options.PageRetryCount);
+        var delay = _options.PageRetryDelay;
+
+        Exception? lastError = null;
+
+        for (var attempt = 0; ; attempt++)
+        {
+            using var cts = CreatePageTimeout(cancellationToken);
+
+            try
+            {
+                return await _pages.GetPageAsync(mediaId, chapterId, pageIndex, cts.Token);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (OperationCanceledException ex)
+            {
+                lastError = new TimeoutException("Page fetch timed out.", ex);
+            }
+            catch (TimeoutException ex)
+            {
+                lastError = ex;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+
+            if (attempt >= retryCount)
+            {
+                throw lastError ?? new InvalidOperationException("Page fetch failed after retries.");
+            }
+
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, cancellationToken);
+            }
+        }
+    }
+
+    private CancellationTokenSource CreatePageTimeout(CancellationToken cancellationToken)
+    {
+        if (_options.PageTimeout <= TimeSpan.Zero)
+        {
+            return CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        }
+
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(_options.PageTimeout);
+        return cts;
     }
 
     /// <summary>

@@ -1,10 +1,12 @@
+using EMMA.Application.Pipelines;
 using EMMA.Contracts.Plugins;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
+using EMMA.Infrastructure.InMemory;
+using EMMA.Infrastructure.Policy;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Net;
 
@@ -108,42 +110,47 @@ public static class ProbeEndpoints
 
             try
             {
-                using var cts = CreateProbeTimeout(options, cancellationToken);
-                using var lease = await AcquireLeaseAsync(record, options.Value, cts.Token);
-                if (lease is null)
-                {
-                    return Results.StatusCode(StatusCodes.Status429TooManyRequests);
-                }
+                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+                var endpoint = new PluginGrpcEndpoint(record, address, correlationId);
+                var searchPort = new PluginSearchPort(
+                    endpoint,
+                    options,
+                    loggerFactory.CreateLogger<PluginSearchPort>());
+                var pagePort = new PluginPageProviderPort(
+                    endpoint,
+                    options,
+                    loggerFactory.CreateLogger<PluginPageProviderPort>());
 
-                var correlationId = CreateCorrelationId();
-                using var httpClient = CreateHttpClient(address);
-                using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
-                {
-                    HttpClient = httpClient
-                });
+                var timeoutSeconds = Math.Max(1, options.Value.ProbeTimeoutSeconds);
+                var pipelineOptions = new PagedMediaPipelineOptions(
+                    TimeSpan.FromSeconds(timeoutSeconds),
+                    1,
+                    TimeSpan.FromMilliseconds(200));
 
-                var searchClient = new SearchProvider.SearchProviderClient(channel);
-                var searchResponse = await searchClient.SearchAsync(new SearchRequest
-                {
-                    Query = query ?? string.Empty
-                }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
+                var pipeline = new PagedMediaPipeline(
+                    searchPort,
+                    pagePort,
+                    new AllowAllPolicyEvaluator(),
+                    new InMemoryCachePort(),
+                    pipelineOptions);
 
-                var results = searchResponse.Results.Select(result => new
+                var searchResults = await pipeline.SearchAsync(query ?? string.Empty, cancellationToken);
+                var results = searchResults.Select(result => new
                 {
-                    result.Id,
-                    result.Source,
+                    Id = result.Id.ToString(),
+                    Source = result.SourceId,
                     result.Title,
-                    result.MediaType
+                    MediaType = result.MediaType.ToString().ToLowerInvariant()
                 }).ToList();
 
-                var selected = searchResponse.Results.FirstOrDefault();
+                var selected = searchResults.FirstOrDefault();
                 if (selected is null)
                 {
                     return Results.Ok(new
                     {
                         PluginId = record.Manifest.Id,
                         Query = query ?? string.Empty,
-                        SearchCount = searchResponse.Results.Count,
+                        SearchCount = searchResults.Count,
                         Results = results,
                         Selected = (object?)null,
                         Chapters = Array.Empty<object>(),
@@ -151,44 +158,36 @@ public static class ProbeEndpoints
                     });
                 }
 
-                var pageClient = new PageProvider.PageProviderClient(channel);
-                var chapters = await pageClient.GetChaptersAsync(new ChaptersRequest
+                var chapters = await pipeline.GetChaptersAsync(selected.Id, cancellationToken);
+                var chapterList = chapters.Select(chapter => new
                 {
-                    MediaId = selected.Id
-                }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
-
-                var chapterList = chapters.Chapters.Select(chapter => new
-                {
-                    chapter.Id,
+                    Id = chapter.ChapterId,
                     chapter.Number,
                     chapter.Title
                 }).ToList();
 
                 var selectedChapter = string.IsNullOrWhiteSpace(chapterId)
-                    ? chapters.Chapters.FirstOrDefault()
-                    : chapters.Chapters.FirstOrDefault(chapter =>
-                        string.Equals(chapter.Id, chapterId, StringComparison.OrdinalIgnoreCase));
+                    ? chapters.FirstOrDefault()
+                    : chapters.FirstOrDefault(chapter =>
+                        string.Equals(chapter.ChapterId, chapterId, StringComparison.OrdinalIgnoreCase));
 
-                MediaPage? page = null;
+                EMMA.Domain.MediaPage? page = null;
                 if (selectedChapter is not null)
                 {
-                    var pageResponse = await pageClient.GetPageAsync(new PageRequest
-                    {
-                        MediaId = selected.Id,
-                        ChapterId = selectedChapter.Id,
-                        Index = index ?? 0
-                    }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
-
-                    page = pageResponse.Page;
+                    page = await pipeline.GetPageAsync(
+                        selected.Id,
+                        selectedChapter.ChapterId,
+                        index ?? 0,
+                        cancellationToken);
                 }
 
                 var pageResult = page is null
                     ? null
                     : new
                     {
-                        page.Id,
+                        Id = page.PageId,
                         page.Index,
-                        page.ContentUri
+                        ContentUri = page.ContentUri.ToString()
                     };
 
                 logger.LogInformation(
@@ -202,14 +201,14 @@ public static class ProbeEndpoints
                     CorrelationId = correlationId,
                     PluginId = record.Manifest.Id,
                     Query = query ?? string.Empty,
-                    SearchCount = searchResponse.Results.Count,
+                    SearchCount = searchResults.Count,
                     Results = results,
                     Selected = new
                     {
-                        selected.Id,
-                        selected.Source,
+                        Id = selected.Id.ToString(),
+                        Source = selected.SourceId,
                         selected.Title,
-                        selected.MediaType
+                        MediaType = selected.MediaType.ToString().ToLowerInvariant()
                     },
                     Chapters = chapterList,
                     Page = pageResult
