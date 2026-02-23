@@ -23,6 +23,17 @@ CREATE TABLE IF NOT EXISTS media_chapters (
     FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS media_pages (
+    id TEXT NOT NULL,
+    media_id TEXT NOT NULL,
+    chapter_id TEXT NOT NULL,
+    page_index INTEGER NOT NULL,
+    content_uri TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (id, media_id),
+    FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS media_streams (
     id TEXT NOT NULL,
     media_id TEXT NOT NULL,
@@ -103,6 +114,7 @@ CREATE TABLE IF NOT EXISTS history (
 CREATE INDEX IF NOT EXISTS idx_media_title ON media(title);
 CREATE INDEX IF NOT EXISTS idx_media_source ON media(source_id);
 CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type);
+CREATE INDEX IF NOT EXISTS idx_media_pages_media_chapter ON media_pages(media_id, chapter_id, page_index);
 CREATE INDEX IF NOT EXISTS idx_history_user ON history(user_id, last_viewed_at);
 CREATE INDEX IF NOT EXISTS idx_plugins_status ON plugins(status);
 CREATE INDEX IF NOT EXISTS idx_library_user_media ON library(user_id, media_id);

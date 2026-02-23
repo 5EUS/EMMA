@@ -1,7 +1,9 @@
+using EMMA.Application.Ports;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
+using EMMA.Storage;
 
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
@@ -12,6 +14,9 @@ builder.Services.Configure<PluginHostOptions>(builder.Configuration.GetSection("
 builder.Services.AddSingleton<PluginRegistry>();
 builder.Services.AddSingleton<PluginManifestLoader>();
 builder.Services.AddSingleton<PluginProcessManager>();
+builder.Services.AddSingleton(StorageOptions.Default);
+builder.Services.AddSingleton<StorageInitializer>();
+builder.Services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
 builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();
@@ -49,6 +54,9 @@ builder.Services.AddHostedService<PluginBudgetWatcher>();
 builder.Services.AddHostedService<PluginLifecycleHostedService>();
 
 var app = builder.Build();
+
+var storageInitializer = app.Services.GetRequiredService<StorageInitializer>();
+await storageInitializer.InitializeAsync(CancellationToken.None);
 
 app.MapGrpcService<PluginControlService>();
 app.MapPluginHostEndpoints();

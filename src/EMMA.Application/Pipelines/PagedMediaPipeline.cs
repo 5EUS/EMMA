@@ -17,7 +17,8 @@ public sealed class PagedMediaPipeline(
     ICachePort cache,
     PagedMediaPipelineOptions? options = null,
     IPageAssetCachePort? pageAssetCache = null,
-    IPageAssetFetcherPort? pageAssetFetcher = null)
+    IPageAssetFetcherPort? pageAssetFetcher = null,
+    IMediaCatalogPort? catalog = null)
 {
     private readonly IMediaSearchPort _search = search;
     private readonly IPageProviderPort _pages = pages;
@@ -26,6 +27,7 @@ public sealed class PagedMediaPipeline(
     private readonly PagedMediaPipelineOptions _options = options ?? PagedMediaPipelineOptions.Default;
     private readonly IPageAssetCachePort? _pageAssetCache = pageAssetCache;
     private readonly IPageAssetFetcherPort? _pageAssetFetcher = pageAssetFetcher;
+    private readonly IMediaCatalogPort? _catalog = catalog;
 
     /// <summary>
     /// Searches for media summaries matching the given query. Results are cached for 5 minutes.
@@ -50,6 +52,7 @@ public sealed class PagedMediaPipeline(
         }
 
         var results = await _search.SearchAsync(query.Trim(), cancellationToken);
+        await PersistSearchResultsAsync(results, cancellationToken);
         await _cache.SetAsync(cacheKey, results, TimeSpan.FromMinutes(5), cancellationToken);
 
         return results;
@@ -73,6 +76,7 @@ public sealed class PagedMediaPipeline(
         }
 
         var chapters = await _pages.GetChaptersAsync(mediaId, cancellationToken);
+        await PersistChaptersAsync(mediaId, chapters, cancellationToken);
         await _cache.SetAsync(cacheKey, chapters, TimeSpan.FromMinutes(10), cancellationToken);
 
         return chapters;
@@ -86,14 +90,16 @@ public sealed class PagedMediaPipeline(
     /// <param name="pageIndex"></param>
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
-    public Task<MediaPage> GetPageAsync(
+    public async Task<MediaPage> GetPageAsync(
         MediaId mediaId,
         string chapterId,
         int pageIndex,
         CancellationToken cancellationToken)
     {
         EnsureNetworkAllowed("page");
-        return GetPageWithRetryAsync(mediaId, chapterId, pageIndex, cancellationToken);
+        var page = await GetPageWithRetryAsync(mediaId, chapterId, pageIndex, cancellationToken);
+        await PersistPageAsync(mediaId, chapterId, page, cancellationToken);
+        return page;
     }
 
     /// <summary>
@@ -133,13 +139,11 @@ public sealed class PagedMediaPipeline(
     {
         var retryCount = Math.Max(0, _options.PageRetryCount);
         var delay = _options.PageRetryDelay;
-
-        Exception? lastError = null;
-
         for (var attempt = 0; ; attempt++)
         {
             using var cts = CreatePageTimeout(cancellationToken);
 
+            Exception? lastError;
             try
             {
                 return await _pages.GetPageAsync(mediaId, chapterId, pageIndex, cts.Token);
@@ -206,5 +210,78 @@ public sealed class PagedMediaPipeline(
         {
             throw new InvalidOperationException(decision.Reason ?? "Cache access denied.");
         }
+    }
+
+    private async Task PersistSearchResultsAsync(
+        IReadOnlyList<MediaSummary> results,
+        CancellationToken cancellationToken)
+    {
+        if (_catalog is null || results.Count == 0)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var item in results)
+        {
+            var metadata = new MediaMetadata(
+                item.Id,
+                item.SourceId,
+                item.Title,
+                item.MediaType,
+                null,
+                null,
+                null,
+                [],
+                now,
+                now);
+
+            await _catalog.UpsertMediaAsync(metadata, cancellationToken);
+        }
+    }
+
+    private async Task PersistChaptersAsync(
+        MediaId mediaId,
+        IReadOnlyList<MediaChapter> chapters,
+        CancellationToken cancellationToken)
+    {
+        if (_catalog is null)
+        {
+            return;
+        }
+
+        var records = chapters.Select(chapter => new MediaChapterRecord(
+            chapter.ChapterId,
+            mediaId,
+            chapter.Number,
+            chapter.Title,
+            null)).ToList();
+
+        await _catalog.UpsertChaptersAsync(mediaId, records, cancellationToken);
+    }
+
+    private async Task PersistPageAsync(
+        MediaId mediaId,
+        string chapterId,
+        MediaPage page,
+        CancellationToken cancellationToken)
+    {
+        if (_catalog is null)
+        {
+            return;
+        }
+
+        var records = new List<MediaPageRecord>
+        {
+            new(
+                page.PageId,
+                mediaId,
+                chapterId,
+                page.Index,
+                page.ContentUri.ToString(),
+                DateTimeOffset.UtcNow)
+        };
+
+        await _catalog.UpsertPagesAsync(mediaId, chapterId, records, cancellationToken);
     }
 }

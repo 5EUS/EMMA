@@ -24,6 +24,7 @@ public static class PagedPipelineEndpoints
             string? pluginId,
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
+            IMediaCatalogPort catalog,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -33,7 +34,7 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, loggerFactory);
+            var pipeline = CreatePipeline(record, address, options, catalog, loggerFactory);
             var results = await pipeline.SearchAsync(query ?? string.Empty, cancellationToken);
 
             return Results.Ok(results.Select(result => new
@@ -50,6 +51,7 @@ public static class PagedPipelineEndpoints
             string? pluginId,
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
+            IMediaCatalogPort catalog,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -64,7 +66,7 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, loggerFactory);
+            var pipeline = CreatePipeline(record, address, options, catalog, loggerFactory);
             var chapters = await pipeline.GetChaptersAsync(MediaId.Create(mediaId), cancellationToken);
 
             return Results.Ok(chapters.Select(chapter => new
@@ -82,6 +84,7 @@ public static class PagedPipelineEndpoints
             string? pluginId,
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
+            IMediaCatalogPort catalog,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -96,7 +99,7 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, loggerFactory);
+            var pipeline = CreatePipeline(record, address, options, catalog, loggerFactory);
             var page = await pipeline.GetPageAsync(
                 MediaId.Create(mediaId),
                 chapterId,
@@ -118,6 +121,7 @@ public static class PagedPipelineEndpoints
         PluginRecord record,
         Uri address,
         IOptions<PluginHostOptions> options,
+        IMediaCatalogPort catalog,
         ILoggerFactory loggerFactory)
     {
         var correlationId = PluginGrpcHelpers.CreateCorrelationId();
@@ -144,7 +148,8 @@ public static class PagedPipelineEndpoints
             pagePort,
             new ManifestPolicyEvaluator(ManifestPolicyMapping.ToDefinition(record.Manifest)),
             cache,
-            pipelineOptions);
+            pipelineOptions,
+            catalog: catalog);
     }
 
     private static (PluginRecord? Record, Uri? Address, IResult? Error) TryResolvePlugin(

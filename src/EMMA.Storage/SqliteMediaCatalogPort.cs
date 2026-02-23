@@ -216,6 +216,95 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         return results;
     }
 
+    public async Task UpsertPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        IReadOnlyList<MediaPageRecord> pages,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken) as SqliteTransaction
+            ?? throw new InvalidOperationException("Failed to start SQLite transaction.");
+
+        await using (var deleteCommand = connection.CreateCommand())
+        {
+            deleteCommand.Transaction = transaction;
+            deleteCommand.CommandText = "DELETE FROM media_pages WHERE media_id = $mediaId AND chapter_id = $chapterId;";
+            deleteCommand.Parameters.AddWithValue("$mediaId", mediaId.Value);
+            deleteCommand.Parameters.AddWithValue("$chapterId", chapterId);
+            await deleteCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var page in pages)
+        {
+            await using var insertCommand = connection.CreateCommand();
+            insertCommand.Transaction = transaction;
+            insertCommand.CommandText = """
+                INSERT INTO media_pages (
+                    id,
+                    media_id,
+                    chapter_id,
+                    page_index,
+                    content_uri,
+                    updated_at
+                ) VALUES (
+                    $id,
+                    $mediaId,
+                    $chapterId,
+                    $index,
+                    $contentUri,
+                    $updatedAt
+                );
+                """;
+            insertCommand.Parameters.AddWithValue("$id", page.PageId);
+            insertCommand.Parameters.AddWithValue("$mediaId", mediaId.Value);
+            insertCommand.Parameters.AddWithValue("$chapterId", chapterId);
+            insertCommand.Parameters.AddWithValue("$index", page.Index);
+            insertCommand.Parameters.AddWithValue("$contentUri", page.ContentUri);
+            insertCommand.Parameters.AddWithValue("$updatedAt", page.UpdatedAtUtc.ToString("O"));
+
+            await insertCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<MediaPageRecord>> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT
+                id,
+                media_id,
+                chapter_id,
+                page_index,
+                content_uri,
+                updated_at
+            FROM media_pages
+            WHERE media_id = $mediaId
+              AND chapter_id = $chapterId
+            ORDER BY page_index;
+            """;
+        command.Parameters.AddWithValue("$mediaId", mediaId.Value);
+        command.Parameters.AddWithValue("$chapterId", chapterId);
+
+        var results = new List<MediaPageRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            results.Add(ReadPage(reader));
+        }
+
+        return results;
+    }
+
     private static MediaMetadata ReadMedia(SqliteDataReader reader)
     {
         var tagsJson = reader.GetString(7);
@@ -247,6 +336,17 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
             reader.GetInt32(2),
             reader.GetString(3),
             publishedAt);
+    }
+
+    private static MediaPageRecord ReadPage(SqliteDataReader reader)
+    {
+        return new MediaPageRecord(
+            reader.GetString(0),
+            MediaId.Create(reader.GetString(1)),
+            reader.GetString(2),
+            reader.GetInt32(3),
+            reader.GetString(4),
+            DateTimeOffset.Parse(reader.GetString(5)));
     }
 
     private static MediaType ParseMediaType(string value)

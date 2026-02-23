@@ -129,7 +129,7 @@ public sealed class ProbeEndpointTests
 
             var address = GetServerAddress(pluginApp);
             var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
-            await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }}\n}}\n");
+            await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }},\n  \"capabilities\": {{\n    \"network\": [\"http\", \"https\"],\n    \"cache\": true,\n    \"fileSystem\": [\"read\"]\n  }}\n}}\n");
 
             var factory = new WebApplicationFactory<global::Program>()
                 .WithWebHostBuilder(builder =>

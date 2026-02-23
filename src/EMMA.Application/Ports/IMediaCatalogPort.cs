@@ -13,4 +13,7 @@ public interface IMediaCatalogPort
 
     Task UpsertChaptersAsync(MediaId mediaId, IReadOnlyList<MediaChapterRecord> chapters, CancellationToken cancellationToken);
     Task<IReadOnlyList<MediaChapterRecord>> GetChaptersAsync(MediaId mediaId, CancellationToken cancellationToken);
+
+    Task UpsertPagesAsync(MediaId mediaId, string chapterId, IReadOnlyList<MediaPageRecord> pages, CancellationToken cancellationToken);
+    Task<IReadOnlyList<MediaPageRecord>> GetPagesAsync(MediaId mediaId, string chapterId, CancellationToken cancellationToken);
 }
