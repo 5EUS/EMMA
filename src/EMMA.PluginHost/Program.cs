@@ -52,6 +52,7 @@ var app = builder.Build();
 
 app.MapGrpcService<PluginControlService>();
 app.MapPluginHostEndpoints();
+app.MapPagedPipelineEndpoints();
 app.MapProbeEndpoints();
 app.MapGet("/", () => "EMMA plugin host is running.");
 

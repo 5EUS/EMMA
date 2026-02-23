@@ -130,7 +130,7 @@ public static class ProbeEndpoints
                 var pipeline = new PagedMediaPipeline(
                     searchPort,
                     pagePort,
-                    new AllowAllPolicyEvaluator(),
+                    new ManifestPolicyEvaluator(ManifestPolicyMapping.ToDefinition(record.Manifest)),
                     new InMemoryCachePort(),
                     pipelineOptions);
 
