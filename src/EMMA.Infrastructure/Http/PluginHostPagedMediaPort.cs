@@ -87,6 +87,28 @@ public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginH
         return new MediaPage(result.Id ?? string.Empty, result.Index, contentUri);
     }
 
+    public async Task<MediaPageAsset> GetPageAssetAsync(
+        MediaId mediaId,
+        string chapterId,
+        int pageIndex,
+        CancellationToken cancellationToken)
+    {
+        var url = BuildUrl("/pipeline/paged/page-asset", new Dictionary<string, string?>
+        {
+            ["mediaId"] = mediaId.Value,
+            ["chapterId"] = chapterId,
+            ["index"] = pageIndex.ToString()
+        });
+
+        var response = await _client.GetAsync(url, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var payload = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+
+        return new MediaPageAsset(contentType, payload, DateTimeOffset.UtcNow);
+    }
+
     private string BuildUrl(string path, IReadOnlyDictionary<string, string?> parameters)
     {
         var parts = new List<string>();

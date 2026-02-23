@@ -101,7 +101,7 @@ app.MapGet("/api/paged/page-asset", async (
     string? mediaId,
     string? chapterId,
     int? index,
-    EmbeddedRuntime runtime,
+    PluginHostPagedMediaPort pluginHost,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
@@ -109,13 +109,11 @@ app.MapGet("/api/paged/page-asset", async (
         return Results.BadRequest(new { message = "mediaId and chapterId are required." });
     }
 
-    var page = await runtime.Pipeline.GetPageAsync(
+    var asset = await pluginHost.GetPageAssetAsync(
         MediaId.Create(mediaId),
         chapterId,
         index ?? 0,
         cancellationToken);
-
-    var asset = await runtime.Pipeline.GetPageAssetAsync(page, cancellationToken);
     return Results.File(asset.Payload, asset.ContentType);
 });
 
