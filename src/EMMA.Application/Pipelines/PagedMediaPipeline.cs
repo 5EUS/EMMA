@@ -250,6 +250,12 @@ public sealed class PagedMediaPipeline(
             return;
         }
 
+        var existing = await _catalog.GetMediaAsync(mediaId, cancellationToken);
+        if (existing is null)
+        {
+            return;
+        }
+
         var records = chapters.Select(chapter => new MediaChapterRecord(
             chapter.ChapterId,
             mediaId,
@@ -267,6 +273,12 @@ public sealed class PagedMediaPipeline(
         CancellationToken cancellationToken)
     {
         if (_catalog is null)
+        {
+            return;
+        }
+
+        var existing = await _catalog.GetMediaAsync(mediaId, cancellationToken);
+        if (existing is null)
         {
             return;
         }

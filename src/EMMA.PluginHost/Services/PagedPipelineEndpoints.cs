@@ -36,7 +36,16 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
+            var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+            var pipeline = CreatePipeline(
+                record,
+                address,
+                options,
+                catalog,
+                pageAssetCache,
+                pageAssetFetcher,
+                loggerFactory,
+                correlationId);
             var results = await pipeline.SearchAsync(query ?? string.Empty, cancellationToken);
 
             return Results.Ok(results.Select(result => new
@@ -70,7 +79,16 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
+            var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+            var pipeline = CreatePipeline(
+                record,
+                address,
+                options,
+                catalog,
+                pageAssetCache,
+                pageAssetFetcher,
+                loggerFactory,
+                correlationId);
             var chapters = await pipeline.GetChaptersAsync(MediaId.Create(mediaId), cancellationToken);
 
             return Results.Ok(chapters.Select(chapter => new
@@ -105,7 +123,16 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
+            var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+            var pipeline = CreatePipeline(
+                record,
+                address,
+                options,
+                catalog,
+                pageAssetCache,
+                pageAssetFetcher,
+                loggerFactory,
+                correlationId);
             var page = await pipeline.GetPageAsync(
                 MediaId.Create(mediaId),
                 chapterId,
@@ -144,12 +171,29 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
+            var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+            var pipeline = CreatePipeline(
+                record,
+                address,
+                options,
+                catalog,
+                pageAssetCache,
+                pageAssetFetcher,
+                loggerFactory,
+                correlationId);
             var page = await pipeline.GetPageAsync(
                 MediaId.Create(mediaId),
                 chapterId,
                 index ?? 0,
                 cancellationToken);
+
+            var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(Math.Max(1, options.Value.ProbeTimeoutSeconds));
+            var logger = loggerFactory.CreateLogger("PagedPipelineEndpoints");
+            logger.LogInformation(
+                "Page asset fetch {CorrelationId} pluginId={PluginId} deadline={DeadlineUtc}",
+                correlationId,
+                record.Manifest.Id,
+                deadlineUtc.ToString("O"));
 
             var asset = await pipeline.GetPageAssetAsync(page, cancellationToken);
             return Results.File(asset.Payload, asset.ContentType);
@@ -165,9 +209,9 @@ public static class PagedPipelineEndpoints
         IMediaCatalogPort catalog,
         IPageAssetCachePort pageAssetCache,
         IPageAssetFetcherPort pageAssetFetcher,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        string correlationId)
     {
-        var correlationId = PluginGrpcHelpers.CreateCorrelationId();
         var endpoint = new PluginGrpcEndpoint(record, address, correlationId);
         var searchPort = new PluginSearchPort(
             endpoint,
