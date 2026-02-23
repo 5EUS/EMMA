@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using EMMA.PluginHost.Configuration;
+using EMMA.PluginHost.Sandboxing;
 using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Plugins;
@@ -10,7 +11,10 @@ namespace EMMA.PluginHost.Plugins;
 /// Minimal process supervisor for plugin startup and shutdown.
 /// TODO: Deprecate once a dedicated supervisor service is implemented.
 /// </summary>
-public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, ILogger<PluginProcessManager> logger)
+public sealed class PluginProcessManager(
+    IOptions<PluginHostOptions> options,
+    IPluginSandboxManager sandboxManager,
+    ILogger<PluginProcessManager> logger)
 {
     private sealed record ProcessHandle(Process Process, string StartupCommand, DateTimeOffset StartedAt);
     private sealed class LogBuffer(int maxLines)
@@ -52,6 +56,7 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
     }
 
     private readonly PluginHostOptions _options = options.Value;
+    private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly ILogger<PluginProcessManager> _logger = logger;
     private readonly Dictionary<string, ProcessHandle> _processes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LogBuffer> _logs = new(StringComparer.OrdinalIgnoreCase);
@@ -99,7 +104,10 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
             return current.WithState(PluginRuntimeState.Crashed, "process-exited", "Plugin process exited.", exitCode);
         }
 
+        await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+
         var startInfo = BuildStartInfo(manifest.Entry.Startup);
+        startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
         var process = new Process
         {
             StartInfo = startInfo,
@@ -113,6 +121,8 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
 
         AddProcess(manifest.Id, process, manifest.Entry.Startup);
         AttachLogCapture(manifest.Id, process);
+
+        await _sandboxManager.EnforceAsync(manifest, process, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(manifest.Entry.Endpoint)
             || !Uri.TryCreate(manifest.Entry.Endpoint, UriKind.Absolute, out var address))

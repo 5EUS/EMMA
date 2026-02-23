@@ -2,7 +2,6 @@ using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
-using System.Runtime.InteropServices;
 
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
@@ -17,17 +16,27 @@ builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();
 
-    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) // TODO RuntimeInformation does not report correctly with iOS and Android
+    if (OperatingSystem.IsAndroid())
+    {
+        return new AndroidPluginSandboxManager(options, sp.GetRequiredService<ILogger<AndroidPluginSandboxManager>>());
+    }
+
+    if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
+    {
+        return new IosPluginSandboxManager(options, sp.GetRequiredService<ILogger<IosPluginSandboxManager>>());
+    }
+
+    if (OperatingSystem.IsWindows())
     {
         return new WindowsPluginSandboxManager(options, sp.GetRequiredService<ILogger<WindowsPluginSandboxManager>>());
     }
 
-    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+    if (OperatingSystem.IsLinux())
     {
         return new LinuxPluginSandboxManager(options, sp.GetRequiredService<ILogger<LinuxPluginSandboxManager>>());
     }
 
-    if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+    if (OperatingSystem.IsMacOS())
     {
         return new MacOsPluginSandboxManager(options, sp.GetRequiredService<ILogger<MacOsPluginSandboxManager>>());
     }

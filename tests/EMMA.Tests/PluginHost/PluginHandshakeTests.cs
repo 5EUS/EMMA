@@ -43,7 +43,10 @@ public sealed class PluginHandshakeTests
         var registry = new PluginRegistry();
         var loader = new PluginManifestLoader(options, NullLogger<PluginManifestLoader>.Instance);
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
-        var processManager = new PluginProcessManager(options, NullLogger<PluginProcessManager>.Instance);
+        var processManager = new PluginProcessManager(
+            options,
+            sandbox,
+            NullLogger<PluginProcessManager>.Instance);
         var handshake = new PluginHandshakeService(
             loader,
             registry,

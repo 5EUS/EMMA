@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
+using EMMA.PluginHost.Sandboxing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -38,7 +39,11 @@ public sealed class PluginLifecycleTests
             MaxTimeoutRetries = 2
         });
 
-        var manager = new PluginProcessManager(options, NullLogger<PluginProcessManager>.Instance);
+        var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var manager = new PluginProcessManager(
+            options,
+            sandbox,
+            NullLogger<PluginProcessManager>.Instance);
         var current = PluginRuntimeStatus.Unknown();
 
         var started = await manager.EnsureStartedAsync(manifest, current, CancellationToken.None);
@@ -79,7 +84,11 @@ public sealed class PluginLifecycleTests
             MaxTimeoutRetries = 2
         });
 
-        var manager = new PluginProcessManager(options, NullLogger<PluginProcessManager>.Instance);
+        var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var manager = new PluginProcessManager(
+            options,
+            sandbox,
+            NullLogger<PluginProcessManager>.Instance);
         var current = PluginRuntimeStatus.Unknown().WithRetry(1, DateTimeOffset.UtcNow.AddSeconds(5), "rpc-timeout", "timeout");
 
         var blocked = await manager.EnsureStartedAsync(manifest, current, CancellationToken.None);
