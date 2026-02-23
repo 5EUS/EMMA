@@ -4,6 +4,8 @@ package emma.plugins;
 
 option csharp_namespace = "EMMA.Contracts.Plugins";
 
+import "request_context.proto";
+
 service VideoProvider {
   rpc GetStreams (StreamRequest) returns (StreamResponse);
   rpc GetSegment (SegmentRequest) returns (SegmentResponse);
@@ -11,6 +13,7 @@ service VideoProvider {
 
 message StreamRequest {
   string media_id = 1;
+  RequestContext context = 100;
 }
 
 message StreamResponse {
@@ -21,6 +24,7 @@ message SegmentRequest {
   string media_id = 1;
   string stream_id = 2;
   int32 sequence = 3;
+  RequestContext context = 100;
 }
 
 message SegmentResponse {

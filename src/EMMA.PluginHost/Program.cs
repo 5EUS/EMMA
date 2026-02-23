@@ -1,5 +1,6 @@
 using EMMA.Application.Ports;
 using EMMA.Infrastructure.Cache;
+using EMMA.Infrastructure.Http;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
@@ -20,6 +21,8 @@ builder.Services.AddSingleton<StorageInitializer>();
 builder.Services.AddSingleton<TempAssetCleanupService>();
 builder.Services.AddSingleton(PageAssetCacheOptions.Default);
 builder.Services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
+builder.Services.AddSingleton<IPageAssetCachePort, PageAssetStorageCache>();
+builder.Services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
 builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();

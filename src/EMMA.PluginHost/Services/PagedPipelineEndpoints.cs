@@ -25,6 +25,8 @@ public static class PagedPipelineEndpoints
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
+            IPageAssetCachePort pageAssetCache,
+            IPageAssetFetcherPort pageAssetFetcher,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -34,7 +36,7 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, catalog, loggerFactory);
+            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
             var results = await pipeline.SearchAsync(query ?? string.Empty, cancellationToken);
 
             return Results.Ok(results.Select(result => new
@@ -52,6 +54,8 @@ public static class PagedPipelineEndpoints
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
+            IPageAssetCachePort pageAssetCache,
+            IPageAssetFetcherPort pageAssetFetcher,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -66,7 +70,7 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, catalog, loggerFactory);
+            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
             var chapters = await pipeline.GetChaptersAsync(MediaId.Create(mediaId), cancellationToken);
 
             return Results.Ok(chapters.Select(chapter => new
@@ -85,6 +89,8 @@ public static class PagedPipelineEndpoints
             PluginRegistry registry,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
+            IPageAssetCachePort pageAssetCache,
+            IPageAssetFetcherPort pageAssetFetcher,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
@@ -99,7 +105,7 @@ public static class PagedPipelineEndpoints
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
 
-            var pipeline = CreatePipeline(record, address, options, catalog, loggerFactory);
+            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
             var page = await pipeline.GetPageAsync(
                 MediaId.Create(mediaId),
                 chapterId,
@@ -114,6 +120,41 @@ public static class PagedPipelineEndpoints
             });
         });
 
+        app.MapGet("/pipeline/paged/page-asset", async (
+            string? mediaId,
+            string? chapterId,
+            int? index,
+            string? pluginId,
+            PluginRegistry registry,
+            IOptions<PluginHostOptions> options,
+            IMediaCatalogPort catalog,
+            IPageAssetCachePort pageAssetCache,
+            IPageAssetFetcherPort pageAssetFetcher,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+            {
+                return Results.BadRequest(new { message = "mediaId and chapterId are required." });
+            }
+
+            var (record, address, error) = TryResolvePlugin(registry, pluginId);
+            if (error is not null || record is null || address is null)
+            {
+                return error ?? Results.Problem("Plugin resolution failed.");
+            }
+
+            var pipeline = CreatePipeline(record, address, options, catalog, pageAssetCache, pageAssetFetcher, loggerFactory);
+            var page = await pipeline.GetPageAsync(
+                MediaId.Create(mediaId),
+                chapterId,
+                index ?? 0,
+                cancellationToken);
+
+            var asset = await pipeline.GetPageAssetAsync(page, cancellationToken);
+            return Results.File(asset.Payload, asset.ContentType);
+        });
+
         return app;
     }
 
@@ -122,6 +163,8 @@ public static class PagedPipelineEndpoints
         Uri address,
         IOptions<PluginHostOptions> options,
         IMediaCatalogPort catalog,
+        IPageAssetCachePort pageAssetCache,
+        IPageAssetFetcherPort pageAssetFetcher,
         ILoggerFactory loggerFactory)
     {
         var correlationId = PluginGrpcHelpers.CreateCorrelationId();
@@ -149,7 +192,9 @@ public static class PagedPipelineEndpoints
             new ManifestPolicyEvaluator(ManifestPolicyMapping.ToDefinition(record.Manifest)),
             cache,
             pipelineOptions,
-            catalog: catalog);
+            pageAssetCache,
+            pageAssetFetcher,
+            catalog);
     }
 
     private static (PluginRecord? Record, Uri? Address, IResult? Error) TryResolvePlugin(

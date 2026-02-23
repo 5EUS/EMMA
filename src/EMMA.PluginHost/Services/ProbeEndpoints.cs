@@ -49,6 +49,7 @@ public static class ProbeEndpoints
                 }
 
                 var correlationId = CreateCorrelationId();
+                var deadlineUtc = GetDeadlineUtc(options.Value);
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -58,7 +59,8 @@ public static class ProbeEndpoints
                 var client = new SearchProvider.SearchProviderClient(channel);
                 var response = await client.SearchAsync(new SearchRequest
                 {
-                    Query = query ?? string.Empty
+                    Query = query ?? string.Empty,
+                    Context = CreateRequestContext(correlationId, deadlineUtc)
                 }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                 logger.LogInformation(
@@ -254,6 +256,7 @@ public static class ProbeEndpoints
                 }
 
                 var correlationId = CreateCorrelationId();
+                var deadlineUtc = GetDeadlineUtc(options.Value);
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -263,7 +266,8 @@ public static class ProbeEndpoints
                 var client = new PageProvider.PageProviderClient(channel);
                 var chapters = await client.GetChaptersAsync(new ChaptersRequest
                 {
-                    MediaId = mediaId
+                    MediaId = mediaId,
+                    Context = CreateRequestContext(correlationId, deadlineUtc)
                 }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                 MediaPage? page = null;
@@ -273,7 +277,8 @@ public static class ProbeEndpoints
                     {
                         MediaId = mediaId,
                         ChapterId = chapterId,
-                        Index = pageIndex
+                        Index = pageIndex,
+                        Context = CreateRequestContext(correlationId, deadlineUtc)
                     }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                     page = pageResponse.Page;
@@ -350,6 +355,7 @@ public static class ProbeEndpoints
                 }
 
                 var correlationId = CreateCorrelationId();
+                var deadlineUtc = GetDeadlineUtc(options.Value);
                 using var httpClient = CreateHttpClient(address);
                 using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
                 {
@@ -359,7 +365,8 @@ public static class ProbeEndpoints
                 var client = new VideoProvider.VideoProviderClient(channel);
                 var streams = await client.GetStreamsAsync(new StreamRequest
                 {
-                    MediaId = mediaId
+                    MediaId = mediaId,
+                    Context = CreateRequestContext(correlationId, deadlineUtc)
                 }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
 
                 SegmentResponse? segment = null;
@@ -369,7 +376,8 @@ public static class ProbeEndpoints
                     {
                         MediaId = mediaId,
                         StreamId = streamId,
-                        Sequence = segmentSequence
+                        Sequence = segmentSequence,
+                        Context = CreateRequestContext(correlationId, deadlineUtc)
                     }, headers: CreateHeaders(correlationId), cancellationToken: cts.Token);
                 }
 
@@ -520,6 +528,21 @@ public static class ProbeEndpoints
     {
         { CorrelationIdHeader, correlationId }
     };
+
+    private static RequestContext CreateRequestContext(string correlationId, DateTimeOffset deadlineUtc)
+    {
+        return new RequestContext
+        {
+            CorrelationId = correlationId,
+            DeadlineUtc = deadlineUtc.ToString("O")
+        };
+    }
+
+    private static DateTimeOffset GetDeadlineUtc(PluginHostOptions options)
+    {
+        var timeoutSeconds = Math.Max(1, options.ProbeTimeoutSeconds);
+        return DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
+    }
 
     private static IResult HandleProbeException(Exception ex)
     {

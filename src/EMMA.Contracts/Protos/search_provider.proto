@@ -4,12 +4,15 @@ package emma.plugins;
 
 option csharp_namespace = "EMMA.Contracts.Plugins";
 
+import "request_context.proto";
+
 service SearchProvider {
   rpc Search (SearchRequest) returns (SearchResponse);
 }
 
 message SearchRequest {
   string query = 1;
+  RequestContext context = 100;
 }
 
 message SearchResponse {

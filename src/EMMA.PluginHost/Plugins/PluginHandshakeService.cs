@@ -141,9 +141,11 @@ public sealed class PluginHandshakeService(
 
             var client = new PluginControl.PluginControlClient(channel);
             var correlationId = CreateCorrelationId();
+            var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(_options.HandshakeTimeoutSeconds);
             var headers = CreateHeaders(correlationId);
-            var health = await client.GetHealthAsync(new HealthRequest(), headers: headers, cancellationToken: cts.Token);
-            var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest(), headers: headers, cancellationToken: cts.Token);
+            var context = CreateRequestContext(correlationId, deadlineUtc);
+            var health = await client.GetHealthAsync(new HealthRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
+            var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
 
             var caps = capabilities.Capabilities.ToArray();
             var budgets = capabilities.Budgets;
@@ -218,6 +220,15 @@ public sealed class PluginHandshakeService(
     {
         { "x-correlation-id", correlationId }
     };
+
+    private static RequestContext CreateRequestContext(string correlationId, DateTimeOffset deadlineUtc)
+    {
+        return new RequestContext
+        {
+            CorrelationId = correlationId,
+            DeadlineUtc = deadlineUtc.ToString("O")
+        };
+    }
 
     private static PluginHandshakeStatus Failed(string message)
     {

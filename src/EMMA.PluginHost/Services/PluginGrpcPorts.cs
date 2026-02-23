@@ -24,7 +24,8 @@ internal sealed class PluginSearchPort(
 
     public async Task<IReadOnlyList<MediaSummary>> SearchAsync(string query, CancellationToken cancellationToken)
     {
-        using var cts = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        var (cts, deadlineUtc) = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        using var ctsScope = cts;
         using var lease = await PluginGrpcHelpers.AcquireLeaseAsync(
             _endpoint.Record.Manifest.Id,
             _options.Value,
@@ -39,7 +40,8 @@ internal sealed class PluginSearchPort(
         var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
         var response = await client.SearchAsync(new PluginContracts.SearchRequest
         {
-            Query = query ?? string.Empty
+            Query = query ?? string.Empty,
+            Context = PluginGrpcHelpers.CreateRequestContext(_endpoint.CorrelationId, deadlineUtc)
         }, headers: PluginGrpcHelpers.CreateHeaders(_endpoint.CorrelationId), cancellationToken: cts.Token);
 
         var results = response.Results
@@ -88,7 +90,8 @@ internal sealed class PluginPageProviderPort(
 
     public async Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(MediaId mediaId, CancellationToken cancellationToken)
     {
-        using var cts = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        var (cts, deadlineUtc) = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        using var ctsScope = cts;
         using var lease = await PluginGrpcHelpers.AcquireLeaseAsync(
             _endpoint.Record.Manifest.Id,
             _options.Value,
@@ -103,7 +106,8 @@ internal sealed class PluginPageProviderPort(
         var client = new PluginContracts.PageProvider.PageProviderClient(channel);
         var response = await client.GetChaptersAsync(new PluginContracts.ChaptersRequest
         {
-            MediaId = mediaId.Value
+            MediaId = mediaId.Value,
+            Context = PluginGrpcHelpers.CreateRequestContext(_endpoint.CorrelationId, deadlineUtc)
         }, headers: PluginGrpcHelpers.CreateHeaders(_endpoint.CorrelationId), cancellationToken: cts.Token);
 
         var chapters = response.Chapters
@@ -126,7 +130,8 @@ internal sealed class PluginPageProviderPort(
         int pageIndex,
         CancellationToken cancellationToken)
     {
-        using var cts = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        var (cts, deadlineUtc) = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        using var ctsScope = cts;
         using var lease = await PluginGrpcHelpers.AcquireLeaseAsync(
             _endpoint.Record.Manifest.Id,
             _options.Value,
@@ -143,7 +148,8 @@ internal sealed class PluginPageProviderPort(
         {
             MediaId = mediaId.Value,
             ChapterId = chapterId,
-            Index = pageIndex
+            Index = pageIndex,
+            Context = PluginGrpcHelpers.CreateRequestContext(_endpoint.CorrelationId, deadlineUtc)
         }, headers: PluginGrpcHelpers.CreateHeaders(_endpoint.CorrelationId), cancellationToken: cts.Token);
 
         if (response.Page is null)
@@ -224,14 +230,26 @@ internal static class PluginGrpcHelpers
 
     public static string CreateCorrelationId() => Guid.NewGuid().ToString("n");
 
-    public static CancellationTokenSource CreateCallTimeout(
+    public static (CancellationTokenSource Cts, DateTimeOffset DeadlineUtc) CreateCallTimeout(
         IOptions<PluginHostOptions> options,
         CancellationToken cancellationToken)
     {
         var timeoutSeconds = Math.Max(1, options.Value.ProbeTimeoutSeconds);
         var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-        return cts;
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
+        return (cts, deadlineUtc);
+    }
+
+    public static PluginContracts.RequestContext CreateRequestContext(
+        string correlationId,
+        DateTimeOffset deadlineUtc)
+    {
+        return new PluginContracts.RequestContext
+        {
+            CorrelationId = correlationId,
+            DeadlineUtc = deadlineUtc.ToString("O")
+        };
     }
 
     private sealed class CallLease(SemaphoreSlim semaphore) : IDisposable
