@@ -118,3 +118,7 @@ app.MapGet("/api/paged/page-asset", async (
 });
 
 app.Run();
+
+public partial class Program
+{
+}
