@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using EMMA.Api;
 using EMMA.Application.Ports;
 using EMMA.Domain;
@@ -102,6 +103,7 @@ app.MapGet("/api/paged/page-asset", async (
     string? chapterId,
     int? index,
     PluginHostPagedMediaPort pluginHost,
+    ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
@@ -109,12 +111,40 @@ app.MapGet("/api/paged/page-asset", async (
         return Results.BadRequest(new { message = "mediaId and chapterId are required." });
     }
 
-    var asset = await pluginHost.GetPageAssetAsync(
-        MediaId.Create(mediaId),
-        chapterId,
-        index ?? 0,
-        cancellationToken);
-    return Results.File(asset.Payload, asset.ContentType);
+    var correlationId = Guid.NewGuid().ToString("n");
+    var stopwatch = Stopwatch.StartNew();
+
+    try
+    {
+        var asset = await pluginHost.GetPageAssetAsync(
+            MediaId.Create(mediaId),
+            chapterId,
+            index ?? 0,
+            cancellationToken);
+
+        logger.LogInformation(
+            "Page asset proxy {CorrelationId} mediaId={MediaId} chapterId={ChapterId} index={Index} size={Size} elapsedMs={ElapsedMs}",
+            correlationId,
+            mediaId,
+            chapterId,
+            index ?? 0,
+            asset.Payload.Length,
+            stopwatch.ElapsedMilliseconds);
+
+        return Results.File(asset.Payload, asset.ContentType);
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(
+            ex,
+            "Page asset proxy failed {CorrelationId} mediaId={MediaId} chapterId={ChapterId} index={Index} elapsedMs={ElapsedMs}",
+            correlationId,
+            mediaId,
+            chapterId,
+            index ?? 0,
+            stopwatch.ElapsedMilliseconds);
+        throw;
+    }
 });
 
 app.Run();

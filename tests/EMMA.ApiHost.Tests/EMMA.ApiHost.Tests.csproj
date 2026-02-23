@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" Version="2.60.0" />
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0-preview.1.25122.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
@@ -20,6 +21,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\EMMA.ApiHost\EMMA.ApiHost.csproj" />
+    <ProjectReference Include="..\..\src\EMMA.Contracts\EMMA.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\EMMA.PluginHost\EMMA.PluginHost.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -17,7 +18,7 @@ public sealed class ApiPageAssetEndpointTests
         var payload = new byte[] { 1, 2, 3, 4 };
         await using var stub = await PluginHostStub.StartAsync(payload, "application/octet-stream");
 
-        await using var factory = new WebApplicationFactory<Program>()
+        await using var factory = new WebApplicationFactory<EMMA.ApiHost.ApiHostEntryPoint>()
             .WithWebHostBuilder(builder =>
             {
                 builder.ConfigureAppConfiguration((_, config) =>
