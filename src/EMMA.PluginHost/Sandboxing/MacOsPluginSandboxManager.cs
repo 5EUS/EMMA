@@ -27,9 +27,11 @@ public sealed class MacOsPluginSandboxManager(IOptions<PluginHostOptions> option
         }
 
         // TODO sandbox-exec is legacy; we keep profiles minimal and explicit.
-        var profilePath = GetProfilePath(pluginRoot);
+        var profilePath = GetProfilePath(manifest);
         var profile = BuildProfile(manifest, pluginRoot);
+        TryMakeWritable(profilePath);
         File.WriteAllText(profilePath, profile);
+        TryLockDownProfile(profilePath); // best effort to prevent tampering, but not critical since profile is read-only and sandbox-exec is legacy.
 
         if (Logger.IsEnabled(LogLevel.Information))
         {
@@ -47,7 +49,7 @@ public sealed class MacOsPluginSandboxManager(IOptions<PluginHostOptions> option
         }
 
         var pluginRoot = GetPluginRoot(manifest);
-        var profilePath = GetProfilePath(pluginRoot);
+        var profilePath = GetProfilePath(manifest);
 
         if (!File.Exists(profilePath))
         {
@@ -64,9 +66,11 @@ public sealed class MacOsPluginSandboxManager(IOptions<PluginHostOptions> option
         return startInfo;
     }
 
-    private static string GetProfilePath(string pluginRoot)
+    private string GetProfilePath(PluginManifest manifest)
     {
-        return Path.Combine(pluginRoot, "sandbox.sb");
+        var profilesRoot = Path.Combine(Options.SandboxRootDirectory, "profiles");
+        Directory.CreateDirectory(profilesRoot);
+        return Path.Combine(profilesRoot, $"{manifest.Id}.sb");
     }
 
     private static string BuildProfile(PluginManifest manifest, string pluginRoot)
@@ -118,4 +122,41 @@ public sealed class MacOsPluginSandboxManager(IOptions<PluginHostOptions> option
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
+
+    private static void TryLockDownProfile(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryMakeWritable(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            if (File.Exists(path))
+            {
+                File.SetUnixFileMode(
+                    path,
+                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
+            }
+        }
+        catch
+        {
+        }
+    }
 }

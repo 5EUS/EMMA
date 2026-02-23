@@ -1,4 +1,6 @@
+using EMMA.Infrastructure.Cache;
 using EMMA.PluginHost.Plugins;
+using EMMA.Storage;
 
 namespace EMMA.PluginHost.Services;
 
@@ -185,6 +187,29 @@ public static class PluginHostEndpoints
             });
 
             return Results.Ok(results);
+        });
+
+        app.MapPost("/storage/cleanup", async (
+            TempAssetCleanupService tempCleanup,
+            PageAssetCacheOptions cacheOptions,
+            CancellationToken cancellationToken) =>
+        {
+            var tempResult = await tempCleanup.CleanupAsync(cancellationToken);
+            var cacheDeleted = await PageAssetCacheCleanup.CleanupAsync(cacheOptions, cancellationToken);
+
+            return Results.Ok(new
+            {
+                TempAssets = new
+                {
+                    tempResult.DeletedFiles,
+                    tempResult.DeletedDirectories
+                },
+                CacheAssets = new
+                {
+                    DeletedFiles = cacheDeleted,
+                    cacheOptions.DiskRetentionDays
+                }
+            });
         });
 
         return app;
