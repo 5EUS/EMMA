@@ -1,25 +1,28 @@
 using EMMA.Api;
 using EMMA.Application.Ports;
 using EMMA.Domain;
+using EMMA.Infrastructure.Http;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
 using EMMA.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSingleton<InMemoryMediaStore>();
-builder.Services.AddSingleton<IMediaSearchPort, InMemorySearchPort>();
-builder.Services.AddSingleton<IPageProviderPort, InMemoryPageProvider>();
-builder.Services.AddSingleton<IPolicyEvaluator, AllowAllPolicyEvaluator>();
+builder.Services.Configure<PluginHostClientOptions>(builder.Configuration.GetSection("PluginHost"));
+builder.Services.AddHttpClient<PluginHostPagedMediaPort>((sp, client) =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostClientOptions>>().Value;
+    client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
+});
+builder.Services.AddSingleton<IMediaSearchPort>(sp => sp.GetRequiredService<PluginHostPagedMediaPort>());
+builder.Services.AddSingleton<IPageProviderPort>(sp => sp.GetRequiredService<PluginHostPagedMediaPort>());
+builder.Services.AddSingleton<IPolicyEvaluator>(_ => new HostPolicyEvaluator());
 builder.Services.AddSingleton<ICachePort, InMemoryCachePort>();
 builder.Services.AddSingleton(StorageOptions.Default);
 builder.Services.AddSingleton<StorageInitializer>();
 
 builder.Services.AddSingleton(sp =>
 {
-    var store = sp.GetRequiredService<InMemoryMediaStore>();
-    SeedDemoData(store);
-
     return EmbeddedRuntimeFactory.Create(
         sp.GetRequiredService<IMediaSearchPort>(),
         sp.GetRequiredService<IPageProviderPort>(),
@@ -95,23 +98,3 @@ app.MapGet("/api/paged/page", async (
 });
 
 app.Run();
-
-static void SeedDemoData(InMemoryMediaStore store)
-{
-    if (store.Media.Count > 0)
-    {
-        return;
-    }
-
-    var mediaId = MediaId.Create("demo-1");
-    var summary = new MediaSummary(mediaId, "local", "Embedded Demo", MediaType.Paged);
-    store.AddMedia(summary);
-
-    var chapter = new MediaChapter("ch-1", 1, "Chapter One");
-    store.AddChapter(mediaId, chapter);
-
-    store.AddPage(
-        mediaId,
-        chapter.ChapterId,
-        new MediaPage("page-1", 0, new Uri("https://example.invalid/page-1.jpg")));
-}

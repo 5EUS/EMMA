@@ -9,10 +9,25 @@ namespace EMMA.Infrastructure.Policy;
 public sealed class ManifestPolicyEvaluator : IPolicyEvaluator
 {
     private readonly CapabilityPolicy _policy = new();
+    private static readonly string[] DefaultNetworkTargets =
+    [
+        "search",
+        "chapters",
+        "page",
+        "page-asset"
+    ]; // TODO expand with video source targets once supported
 
     public ManifestPolicyEvaluator(ManifestPolicyDefinition definition)
     {
         _policy.AllowCache(definition.CacheAllowed);
+
+        if (definition.Network is not null && definition.Network.Count > 0)
+        {
+            foreach (var target in DefaultNetworkTargets)
+            {
+                _policy.AllowNetworkDomain(target);
+            }
+        }
 
         if (definition.Domains is not null)
         {
@@ -65,6 +80,7 @@ public sealed class ManifestPolicyEvaluator : IPolicyEvaluator
 /// </summary>
 public sealed record ManifestPolicyDefinition(
     bool CacheAllowed,
+    IReadOnlyList<string>? Network,
     IReadOnlyList<string>? Domains,
     IReadOnlyList<string>? Paths,
     IReadOnlyList<string>? FileSystem);

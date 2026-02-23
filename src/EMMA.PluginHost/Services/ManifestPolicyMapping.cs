@@ -10,6 +10,7 @@ internal static class ManifestPolicyMapping
         var caps = manifest.Capabilities;
         return new ManifestPolicyDefinition(
             caps?.Cache ?? false,
+            caps?.Network,
             manifest.Permissions?.Domains,
             manifest.Permissions?.Paths,
             caps?.FileSystem);

@@ -5,6 +5,7 @@ namespace EMMA.Infrastructure.InMemory;
 
 /// <summary>
 /// In-memory cache adapter for pipeline-level results.
+/// TODO deprecate this in-memory cache and replace with a distributed cache implementation for real runtime use.
 /// </summary>
 public sealed class InMemoryCachePort : ICachePort
 {
