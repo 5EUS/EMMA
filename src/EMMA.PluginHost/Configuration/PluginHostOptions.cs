@@ -9,7 +9,7 @@ public sealed class PluginHostOptions
     public int HandshakeTimeoutSeconds { get; init; } = 5;
     public bool HandshakeOnStartup { get; init; } = true;
     public string SandboxRootDirectory { get; init; } = "sandbox";
-    public bool SandboxEnabled { get; init; } = true; 
+    public bool SandboxEnabled { get; init; } = true;
     public int BudgetWatchIntervalSeconds { get; init; } = 30;
     public int MaxCpuBudgetMs { get; init; } = 250;
     public int MaxMemoryMb { get; init; } = 512;
