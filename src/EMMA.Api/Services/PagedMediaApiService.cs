@@ -26,12 +26,12 @@ public sealed class PagedMediaApiService(
             {
                 Result = new SearchResult()
             };
-            response.Result.Items.AddRange(results.Select(MapSummary));
+            response.Result.Items.AddRange(results.Select(PagedMediaApiMapper.MapSummary));
             return response;
         }
         catch (Exception ex)
         {
-            return new SearchResponse { Error = CreateError(ex) };
+            return new SearchResponse { Error = PagedMediaApiMapper.CreateError(ex) };
         }
     }
 
@@ -40,7 +40,7 @@ public sealed class PagedMediaApiService(
         using var scope = BeginClientScope();
         if (string.IsNullOrWhiteSpace(request.MediaId))
         {
-            return new ChaptersResponse { Error = InvalidRequest("media_id is required.") };
+            return new ChaptersResponse { Error = PagedMediaApiMapper.InvalidRequest("media_id is required.") };
         }
 
         try
@@ -53,12 +53,12 @@ public sealed class PagedMediaApiService(
             {
                 Result = new ChaptersResult()
             };
-            response.Result.Items.AddRange(chapters.Select(MapChapter));
+            response.Result.Items.AddRange(chapters.Select(PagedMediaApiMapper.MapChapter));
             return response;
         }
         catch (Exception ex)
         {
-            return new ChaptersResponse { Error = CreateError(ex) };
+            return new ChaptersResponse { Error = PagedMediaApiMapper.CreateError(ex) };
         }
     }
 
@@ -67,12 +67,12 @@ public sealed class PagedMediaApiService(
         using var scope = BeginClientScope();
         if (string.IsNullOrWhiteSpace(request.MediaId) || string.IsNullOrWhiteSpace(request.ChapterId))
         {
-            return new PageResponse { Error = InvalidRequest("media_id and chapter_id are required.") };
+            return new PageResponse { Error = PagedMediaApiMapper.InvalidRequest("media_id and chapter_id are required.") };
         }
 
         if (request.Index < 0)
         {
-            return new PageResponse { Error = InvalidRequest("index must be >= 0.") };
+            return new PageResponse { Error = PagedMediaApiMapper.InvalidRequest("index must be >= 0.") };
         }
 
         try
@@ -83,11 +83,11 @@ public sealed class PagedMediaApiService(
                 request.Index,
                 context.CancellationToken);
 
-            return new PageResponse { Page = MapPage(page) };
+            return new PageResponse { Page = PagedMediaApiMapper.MapPage(page) };
         }
         catch (Exception ex)
         {
-            return new PageResponse { Error = CreateError(ex) };
+            return new PageResponse { Error = PagedMediaApiMapper.CreateError(ex) };
         }
     }
 
@@ -96,12 +96,12 @@ public sealed class PagedMediaApiService(
         using var scope = BeginClientScope();
         if (string.IsNullOrWhiteSpace(request.MediaId) || string.IsNullOrWhiteSpace(request.ChapterId))
         {
-            return new PageAssetResponse { Error = InvalidRequest("media_id and chapter_id are required.") };
+            return new PageAssetResponse { Error = PagedMediaApiMapper.InvalidRequest("media_id and chapter_id are required.") };
         }
 
         if (request.Index < 0)
         {
-            return new PageAssetResponse { Error = InvalidRequest("index must be >= 0.") };
+            return new PageAssetResponse { Error = PagedMediaApiMapper.InvalidRequest("index must be >= 0.") };
         }
 
         try
@@ -115,82 +115,13 @@ public sealed class PagedMediaApiService(
             var asset = await _runtime.Pipeline.GetPageAssetAsync(page, context.CancellationToken);
             return new PageAssetResponse
             {
-                Asset = new ApiPageAsset
-                {
-                    ContentType = asset.ContentType,
-                    Payload = Google.Protobuf.ByteString.CopyFrom(asset.Payload)
-                }
+                Asset = PagedMediaApiMapper.MapAsset(asset)
             };
         }
         catch (Exception ex)
         {
-            return new PageAssetResponse { Error = CreateError(ex) };
+            return new PageAssetResponse { Error = PagedMediaApiMapper.CreateError(ex) };
         }
-    }
-
-    private ApiMediaSummary MapSummary(MediaSummary summary)
-    {
-        return new ApiMediaSummary
-        {
-            Id = summary.Id.Value,
-            Source = summary.SourceId,
-            Title = summary.Title,
-            MediaType = MapMediaType(summary.MediaType)
-        };
-    }
-
-    private ApiMediaChapter MapChapter(MediaChapter chapter)
-    {
-        return new ApiMediaChapter
-        {
-            Id = chapter.ChapterId,
-            Number = chapter.Number,
-            Title = chapter.Title
-        };
-    }
-
-    private ApiMediaPage MapPage(MediaPage page)
-    {
-        return new ApiMediaPage
-        {
-            Id = page.PageId,
-            Index = page.Index,
-            ContentUri = page.ContentUri.ToString()
-        };
-    }
-
-    private static ApiMediaType MapMediaType(MediaType mediaType)
-    {
-        return mediaType switch
-        {
-            MediaType.Video => ApiMediaType.Video,
-            MediaType.Paged => ApiMediaType.Paged,
-            _ => ApiMediaType.Unspecified
-        };
-    }
-
-    private ApiError CreateError(Exception ex)
-    {
-        var error = ex switch
-        {
-            KeyNotFoundException => new ApiError { Code = "not_found" },
-            TimeoutException => new ApiError { Code = "timeout" },
-            OperationCanceledException => new ApiError { Code = "cancelled" },
-            InvalidOperationException => new ApiError { Code = "invalid_request" },
-            _ => new ApiError { Code = "upstream_failure" }
-        };
-
-        error.Message = string.IsNullOrWhiteSpace(ex.Message) ? "Request failed." : ex.Message;
-        return error;
-    }
-
-    private ApiError InvalidRequest(string message)
-    {
-        return new ApiError
-        {
-            Code = "invalid_request",
-            Message = message
-        };
     }
 
     private IDisposable? BeginClientScope()

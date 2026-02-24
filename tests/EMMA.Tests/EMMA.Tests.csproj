@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\EMMA.Api\EMMA.Api.csproj" />
     <ProjectReference Include="..\..\src\EMMA.Domain\EMMA.Domain.csproj" />
     <ProjectReference Include="..\..\src\EMMA.Application\EMMA.Application.csproj" />
     <ProjectReference Include="..\..\src\EMMA.Contracts\EMMA.Contracts.csproj" />
