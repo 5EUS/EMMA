@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Threading.RateLimiting;
 using EMMA.Api;
+using EMMA.Api.Configuration;
 using EMMA.Api.Services;
 using EMMA.Application.Ports;
 using EMMA.Domain;
@@ -10,7 +12,45 @@ using EMMA.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddGrpc();
+builder.Services.Configure<ApiAuthOptions>(builder.Configuration.GetSection("ApiAuth"));
+builder.Services.Configure<ApiRateLimitOptions>(builder.Configuration.GetSection("ApiRateLimit"));
+builder.Services.AddSingleton<IApiKeyValidator, ApiKeyValidator>();
+builder.Services.AddSingleton<IClientIdentityAccessor, ClientIdentityAccessor>();
+builder.Services.AddGrpc(options =>
+{
+    options.Interceptors.Add<ApiKeyGrpcInterceptor>();
+});
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    {
+        var settings = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<ApiRateLimitOptions>>().Value;
+        return RateLimitPartition.GetConcurrencyLimiter(
+            "global",
+            _ => new ConcurrencyLimiterOptions
+            {
+                PermitLimit = Math.Max(1, settings.GlobalConcurrencyLimit),
+                QueueLimit = Math.Max(0, settings.GlobalQueueLimit),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            });
+    });
+    options.AddPolicy("per-client", context =>
+    {
+        var settings = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<ApiRateLimitOptions>>().Value;
+        var auth = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<ApiAuthOptions>>().Value;
+        var key = ApiAuthHeader.GetClientKey(context, auth.HeaderName);
+        return RateLimitPartition.GetFixedWindowLimiter(
+            key,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = Math.Max(1, settings.PerClientPermitLimit),
+                Window = TimeSpan.FromSeconds(Math.Max(1, settings.PerClientWindowSeconds)),
+                QueueLimit = Math.Max(0, settings.PerClientQueueLimit),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            });
+    });
+});
 builder.Services.Configure<PluginHostClientOptions>(builder.Configuration.GetSection("PluginHost"));
 builder.Services.AddHttpClient<PluginHostPagedMediaPort>((sp, client) =>
 {
@@ -35,12 +75,16 @@ builder.Services.AddSingleton(sp =>
 
 var app = builder.Build();
 
+app.UseRateLimiter();
+app.UseMiddleware<ApiKeyAuthMiddleware>();
+
 var storageInitializer = app.Services.GetRequiredService<StorageInitializer>();
 await storageInitializer.InitializeAsync(CancellationToken.None);
 
 app.MapGet("/", () => "EMMA API host is running.");
 
-app.MapGrpcService<PagedMediaApiService>();
+app.MapGrpcService<PagedMediaApiService>()
+    .RequireRateLimiting("per-client");
 
 app.MapGet("/api/paged/search", async (
     string? query,
@@ -55,7 +99,7 @@ app.MapGet("/api/paged/search", async (
         result.Title,
         MediaType = result.MediaType.ToString().ToLowerInvariant()
     }));
-});
+}).RequireRateLimiting("per-client");
 
 app.MapGet("/api/paged/chapters", async (
     string? mediaId,
@@ -74,7 +118,7 @@ app.MapGet("/api/paged/chapters", async (
         chapter.Number,
         chapter.Title
     }));
-});
+}).RequireRateLimiting("per-client");
 
 app.MapGet("/api/paged/page", async (
     string? mediaId,
@@ -100,7 +144,7 @@ app.MapGet("/api/paged/page", async (
         page.Index,
         ContentUri = page.ContentUri.ToString()
     });
-});
+}).RequireRateLimiting("per-client");
 
 app.MapGet("/api/paged/page-asset", async (
     string? mediaId,
@@ -149,7 +193,7 @@ app.MapGet("/api/paged/page-asset", async (
             stopwatch.ElapsedMilliseconds);
         throw;
     }
-});
+}).RequireRateLimiting("per-client");
 
 app.Run();
 

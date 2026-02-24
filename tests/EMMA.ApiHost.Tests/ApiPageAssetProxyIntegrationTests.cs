@@ -77,7 +77,10 @@ public sealed class ApiPageAssetProxyIntegrationTests
                     var settings = new Dictionary<string, string?>
                     {
                         ["PluginHost:BaseUrl"] = pluginHostBaseUrl,
-                        ["PluginHost:PluginId"] = "demo"
+                        ["PluginHost:PluginId"] = "demo",
+                        ["ApiAuth:Enabled"] = "true",
+                        ["ApiAuth:Keys:0:Key"] = "test-key",
+                        ["ApiAuth:Keys:0:ClientId"] = "test-client"
                     };
 
                     config.AddInMemoryCollection(settings);
@@ -93,6 +96,7 @@ public sealed class ApiPageAssetProxyIntegrationTests
             });
 
         var apiClient = apiHostFactory.CreateClient();
+        apiClient.DefaultRequestHeaders.Add("x-api-key", "test-key");
         var response = await apiClient.GetAsync("/api/paged/page-asset?mediaId=demo-1&chapterId=ch-1&index=0");
         response.EnsureSuccessStatusCode();
 

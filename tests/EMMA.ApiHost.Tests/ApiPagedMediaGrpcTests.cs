@@ -1,5 +1,6 @@
 using System.Net;
 using EMMA.Contracts.Api.V1;
+using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -29,7 +30,10 @@ public sealed class ApiPagedMediaGrpcTests
                     var settings = new Dictionary<string, string?>
                     {
                         ["PluginHost:BaseUrl"] = pipelineServer.Address,
-                        ["PluginHost:PluginId"] = "demo"
+                        ["PluginHost:PluginId"] = "demo",
+                        ["ApiAuth:Enabled"] = "true",
+                        ["ApiAuth:Keys:0:Key"] = "test-key",
+                        ["ApiAuth:Keys:0:ClientId"] = "test-client"
                     };
 
                     config.AddInMemoryCollection(settings);
@@ -43,6 +47,10 @@ public sealed class ApiPagedMediaGrpcTests
         });
 
         var client = new PagedMediaApi.PagedMediaApiClient(channel);
+        var headers = new Metadata
+        {
+            { "x-api-key", "test-key" }
+        };
         var response = await client.SearchAsync(new SearchRequest
         {
             Query = "demo",
@@ -52,11 +60,60 @@ public sealed class ApiPagedMediaGrpcTests
                 DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
                 ClientId = "test-client"
             }
-        });
+        }, headers);
 
         Assert.Equal(SearchResponse.OutcomeOneofCase.Result, response.OutcomeCase);
         Assert.Single(response.Result.Items);
         Assert.Equal(ApiMediaType.Paged, response.Result.Items[0].MediaType);
+    }
+
+    [Fact]
+    public async Task Search_ReturnsUnauthenticated_ForInvalidApiKey()
+    {
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+        await using var pipelineServer = await PipelineServer.StartAsync();
+
+        await using var apiHostFactory = new WebApplicationFactory<EMMA.ApiHost.ApiHostEntryPoint>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureAppConfiguration((_, config) =>
+                {
+                    var settings = new Dictionary<string, string?>
+                    {
+                        ["PluginHost:BaseUrl"] = pipelineServer.Address,
+                        ["PluginHost:PluginId"] = "demo",
+                        ["ApiAuth:Enabled"] = "true",
+                        ["ApiAuth:Keys:0:Key"] = "test-key",
+                        ["ApiAuth:Keys:0:ClientId"] = "test-client"
+                    };
+
+                    config.AddInMemoryCollection(settings);
+                });
+            });
+
+        var httpClient = apiHostFactory.CreateClient();
+        using var channel = GrpcChannel.ForAddress("http://localhost", new GrpcChannelOptions
+        {
+            HttpClient = httpClient
+        });
+
+        var client = new PagedMediaApi.PagedMediaApiClient(channel);
+        var headers = new Metadata
+        {
+            { "x-api-key", "invalid-key" }
+        };
+
+        await Assert.ThrowsAsync<RpcException>(() => client.SearchAsync(new SearchRequest
+        {
+            Query = "demo",
+            Context = new ApiRequestContext
+            {
+                CorrelationId = "test",
+                DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
+                ClientId = "test-client"
+            }
+        }, headers).ResponseAsync);
     }
 
     private sealed class PipelineServer : IAsyncDisposable

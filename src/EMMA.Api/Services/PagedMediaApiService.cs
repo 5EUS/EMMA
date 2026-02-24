@@ -6,14 +6,19 @@ using Microsoft.Extensions.Logging;
 
 namespace EMMA.Api.Services;
 
-public sealed class PagedMediaApiService(EmbeddedRuntime runtime, ILogger<PagedMediaApiService> logger)
+public sealed class PagedMediaApiService(
+    EmbeddedRuntime runtime,
+    IClientIdentityAccessor identityAccessor,
+    ILogger<PagedMediaApiService> logger)
     : PagedMediaApi.PagedMediaApiBase
 {
     private readonly EmbeddedRuntime _runtime = runtime;
+    private readonly IClientIdentityAccessor _identityAccessor = identityAccessor;
     private readonly ILogger<PagedMediaApiService> _logger = logger;
 
     public override async Task<SearchResponse> Search(SearchRequest request, ServerCallContext context)
     {
+        using var scope = BeginClientScope();
         try
         {
             var results = await _runtime.Pipeline.SearchAsync(request.Query ?? string.Empty, context.CancellationToken);
@@ -32,6 +37,7 @@ public sealed class PagedMediaApiService(EmbeddedRuntime runtime, ILogger<PagedM
 
     public override async Task<ChaptersResponse> GetChapters(ChaptersRequest request, ServerCallContext context)
     {
+        using var scope = BeginClientScope();
         if (string.IsNullOrWhiteSpace(request.MediaId))
         {
             return new ChaptersResponse { Error = InvalidRequest("media_id is required.") };
@@ -58,6 +64,7 @@ public sealed class PagedMediaApiService(EmbeddedRuntime runtime, ILogger<PagedM
 
     public override async Task<PageResponse> GetPage(PageRequest request, ServerCallContext context)
     {
+        using var scope = BeginClientScope();
         if (string.IsNullOrWhiteSpace(request.MediaId) || string.IsNullOrWhiteSpace(request.ChapterId))
         {
             return new PageResponse { Error = InvalidRequest("media_id and chapter_id are required.") };
@@ -86,6 +93,7 @@ public sealed class PagedMediaApiService(EmbeddedRuntime runtime, ILogger<PagedM
 
     public override async Task<PageAssetResponse> GetPageAsset(PageAssetRequest request, ServerCallContext context)
     {
+        using var scope = BeginClientScope();
         if (string.IsNullOrWhiteSpace(request.MediaId) || string.IsNullOrWhiteSpace(request.ChapterId))
         {
             return new PageAssetResponse { Error = InvalidRequest("media_id and chapter_id are required.") };
@@ -183,5 +191,14 @@ public sealed class PagedMediaApiService(EmbeddedRuntime runtime, ILogger<PagedM
             Code = "invalid_request",
             Message = message
         };
+    }
+
+    private IDisposable? BeginClientScope()
+    {
+        var clientId = _identityAccessor.Current?.ClientId ?? "anonymous";
+        return _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["ClientId"] = clientId
+        });
     }
 }

@@ -25,7 +25,10 @@ public sealed class ApiPageAssetEndpointTests
                 {
                     var settings = new Dictionary<string, string?>
                     {
-                        ["PluginHost:BaseUrl"] = stub.Address
+                        ["PluginHost:BaseUrl"] = stub.Address,
+                        ["ApiAuth:Enabled"] = "true",
+                        ["ApiAuth:Keys:0:Key"] = "test-key",
+                        ["ApiAuth:Keys:0:ClientId"] = "test-client"
                     };
 
                     config.AddInMemoryCollection(settings);
@@ -33,6 +36,7 @@ public sealed class ApiPageAssetEndpointTests
             });
 
         var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("x-api-key", "test-key");
         var response = await client.GetAsync("/api/paged/page-asset?mediaId=demo-1&chapterId=ch-1&index=0");
         response.EnsureSuccessStatusCode();
 
@@ -41,6 +45,37 @@ public sealed class ApiPageAssetEndpointTests
 
         Assert.Equal("application/octet-stream", contentType);
         Assert.Equal(payload, bytes);
+    }
+
+    [Fact]
+    public async Task PageAsset_ReturnsUnauthorized_ForInvalidApiKey()
+    {
+        var payload = new byte[] { 1, 2, 3, 4 };
+        await using var stub = await PluginHostStub.StartAsync(payload, "application/octet-stream");
+
+        await using var factory = new WebApplicationFactory<EMMA.ApiHost.ApiHostEntryPoint>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.ConfigureAppConfiguration((_, config) =>
+                {
+                    var settings = new Dictionary<string, string?>
+                    {
+                        ["PluginHost:BaseUrl"] = stub.Address,
+                        ["ApiAuth:Enabled"] = "true",
+                        ["ApiAuth:Keys:0:Key"] = "test-key",
+                        ["ApiAuth:Keys:0:ClientId"] = "test-client"
+                    };
+
+                    config.AddInMemoryCollection(settings);
+                });
+            });
+
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("x-api-key", "invalid-key");
+
+        var response = await client.GetAsync("/api/paged/page-asset?mediaId=demo-1&chapterId=ch-1&index=0");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     private sealed class PluginHostStub : IAsyncDisposable
