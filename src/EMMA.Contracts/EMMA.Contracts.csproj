@@ -16,6 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Protobuf Include="Protos\api_common.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\api_paged.proto" GrpcServices="Both" ProtoRoot="Protos" />
     <Protobuf Include="Protos\request_context.proto" GrpcServices="None" ProtoRoot="Protos" />
     <Protobuf Include="Protos\plugin_control.proto" GrpcServices="Both" ProtoRoot="Protos" />
     <Protobuf Include="Protos\search_provider.proto" GrpcServices="Both" ProtoRoot="Protos" />
