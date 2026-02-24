@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Http;
+using System.Text;
 using EMMA.Contracts.Plugins;
 using EMMA.TestPlugin.Services;
 using Grpc.Net.Client;
@@ -46,7 +48,7 @@ public sealed class PluginProviderTests
             });
 
             Assert.NotNull(page.Page);
-            Assert.Equal("https://example.invalid/demo-1/page-1.jpg", page.Page.ContentUri);
+            Assert.Equal("https://api.example.local/data/hash-1/page-1.jpg", page.Page.ContentUri);
         }
         finally
         {
@@ -101,6 +103,11 @@ public sealed class PluginProviderTests
         });
 
         builder.Services.AddGrpc();
+        builder.Services.AddHttpClient<MangadexClient>(client =>
+            {
+                client.BaseAddress = new Uri("https://api.mangadex.org");
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new FakeMangadexHandler());
 
         var app = builder.Build();
         app.MapGrpcService<TestPluginControlService>();
@@ -143,5 +150,60 @@ public sealed class PluginProviderTests
         {
             HttpClient = httpClient
         });
+    }
+
+    private sealed class FakeMangadexHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri is null)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+            }
+
+            var path = request.RequestUri.AbsolutePath;
+            if (path == "/manga")
+            {
+                return Task.FromResult(JsonResponse("""
+                {
+                  "data": [
+                    { "id": "demo-1", "attributes": { "title": { "en": "Demo Paged Media" } } },
+                    { "id": "demo-2", "attributes": { "title": { "en": "Demo Paged Media Two" } } }
+                  ]
+                }
+                """));
+            }
+
+            if (path == "/manga/demo-1/feed")
+            {
+                return Task.FromResult(JsonResponse("""
+                {
+                  "data": [
+                    { "id": "ch-1", "attributes": { "chapter": "1", "title": "Chapter One" } }
+                  ]
+                }
+                """));
+            }
+
+            if (path == "/at-home/server/ch-1")
+            {
+                return Task.FromResult(JsonResponse("""
+                {
+                  "baseUrl": "https://api.example.local",
+                  "chapter": { "hash": "hash-1", "data": ["page-1.jpg"] }
+                }
+                """));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private static HttpResponseMessage JsonResponse(string json)
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
+        }
     }
 }

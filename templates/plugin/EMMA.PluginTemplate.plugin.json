@@ -1,0 +1,37 @@
+{
+  "id": "emma.plugin.template",
+  "name": "EMMA Plugin Template",
+  "version": "0.1.0",
+  "description": "Starter manifest for a gRPC plugin.",
+  "author": "Your Name",
+  "entry": {
+    "protocol": "grpc",
+    "endpoint": "http://127.0.0.1:5005",
+    "executable": "/absolute/path/to/dotnet",
+    "arguments": [
+      "run",
+      "--project",
+      "/absolute/path/to/templates/plugin/EMMA.PluginTemplate.csproj"
+    ],
+    "workingDirectory": "/absolute/path/to/templates/plugin",
+    "environment": {
+      "EMMA_PLUGIN_PORT": "5005"
+    }
+  },
+  "mediaTypes": ["paged", "video"],
+  "capabilities": {
+    "network": ["https"],
+    "fileSystem": [],
+    "cache": false,
+    "cpuBudgetMs": 200,
+    "memoryMb": 256
+  },
+  "permissions": {
+    "domains": [],
+    "paths": []
+  },
+  "signature": {
+    "algorithm": "hmac-sha256",
+    "value": "CHANGE_ME"
+  }
+}
