@@ -10,7 +10,7 @@
 ## Work items
 
 1) Plugin contract implementation
-   - Implement `IMediaSourcePlugin`, `ISearchProvider`, and `IPageProvider`.
+   - Implement gRPC services for paged media (`SearchProvider`, `PageProvider`) and map them to app ports (`IMediaSearchPort`, `IPageProviderPort`).
    - Provide a manifest and capability declaration for paged media.
    - Define stable IDs for media, chapters, and pages.
    - Add request context propagation and deadline handling.
@@ -67,3 +67,5 @@ Completed:
 - Item 2: plugin host integration (registry registration, startup checks, per-call limits, correlation-aware probes).
 - Item 3
 - Item 4
+- Item 5
+- Item 6

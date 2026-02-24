@@ -1,1 +1,5 @@
- Replace API host in-memory ports with plugin-host-backed ports (Milestone 3 end-to-end requirement); API host still uses in-memory ports in Program.cs:1-120. SOMEWHAT DONE
+- Replace API host in-memory ports with plugin-host-backed ports (Milestone 3 end-to-end requirement); API host still uses in-memory ports in Program.cs:1-120. SOMEWHAT DONE
+- Align Milestone 3 doc contract references with gRPC + app ports (remove or map IMediaSourcePlugin/ISearchProvider/IPageProvider mention). DONE
+- Add correlation-aware plugin log forwarding (or document current log buffer-only behavior) in plugin host.
+- Decide and wire bounded page asset cache in plugin host pipeline (BoundedPageAssetCache vs PageAssetStorageCache), plus tests for cache hits/eviction.
+- Expand normalized metadata and error mapping expectations for paged media flows, or document current minimal validation.
