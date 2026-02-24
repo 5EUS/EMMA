@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Net;
 using System.Net.Sockets;
 using EMMA.PluginHost.Configuration;
@@ -16,6 +17,9 @@ public sealed class PluginProcessManager(
     IPluginSandboxManager sandboxManager,
     ILogger<PluginProcessManager> logger)
 {
+    private static readonly Regex CorrelationIdRegex = new(
+        "CorrelationId\\s*[:=]\\s*(?<id>[A-Za-z0-9-]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private sealed record ProcessHandle(Process Process, string StartupCommand, DateTimeOffset StartedAt);
     private sealed class LogBuffer(int maxLines)
     {
@@ -309,6 +313,7 @@ public sealed class PluginProcessManager(
             if (!string.IsNullOrWhiteSpace(args.Data))
             {
                 buffer.Append(args.Data);
+                ForwardLogLine(pluginId, args.Data);
             }
         };
         process.ErrorDataReceived += (_, args) =>
@@ -316,11 +321,40 @@ public sealed class PluginProcessManager(
             if (!string.IsNullOrWhiteSpace(args.Data))
             {
                 buffer.Append(args.Data);
+                ForwardLogLine(pluginId, args.Data);
             }
         };
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+    }
+
+    private void ForwardLogLine(string pluginId, string line)
+    {
+        var correlationId = TryExtractCorrelationId(line);
+        if (string.IsNullOrWhiteSpace(correlationId))
+        {
+            _logger.LogInformation("Plugin log {PluginId} {Line}", pluginId, line);
+            return;
+        }
+
+        _logger.LogInformation("Plugin log {PluginId} {CorrelationId} {Line}", pluginId, correlationId, line);
+    }
+
+    private static string? TryExtractCorrelationId(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return null;
+        }
+
+        var match = CorrelationIdRegex.Match(line);
+        if (match.Success)
+        {
+            return match.Groups["id"].Value;
+        }
+
+        return null;
     }
 
     private static bool TryParseCommandLine(
