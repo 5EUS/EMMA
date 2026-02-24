@@ -13,6 +13,7 @@ public sealed record PluginManifest(
     IReadOnlyList<string>? MediaTypes,
     PluginManifestCapabilities? Capabilities,
     PluginManifestPermissions? Permissions,
+    PluginManifestSignature? Signature,
     string? Description,
     string? Author);
 
@@ -22,7 +23,11 @@ public sealed record PluginManifest(
 public sealed record PluginManifestEntry(
     string Protocol,
     string Endpoint,
-    string? Startup);
+    string? Startup,
+    string? Executable,
+    IReadOnlyList<string>? Arguments,
+    string? WorkingDirectory,
+    IReadOnlyDictionary<string, string>? Environment);
 
 /// <summary>
 /// Declared plugin resource and capability hints.
@@ -40,6 +45,13 @@ public sealed record PluginManifestCapabilities(
 public sealed record PluginManifestPermissions(
     IReadOnlyList<string>? Domains,
     IReadOnlyList<string>? Paths);
+
+/// <summary>
+/// Optional signature metadata for plugin manifests.
+/// </summary>
+public sealed record PluginManifestSignature(
+    string Algorithm,
+    string Value);
 
 /// <summary>
 /// Shared JSON serializer defaults for manifest parsing.

@@ -20,4 +20,5 @@ public sealed class PluginHostOptions
     public int ProbeTimeoutSeconds { get; init; } = 5;
     public int MaxConcurrentCallsPerPlugin { get; init; } = 8;
     public int PluginLogMaxLines { get; init; } = 200;
+    public IReadOnlyList<string> AllowedExecutableRoots { get; init; } = [];
 }

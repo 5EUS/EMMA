@@ -29,6 +29,7 @@ public sealed class PluginBudgetWatcherTests
             null,
             null,
             null,
+            null,
             null);
 
         var status = new PluginHandshakeStatus(
@@ -45,7 +46,14 @@ public sealed class PluginBudgetWatcherTests
         registry.Upsert(manifest, status, PluginRuntimeStatus.Running());
 
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
-        var processManager = new PluginProcessManager(options, sandbox, NullLogger<PluginProcessManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var processManager = new PluginProcessManager(
+            options,
+            sandbox,
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
         var watcher = new PluginBudgetWatcher(registry, processManager, options, NullLogger<PluginBudgetWatcher>.Instance);
 
         await using var run = new BudgetWatchRun(watcher);
@@ -77,6 +85,7 @@ public sealed class PluginBudgetWatcherTests
             null,
             null,
             null,
+            null,
             null);
 
         var status = new PluginHandshakeStatus(
@@ -93,7 +102,14 @@ public sealed class PluginBudgetWatcherTests
         registry.Upsert(manifest, status, PluginRuntimeStatus.Running());
 
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
-        var processManager = new PluginProcessManager(options, sandbox, NullLogger<PluginProcessManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var processManager = new PluginProcessManager(
+            options,
+            sandbox,
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
         var watcher = new PluginBudgetWatcher(registry, processManager, options, NullLogger<PluginBudgetWatcher>.Instance);
 
         await using var run = new BudgetWatchRun(watcher);

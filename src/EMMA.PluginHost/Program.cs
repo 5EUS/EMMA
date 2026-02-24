@@ -13,9 +13,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddGrpc();
 builder.Services.Configure<PluginHostOptions>(builder.Configuration.GetSection("PluginHost"));
+builder.Services.Configure<PluginSignatureOptions>(builder.Configuration.GetSection("PluginSignature"));
 builder.Services.AddSingleton<PluginRegistry>();
 builder.Services.AddSingleton<PluginManifestLoader>();
 builder.Services.AddSingleton<PluginProcessManager>();
+builder.Services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
 builder.Services.AddSingleton(StorageOptions.Default);
 builder.Services.AddSingleton<StorageInitializer>();
 builder.Services.AddSingleton<TempAssetCleanupService>();

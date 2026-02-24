@@ -18,13 +18,21 @@ public sealed class PluginLifecycleTests
         var projectPath = ResolveTestPluginProject();
         EnsureTestPluginBuilt(projectPath);
         var dllPath = ResolveTestPluginDll(projectPath);
-        var startup = $"dotnet \"{dllPath}\" --port {port}";
+        var dotnetPath = ResolveDotnetPath();
 
         var manifest = new PluginManifest(
             "demo",
             "Demo Plugin",
             "1.0.0",
-            new PluginManifestEntry("grpc", $"http://localhost:{port}", startup),
+            new PluginManifestEntry(
+                "grpc",
+                $"http://localhost:{port}",
+                null,
+                dotnetPath,
+                [$"\"{dllPath}\"", "--port", port.ToString()],
+                null,
+                null),
+            null,
             null,
             null,
             null,
@@ -40,9 +48,13 @@ public sealed class PluginLifecycleTests
         });
 
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
         var manager = new PluginProcessManager(
             options,
             sandbox,
+            signatureOptions,
+            verifier,
             NullLogger<PluginProcessManager>.Instance);
         var current = PluginRuntimeStatus.Unknown();
 
@@ -63,13 +75,21 @@ public sealed class PluginLifecycleTests
         var projectPath = ResolveTestPluginProject();
         EnsureTestPluginBuilt(projectPath);
         var dllPath = ResolveTestPluginDll(projectPath);
-        var startup = $"dotnet \"{dllPath}\" --port {port}";
+        var dotnetPath = ResolveDotnetPath();
 
         var manifest = new PluginManifest(
             "demo",
             "Demo Plugin",
             "1.0.0",
-            new PluginManifestEntry("grpc", $"http://localhost:{port}", startup),
+            new PluginManifestEntry(
+                "grpc",
+                $"http://localhost:{port}",
+                null,
+                dotnetPath,
+                [$"\"{dllPath}\"", "--port", port.ToString()],
+                null,
+                null),
+            null,
             null,
             null,
             null,
@@ -85,9 +105,13 @@ public sealed class PluginLifecycleTests
         });
 
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
         var manager = new PluginProcessManager(
             options,
             sandbox,
+            signatureOptions,
+            verifier,
             NullLogger<PluginProcessManager>.Instance);
         var current = PluginRuntimeStatus.Unknown().WithRetry(1, DateTimeOffset.UtcNow.AddSeconds(5), "rpc-timeout", "timeout");
 
@@ -149,6 +173,17 @@ public sealed class PluginLifecycleTests
         }
 
         return dllPath;
+    }
+
+    private static string ResolveDotnetPath()
+    {
+        var path = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException("Failed to resolve dotnet host path.");
+        }
+
+        return path;
     }
 
     private static void EnsureTestPluginBuilt(string projectPath)

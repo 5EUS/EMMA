@@ -43,9 +43,13 @@ public sealed class PluginHandshakeTests
         var registry = new PluginRegistry();
         var loader = new PluginManifestLoader(options, NullLogger<PluginManifestLoader>.Instance);
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
         var processManager = new PluginProcessManager(
             options,
             sandbox,
+            signatureOptions,
+            verifier,
             NullLogger<PluginProcessManager>.Instance);
         var handshake = new PluginHandshakeService(
             loader,

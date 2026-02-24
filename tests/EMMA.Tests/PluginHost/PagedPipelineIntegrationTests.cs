@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using EMMA.Contracts.Plugins;
 using Grpc.Core;
+using EMMA.PluginHost.Plugins;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -95,9 +96,10 @@ public sealed class PagedPipelineIntegrationTests
                     });
                 });
 
+            var handshake = factory.Services.GetRequiredService<PluginHandshakeService>();
+            await handshake.RescanAsync(CancellationToken.None);
+
             var client = factory.CreateClient();
-            var refresh = await client.PostAsync("/plugins/refresh", content: null);
-            refresh.EnsureSuccessStatusCode();
 
             return new PipelineHarness(factory, client, pluginApp, tempRoot, counters);
         }

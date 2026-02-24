@@ -15,6 +15,8 @@ namespace EMMA.PluginHost.Plugins;
 public sealed class PluginProcessManager(
     IOptions<PluginHostOptions> options,
     IPluginSandboxManager sandboxManager,
+    IOptions<PluginSignatureOptions> signatureOptions,
+    IPluginSignatureVerifier signatureVerifier,
     ILogger<PluginProcessManager> logger)
 {
     private static readonly Regex CorrelationIdRegex = new(
@@ -60,6 +62,8 @@ public sealed class PluginProcessManager(
     }
 
     private readonly PluginHostOptions _options = options.Value;
+    private readonly PluginSignatureOptions _signatureOptions = signatureOptions.Value;
+    private readonly IPluginSignatureVerifier _signatureVerifier = signatureVerifier;
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly ILogger<PluginProcessManager> _logger = logger;
     private readonly Dictionary<string, ProcessHandle> _processes = new(StringComparer.OrdinalIgnoreCase);
@@ -76,7 +80,8 @@ public sealed class PluginProcessManager(
             return current.WithState(PluginRuntimeState.Disabled, "entry-missing", "Plugin manifest entry is missing.");
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Startup))
+        if (string.IsNullOrWhiteSpace(manifest.Entry.Startup)
+            && string.IsNullOrWhiteSpace(manifest.Entry.Executable))
         {
             // External plugin endpoint; we do not manage its lifecycle here.
             return current.State == PluginRuntimeState.Unknown
@@ -96,6 +101,17 @@ public sealed class PluginProcessManager(
             return current;
         }
 
+        if (_signatureOptions.RequireSignedPlugins)
+        {
+            if (!_signatureVerifier.Verify(manifest, out var reason))
+            {
+                return current.WithState(
+                    PluginRuntimeState.Disabled,
+                    "signature-invalid",
+                    reason ?? "Plugin signature validation failed.");
+            }
+        }
+
         if (TryGetProcess(manifest.Id, out var existing))
         {
             if (!existing.Process.HasExited)
@@ -110,7 +126,7 @@ public sealed class PluginProcessManager(
 
         await _sandboxManager.PrepareAsync(manifest, cancellationToken);
 
-        var startInfo = BuildStartInfo(manifest.Entry.Startup);
+        var startInfo = BuildStartInfo(manifest.Entry);
         startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
         var process = new Process
         {
@@ -123,7 +139,10 @@ public sealed class PluginProcessManager(
             return current.WithState(PluginRuntimeState.Crashed, "start-failed", "Failed to start plugin process.");
         }
 
-        AddProcess(manifest.Id, process, manifest.Entry.Startup);
+        var command = manifest.Entry.Startup
+            ?? manifest.Entry.Executable
+            ?? string.Empty;
+        AddProcess(manifest.Id, process, command);
         AttachLogCapture(manifest.Id, process);
 
         await _sandboxManager.EnforceAsync(manifest, process, cancellationToken);
@@ -264,10 +283,26 @@ public sealed class PluginProcessManager(
         }
     }
 
-    private ProcessStartInfo BuildStartInfo(string startup)
+    private ProcessStartInfo BuildStartInfo(PluginManifestEntry entry)
     {
-        if (TryParseCommandLine(startup, out var fileName, out var arguments))
+        if (!string.IsNullOrWhiteSpace(entry.Executable))
         {
+            ValidateExecutable(entry.Executable);
+            var argumentText = entry.Arguments is null ? string.Empty : string.Join(' ', entry.Arguments);
+            return new ProcessStartInfo
+            {
+                FileName = entry.Executable,
+                Arguments = argumentText,
+                WorkingDirectory = entry.WorkingDirectory ?? string.Empty,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+        }
+
+        if (TryParseCommandLine(entry.Startup ?? string.Empty, out var fileName, out var arguments))
+        {
+            ValidateExecutable(fileName);
             return new ProcessStartInfo
             {
                 FileName = fileName,
@@ -279,6 +314,37 @@ public sealed class PluginProcessManager(
         }
 
         throw new InvalidOperationException("Plugin startup command must be an executable followed by arguments.");
+    }
+
+    private void ValidateExecutable(string executable)
+    {
+        if (!Path.IsPathRooted(executable))
+        {
+            throw new InvalidOperationException("Plugin executable must be an absolute path.");
+        }
+
+        if (_options.AllowedExecutableRoots is null || _options.AllowedExecutableRoots.Count == 0)
+        {
+            return;
+        }
+
+        var normalized = Path.GetFullPath(executable);
+        foreach (var root in _options.AllowedExecutableRoots)
+        {
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                continue;
+            }
+
+            var rootPath = Path.GetFullPath(root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar);
+            if (normalized.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException("Plugin executable is outside allowed roots.");
     }
 
     private void AttachLogCapture(string pluginId, Process process)

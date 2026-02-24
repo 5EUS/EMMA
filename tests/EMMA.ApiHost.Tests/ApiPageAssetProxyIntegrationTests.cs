@@ -27,7 +27,7 @@ public sealed class ApiPageAssetProxyIntegrationTests
         var tempRoot = Path.Combine(Path.GetTempPath(), "emma-apihost-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
-                var manifestJson = $$"""
+        var manifestJson = $$"""
                 {
                     "id": "demo",
                     "name": "Demo Plugin",
@@ -42,7 +42,7 @@ public sealed class ApiPageAssetProxyIntegrationTests
                     }
                 }
                 """;
-                await File.WriteAllTextAsync(manifestPath, manifestJson);
+        await File.WriteAllTextAsync(manifestPath, manifestJson);
 
         await using var pluginHostFactory = new WebApplicationFactory<EMMA.PluginHost.PluginHostEntryPoint>()
             .WithWebHostBuilder(builder =>
@@ -63,9 +63,6 @@ public sealed class ApiPageAssetProxyIntegrationTests
         var pluginHostClient = pluginHostFactory.CreateClient();
         var pluginHostBaseUrl = pluginHostClient.BaseAddress?.ToString().TrimEnd('/')
             ?? throw new InvalidOperationException("Plugin host base address missing.");
-
-        var refresh = await pluginHostClient.PostAsync("/plugins/refresh", content: null);
-        refresh.EnsureSuccessStatusCode();
 
         var pluginHostHandler = pluginHostFactory.Server.CreateHandler();
 
@@ -97,7 +94,25 @@ public sealed class ApiPageAssetProxyIntegrationTests
 
         var apiClient = apiHostFactory.CreateClient();
         apiClient.DefaultRequestHeaders.Add("x-api-key", "test-key");
-        var response = await apiClient.GetAsync("/api/paged/page-asset?mediaId=demo-1&chapterId=ch-1&index=0");
+
+        HttpResponseMessage? response = null;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            response = await apiClient.GetAsync("/api/paged/page-asset?mediaId=demo-1&chapterId=ch-1&index=0");
+            if (response.IsSuccessStatusCode)
+            {
+                break;
+            }
+
+            if (response.StatusCode != HttpStatusCode.NotFound)
+            {
+                response.EnsureSuccessStatusCode();
+            }
+
+            await Task.Delay(200);
+        }
+
+        response ??= new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
         response.EnsureSuccessStatusCode();
 
         var bytes = await response.Content.ReadAsByteArrayAsync();
