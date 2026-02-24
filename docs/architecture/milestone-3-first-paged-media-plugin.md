@@ -14,7 +14,17 @@
    - Provide a manifest and capability declaration for paged media.
    - Define stable IDs for media, chapters, and pages.
    - Add request context propagation and deadline handling.
-   - Validate response normalization and error mapping.
+    - Validate response normalization and error mapping.
+    - Normalization expectations:
+       - `MediaSummary`: non-empty id/source/title; media type must be `paged`.
+       - `MediaChapter`: non-empty id/title; chapter number must be >= 1 and stable.
+       - `MediaPage`: non-empty id; index must be >= 0; `content_uri` must be absolute.
+       - Reject or sanitize empty/whitespace fields before mapping to domain models.
+    - Error mapping expectations:
+       - Not found (missing media/chapter/page) -> `KeyNotFoundException` or 404-equivalent result.
+       - Invalid URI or malformed payload -> `InvalidOperationException` with clear message.
+       - Deadline exceeded/cancellation -> `TimeoutException` or propagate cancellation.
+       - Plugin/network failure -> surface as `InvalidOperationException` with plugin id and correlation id.
 
 2) Plugin host integration
    - Register the plugin via the host registry.
