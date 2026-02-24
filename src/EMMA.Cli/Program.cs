@@ -1,28 +1,56 @@
-﻿using EMMA.Bootstrap;
+﻿using EMMA.Api;
+using EMMA.Api.Embedded;
+using EMMA.Contracts.Api.V1;
+using EMMA.Infrastructure.Http;
+using EMMA.Infrastructure.InMemory;
+using EMMA.Infrastructure.Policy;
+using Microsoft.Extensions.Options;
 
-var runtime = RuntimeBootstrap.CreateInMemory();
-var pipeline = runtime.Pipeline;
+var baseUrl = Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_URL")?.TrimEnd('/')
+    ?? "http://localhost:5001";
+var pluginId = Environment.GetEnvironmentVariable("EMMA_PLUGIN_ID")
+    ?? "demo";
+var query = args.Length > 0 ? args[0] : "demo";
 
-Console.WriteLine("EMMA Milestone 1 smoke run");
+var httpClient = new HttpClient { BaseAddress = new Uri(baseUrl, UriKind.Absolute) };
+var pluginPort = new PluginHostPagedMediaPort(
+    httpClient,
+    Options.Create(new PluginHostClientOptions
+    {
+        BaseUrl = baseUrl,
+        PluginId = pluginId
+    }));
 
-var results = await pipeline.SearchAsync("demo", CancellationToken.None);
-Console.WriteLine($"Search results: {results.Count}");
+var runtime = EmbeddedRuntimeFactory.Create(
+    pluginPort,
+    pluginPort,
+    new HostPolicyEvaluator(),
+    metadataCache: new InMemoryCachePort());
 
-foreach (var item in results)
+var api = new EmbeddedPagedMediaApi(runtime);
+
+Console.WriteLine("EMMA CLI run");
+Console.WriteLine($"Plugin host: {baseUrl} (pluginId={pluginId})");
+
+var response = await api.SearchAsync(new SearchRequest
 {
-    Console.WriteLine($"- {item.Title} ({item.Id})");
+    Query = query,
+    Context = new ApiRequestContext
+    {
+        CorrelationId = Guid.NewGuid().ToString("n"),
+        DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
+        ClientId = "cli"
+    }
+}, CancellationToken.None);
+
+if (response.OutcomeCase == SearchResponse.OutcomeOneofCase.Error)
+{
+    Console.WriteLine($"Search failed: {response.Error.Code} {response.Error.Message}");
+    return;
 }
 
-if (results.Count > 0)
+Console.WriteLine($"Search results: {response.Result.Items.Count}");
+foreach (var item in response.Result.Items)
 {
-    var media = results[0];
-    var chapters = await pipeline.GetChaptersAsync(media.Id, CancellationToken.None);
-    Console.WriteLine($"Chapters: {chapters.Count}");
-
-    if (chapters.Count > 0)
-    {
-        var firstChapter = chapters[0];
-        var page = await pipeline.GetPageAsync(media.Id, firstChapter.ChapterId, 0, CancellationToken.None);
-        Console.WriteLine($"Page 1 URI: {page.ContentUri}");
-    }
+    Console.WriteLine($"- {item.Title} ({item.Id})");
 }

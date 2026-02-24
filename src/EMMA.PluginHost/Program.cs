@@ -66,9 +66,7 @@ var storageInitializer = app.Services.GetRequiredService<StorageInitializer>();
 await storageInitializer.InitializeAsync(CancellationToken.None);
 
 app.MapGrpcService<PluginControlService>();
-app.MapPluginHostEndpoints();
 app.MapPagedPipelineEndpoints();
-app.MapProbeEndpoints();
 app.MapGet("/", () => "EMMA plugin host is running.");
 
 app.Run();

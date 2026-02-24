@@ -278,27 +278,7 @@ public sealed class PluginProcessManager(
             };
         }
 
-        // TODO: Deprecate shell fallback once startup commands are structured.
-        if (OperatingSystem.IsWindows())
-        {
-            return new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/c {startup}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-        }
-
-        return new ProcessStartInfo
-        {
-            FileName = "/bin/sh",
-            Arguments = $"-c {startup}",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
+        throw new InvalidOperationException("Plugin startup command must be an executable followed by arguments.");
     }
 
     private void AttachLogCapture(string pluginId, Process process)

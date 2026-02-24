@@ -1,9 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\EMMA.Bootstrap\EMMA.Bootstrap.csproj" />
-    <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
-    <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
+    <ProjectReference Include="..\EMMA.Api\EMMA.Api.csproj" />
+    <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
+    <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
