@@ -6,6 +6,51 @@ namespace EMMA.Tests.Application;
 public sealed class PageAssetCacheBudgetTests
 {
     [Fact]
+    public async Task CacheHit_ReturnsStoredAsset()
+    {
+        var options = new PageAssetCacheOptions(
+            MemoryBudgetBytes: 1024,
+            DiskBudgetBytes: 0,
+            DiskRootDirectory: Path.Combine(Path.GetTempPath(), "emma-cache-tests", Guid.NewGuid().ToString("N")),
+            DiskRetentionDays: 7);
+
+        var cache = new BoundedPageAssetCache(options);
+        var payload = new byte[] { 1, 2, 3 };
+        var asset = new MediaPageAsset("image/jpeg", payload, DateTimeOffset.UtcNow);
+
+        await cache.SetAsync("page-1", asset, CancellationToken.None);
+        var cached = await cache.GetAsync("page-1", CancellationToken.None);
+
+        Assert.NotNull(cached);
+        Assert.Equal("image/jpeg", cached!.ContentType);
+        Assert.Equal(payload, cached.Payload);
+    }
+
+    [Fact]
+    public async Task CacheEvicts_LruEntry_WhenOverMemoryBudget()
+    {
+        var options = new PageAssetCacheOptions(
+            MemoryBudgetBytes: 500,
+            DiskBudgetBytes: 0,
+            DiskRootDirectory: Path.Combine(Path.GetTempPath(), "emma-cache-tests", Guid.NewGuid().ToString("N")),
+            DiskRetentionDays: 7);
+
+        var cache = new BoundedPageAssetCache(options);
+
+        var first = new MediaPageAsset("image/jpeg", new byte[400], DateTimeOffset.UtcNow);
+        var second = new MediaPageAsset("image/jpeg", new byte[400], DateTimeOffset.UtcNow);
+
+        await cache.SetAsync("page-1", first, CancellationToken.None);
+        await cache.SetAsync("page-2", second, CancellationToken.None);
+
+        var evicted = await cache.GetAsync("page-1", CancellationToken.None);
+        var retained = await cache.GetAsync("page-2", CancellationToken.None);
+
+        Assert.Null(evicted);
+        Assert.NotNull(retained);
+    }
+
+    [Fact]
     public async Task CacheSpill_StaysWithinDiskBudget()
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "emma-cache-tests", Guid.NewGuid().ToString("N"));

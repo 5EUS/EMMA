@@ -21,7 +21,8 @@ builder.Services.AddSingleton<StorageInitializer>();
 builder.Services.AddSingleton<TempAssetCleanupService>();
 builder.Services.AddSingleton(PageAssetCacheOptions.Default);
 builder.Services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
-builder.Services.AddSingleton<IPageAssetCachePort, PageAssetStorageCache>();
+builder.Services.AddSingleton<IPageAssetCachePort>(sp =>
+    new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
 builder.Services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
 builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
