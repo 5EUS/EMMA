@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using EMMA.Api;
+using EMMA.Api.Services;
 using EMMA.Application.Ports;
 using EMMA.Domain;
 using EMMA.Infrastructure.Http;
@@ -9,6 +10,7 @@ using EMMA.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddGrpc();
 builder.Services.Configure<PluginHostClientOptions>(builder.Configuration.GetSection("PluginHost"));
 builder.Services.AddHttpClient<PluginHostPagedMediaPort>((sp, client) =>
 {
@@ -37,6 +39,8 @@ var storageInitializer = app.Services.GetRequiredService<StorageInitializer>();
 await storageInitializer.InitializeAsync(CancellationToken.None);
 
 app.MapGet("/", () => "EMMA API host is running.");
+
+app.MapGrpcService<PagedMediaApiService>();
 
 app.MapGet("/api/paged/search", async (
     string? query,

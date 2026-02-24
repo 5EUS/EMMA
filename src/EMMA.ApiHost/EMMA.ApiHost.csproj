@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" Version="2.60.0" />
     <ProjectReference Include="..\EMMA.Api\EMMA.Api.csproj" />
     <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
     <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />

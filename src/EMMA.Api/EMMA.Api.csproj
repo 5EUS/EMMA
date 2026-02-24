@@ -2,8 +2,13 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
+    <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
     <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
     <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.1.25122.1" />
   </ItemGroup>
 
   <PropertyGroup>
