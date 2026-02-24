@@ -2,4 +2,4 @@
 - Align Milestone 3 doc contract references with gRPC + app ports (remove or map IMediaSourcePlugin/ISearchProvider/IPageProvider mention). DONE
 - Add correlation-aware plugin log forwarding (or document current log buffer-only behavior) in plugin host. DONE
 - Decide and wire bounded page asset cache in plugin host pipeline (BoundedPageAssetCache vs PageAssetStorageCache), plus tests for cache hits/eviction. DONE
-- Expand normalized metadata and error mapping expectations for paged media flows, or document current minimal validation.
+- Expand normalized metadata and error mapping expectations for paged media flows, or document current minimal validation. DONE
