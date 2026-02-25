@@ -56,9 +56,14 @@ Scripts live under `templates/plugin/scripts`:
 
 - `build-plugin.sh` publishes a Release build to `templates/plugin/artifacts`.
 - `build-plugin-macos-app.sh` builds and signs a self-contained macOS `.app` bundle for App Sandbox.
+- `build-pack-plugin.sh` builds, signs, and packages a versioned zip (macOS `.app` bundle).
 - `sign-plugin.sh` updates the manifest signature using `EMMA_HMAC_KEY_BASE64`.
 - `generate-hmac-key.sh` prints a random base64 key (default 32 bytes).
 - `sign-plugin-macos-app.sh` re-signs a macOS `.app` bundle with entitlements.
+
+`build-pack-plugin.sh` supports multiple targets via `TARGETS` (space-separated). Each zip is named:
+
+`PLUGINID_VERSION_TARGET.zip`
 
 ## HTTP + JSON helper
 
