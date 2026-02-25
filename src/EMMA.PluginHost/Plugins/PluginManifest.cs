@@ -3,26 +3,20 @@ using System.Text.Json;
 namespace EMMA.PluginHost.Plugins;
 
 /// <summary>
-/// Describes a plugin and its runtime entrypoint.
+/// Describes a plugin and its runtime metadata.
 /// </summary>
 public sealed record PluginManifest(
     string Id,
     string Name,
     string Version,
-    PluginManifestEntry? Entry,
+    string Protocol,
+    string? Endpoint,
     IReadOnlyList<string>? MediaTypes,
     PluginManifestCapabilities? Capabilities,
     PluginManifestPermissions? Permissions,
+    PluginManifestSignature? Signature,
     string? Description,
     string? Author);
-
-/// <summary>
-/// Entry metadata that the host uses to connect to the plugin.
-/// </summary>
-public sealed record PluginManifestEntry(
-    string Protocol,
-    string Endpoint,
-    string? Startup);
 
 /// <summary>
 /// Declared plugin resource and capability hints.
@@ -40,6 +34,13 @@ public sealed record PluginManifestCapabilities(
 public sealed record PluginManifestPermissions(
     IReadOnlyList<string>? Domains,
     IReadOnlyList<string>? Paths);
+
+/// <summary>
+/// Optional signature metadata for plugin manifests.
+/// </summary>
+public sealed record PluginManifestSignature(
+    string Algorithm,
+    string Value);
 
 /// <summary>
 /// Shared JSON serializer defaults for manifest parsing.

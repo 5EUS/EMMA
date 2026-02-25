@@ -4,12 +4,15 @@ package emma.plugins;
 
 option csharp_namespace = "EMMA.Contracts.Plugins";
 
+import "request_context.proto";
+
 service PluginControl {
   rpc GetHealth (HealthRequest) returns (HealthResponse);
   rpc GetCapabilities (CapabilitiesRequest) returns (CapabilitiesResponse);
 }
 
 message HealthRequest {
+  RequestContext context = 100;
 }
 
 message HealthResponse {
@@ -19,6 +22,7 @@ message HealthResponse {
 }
 
 message CapabilitiesRequest {
+  RequestContext context = 100;
 }
 
 message CapabilitiesResponse {

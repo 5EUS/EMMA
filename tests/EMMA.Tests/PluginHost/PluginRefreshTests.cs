@@ -29,7 +29,7 @@ public sealed class PluginRefreshTests
 
         var address = GetServerAddress(pluginApp);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
-        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }}\n}}\n");
+        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"protocol\": \"grpc\",\n  \"endpoint\": \"{address}\"\n}}\n");
 
         await using var factory = new WebApplicationFactory<global::Program>()
             .WithWebHostBuilder(builder =>
@@ -47,18 +47,13 @@ public sealed class PluginRefreshTests
                 });
             });
 
-        var client = factory.CreateClient();
-        var response = await client.PostAsync("/plugins/refresh", content: null);
-        response.EnsureSuccessStatusCode();
+        var handshake = factory.Services.GetRequiredService<PluginHandshakeService>();
+        await handshake.RescanAsync(CancellationToken.None);
 
-        var payload = await response.Content.ReadAsStringAsync();
-        var snapshot = JsonSerializer.Deserialize<PluginRecord[]>(payload, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
+        var registry = factory.Services.GetRequiredService<PluginRegistry>();
+        var snapshot = registry.GetSnapshot();
 
-        Assert.NotNull(snapshot);
-        Assert.Single(snapshot!);
+        Assert.Single(snapshot);
         Assert.Equal("demo", snapshot[0].Manifest.Id);
         Assert.True(snapshot[0].Status.Success);
 

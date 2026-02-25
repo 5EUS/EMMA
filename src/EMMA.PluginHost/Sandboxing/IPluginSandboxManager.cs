@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using EMMA.PluginHost.Plugins;
 
 namespace EMMA.PluginHost.Sandboxing;
@@ -8,4 +9,8 @@ namespace EMMA.PluginHost.Sandboxing;
 public interface IPluginSandboxManager
 {
     Task<PluginSandboxResult> PrepareAsync(PluginManifest manifest, CancellationToken cancellationToken);
+
+    ProcessStartInfo ApplyToStartInfo(PluginManifest manifest, ProcessStartInfo startInfo);
+
+    Task EnforceAsync(PluginManifest manifest, Process process, CancellationToken cancellationToken);
 }

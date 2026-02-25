@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
+using EMMA.PluginHost.Sandboxing;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -16,39 +17,61 @@ public sealed class PluginLifecycleTests
         var port = GetFreePort();
         var projectPath = ResolveTestPluginProject();
         EnsureTestPluginBuilt(projectPath);
-        var dllPath = ResolveTestPluginDll(projectPath);
-        var startup = $"dotnet \"{dllPath}\" --port {port}";
-
-        var manifest = new PluginManifest(
-            "demo",
-            "Demo Plugin",
-            "1.0.0",
-            new PluginManifestEntry("grpc", $"http://localhost:{port}", startup),
-            null,
-            null,
-            null,
-            null,
-            null);
+        var entrypointPath = ResolveTestPluginEntrypoint(projectPath);
 
         var options = Options.Create(new PluginHostOptions
         {
             StartupTimeoutSeconds = 20,
             StartupProbeIntervalMs = 200,
             TimeoutBackoffSeconds = 1,
-            MaxTimeoutRetries = 2
+            MaxTimeoutRetries = 2,
+            SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
         });
 
-        var manager = new PluginProcessManager(options, NullLogger<PluginProcessManager>.Instance);
+        CopyEntrypointToSandbox(entrypointPath, options.Value.SandboxRootDirectory, "demo");
+        var manifest = new PluginManifest(
+            "demo",
+            "EMMA.TestPlugin",
+            "1.0.0",
+            "grpc",
+            $"http://localhost:{port}",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var resolver = new PluginEntrypointResolver(options);
+        var manager = new PluginProcessManager(
+            options,
+            sandbox,
+            resolver,
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
         var current = PluginRuntimeStatus.Unknown();
 
-        var started = await manager.EnsureStartedAsync(manifest, current, CancellationToken.None);
-        Assert.Equal(PluginRuntimeState.Running, started.State);
+        var previousPort = Environment.GetEnvironmentVariable("EMMA_TEST_PLUGIN_PORT");
+        Environment.SetEnvironmentVariable("EMMA_TEST_PLUGIN_PORT", port.ToString());
+        try
+        {
+            var started = await manager.EnsureStartedAsync(manifest, current, CancellationToken.None);
+            Assert.Equal(PluginRuntimeState.Running, started.State);
 
-        await manager.StopAsync(manifest.Id, CancellationToken.None);
-        var restarted = await manager.EnsureStartedAsync(manifest, started, CancellationToken.None);
-        Assert.Equal(PluginRuntimeState.Running, restarted.State);
+            await manager.StopAsync(manifest.Id, CancellationToken.None);
+            var restarted = await manager.EnsureStartedAsync(manifest, started, CancellationToken.None);
+            Assert.Equal(PluginRuntimeState.Running, restarted.State);
 
-        await manager.StopAsync(manifest.Id, CancellationToken.None);
+            await manager.StopAsync(manifest.Id, CancellationToken.None);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EMMA_TEST_PLUGIN_PORT", previousPort);
+        }
     }
 
     [Fact]
@@ -57,39 +80,61 @@ public sealed class PluginLifecycleTests
         var port = GetFreePort();
         var projectPath = ResolveTestPluginProject();
         EnsureTestPluginBuilt(projectPath);
-        var dllPath = ResolveTestPluginDll(projectPath);
-        var startup = $"dotnet \"{dllPath}\" --port {port}";
-
-        var manifest = new PluginManifest(
-            "demo",
-            "Demo Plugin",
-            "1.0.0",
-            new PluginManifestEntry("grpc", $"http://localhost:{port}", startup),
-            null,
-            null,
-            null,
-            null,
-            null);
+        var entrypointPath = ResolveTestPluginEntrypoint(projectPath);
 
         var options = Options.Create(new PluginHostOptions
         {
             StartupTimeoutSeconds = 20,
             StartupProbeIntervalMs = 200,
             TimeoutBackoffSeconds = 1,
-            MaxTimeoutRetries = 2
+            MaxTimeoutRetries = 2,
+            SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
         });
 
-        var manager = new PluginProcessManager(options, NullLogger<PluginProcessManager>.Instance);
+        CopyEntrypointToSandbox(entrypointPath, options.Value.SandboxRootDirectory, "demo");
+        var manifest = new PluginManifest(
+            "demo",
+            "EMMA.TestPlugin",
+            "1.0.0",
+            "grpc",
+            $"http://localhost:{port}",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var resolver = new PluginEntrypointResolver(options);
+        var manager = new PluginProcessManager(
+            options,
+            sandbox,
+            resolver,
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
         var current = PluginRuntimeStatus.Unknown().WithRetry(1, DateTimeOffset.UtcNow.AddSeconds(5), "rpc-timeout", "timeout");
 
-        var blocked = await manager.EnsureStartedAsync(manifest, current, CancellationToken.None);
-        Assert.Equal(PluginRuntimeState.Timeout, blocked.State);
+        var previousPort = Environment.GetEnvironmentVariable("EMMA_TEST_PLUGIN_PORT");
+        Environment.SetEnvironmentVariable("EMMA_TEST_PLUGIN_PORT", port.ToString());
+        try
+        {
+            var blocked = await manager.EnsureStartedAsync(manifest, current, CancellationToken.None);
+            Assert.Equal(PluginRuntimeState.Timeout, blocked.State);
 
-        var ready = blocked with { NextRetryAt = DateTimeOffset.UtcNow.AddSeconds(-1) };
-        var started = await manager.EnsureStartedAsync(manifest, ready, CancellationToken.None);
-        Assert.Equal(PluginRuntimeState.Running, started.State);
+            var ready = blocked with { NextRetryAt = DateTimeOffset.UtcNow.AddSeconds(-1) };
+            var started = await manager.EnsureStartedAsync(manifest, ready, CancellationToken.None);
+            Assert.Equal(PluginRuntimeState.Running, started.State);
 
-        await manager.StopAsync(manifest.Id, CancellationToken.None);
+            await manager.StopAsync(manifest.Id, CancellationToken.None);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EMMA_TEST_PLUGIN_PORT", previousPort);
+        }
     }
 
     private static int GetFreePort()
@@ -129,17 +174,70 @@ public sealed class PluginLifecycleTests
         throw new DirectoryNotFoundException("Failed to locate repository root.");
     }
 
-    private static string ResolveTestPluginDll(string projectPath)
+    private static string ResolveTestPluginEntrypoint(string projectPath)
     {
         var projectDir = Path.GetDirectoryName(projectPath) ?? throw new DirectoryNotFoundException(projectPath);
-        var dllPath = Path.Combine(projectDir, "bin", "Debug", "net10.0", "EMMA.TestPlugin.dll");
-
-        if (!File.Exists(dllPath))
+        var outputDir = Path.Combine(projectDir, "bin", "Debug", "net10.0");
+        var baseName = "EMMA.TestPlugin";
+        var candidates = new List<string>
         {
-            throw new FileNotFoundException("Test plugin dll not found.", dllPath);
+            Path.Combine(outputDir, baseName)
+        };
+
+        if (OperatingSystem.IsWindows())
+        {
+            candidates.Add(Path.Combine(outputDir, baseName + ".exe"));
         }
 
-        return dllPath;
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException("Test plugin entrypoint not found.", outputDir);
+    }
+
+    private static void CopyEntrypointToSandbox(string entrypointPath, string sandboxRoot, string pluginId)
+    {
+        var pluginRoot = Path.Combine(sandboxRoot, pluginId);
+        Directory.CreateDirectory(pluginRoot);
+        var sourceDir = Path.GetDirectoryName(entrypointPath) ?? throw new DirectoryNotFoundException(entrypointPath);
+        foreach (var file in Directory.EnumerateFiles(sourceDir))
+        {
+            var target = Path.Combine(pluginRoot, Path.GetFileName(file));
+            File.Copy(file, target, true);
+        }
+        var fileName = Path.GetFileName(entrypointPath);
+        var destination = Path.Combine(pluginRoot, fileName);
+        if (File.Exists(destination))
+        {
+            TryMakeExecutable(destination);
+            return;
+        }
+
+        File.Copy(entrypointPath, destination, true);
+        TryMakeExecutable(destination);
+    }
+
+    private static void TryMakeExecutable(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            var mode = File.GetUnixFileMode(path);
+            mode |= UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+            File.SetUnixFileMode(path, mode);
+        }
+        catch
+        {
+        }
     }
 
     private static void EnsureTestPluginBuilt(string projectPath)

@@ -42,6 +42,7 @@ bld/
 msbuild.log
 msbuild.err
 msbuild.wrn
+artifacts/
 
 # Node.js build artifacts
 node_modules/

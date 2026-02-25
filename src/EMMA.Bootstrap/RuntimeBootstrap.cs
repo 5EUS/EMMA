@@ -25,7 +25,7 @@ public static class RuntimeBootstrap
         SeedSampleData(store);
 
         var cache = new InMemoryCachePort();
-        var policy = new AllowAllPolicyEvaluator();
+        var policy = new HostPolicyEvaluator();
         var search = new InMemorySearchPort(store);
         var pages = new InMemoryPageProvider(store);
 

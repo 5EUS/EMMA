@@ -19,6 +19,7 @@ plugins and performs a lightweight startup handshake against plugin endpoints.
 - HTTP: `GET /plugins/logs?pluginId=demo&take=100` returns recent process logs.
 - HTTP: `GET /plugins/status` returns a summarized lifecycle snapshot.
 - HTTP: `GET /plugins/summary` returns combined handshake/runtime state for dashboards.
+- HTTP: `POST /plugins/rescan` reloads manifests and re-handshakes plugins.
 - HTTP: `GET /probe/search?query=demo&pluginId=demo` forwards a search to a plugin.
 - HTTP: `GET /probe/pages?mediaId=demo-1&chapterId=ch-1&index=0&pluginId=demo` fetches chapters and a page.
 - HTTP: `GET /probe/video?mediaId=demo-video-1&streamId=stream-1&sequence=0&pluginId=demo` fetches streams and a segment.
@@ -41,6 +42,7 @@ The defaults live in `appsettings.json` under the `PluginHost` section:
 - `TimeoutBackoffSeconds`: backoff between timeout retries.
 - `MaxTimeoutRetries`: retries before a plugin is quarantined.
 - `ProbeTimeoutSeconds`: max time for probe gRPC calls.
+- `MaxConcurrentCallsPerPlugin`: concurrent probe calls allowed per plugin.
 - `PluginLogMaxLines`: number of log lines retained per plugin.
 
 ## Example Manifest
@@ -54,11 +56,8 @@ Save files with the `.plugin.json` suffix inside the manifest directory:
 	"version": "1.0.0",
 	"description": "Local demo plugin host stub",
 	"author": "EMMA",
-	"entry": {
-		"protocol": "grpc",
-		"endpoint": "http://localhost:5005",
-		"startup": null
-	},
+	"protocol": "grpc",
+	"endpoint": "http://localhost:5005",
 	"capabilities": {
 		"network": ["https"],
 		"fileSystem": ["read"],
@@ -69,7 +68,11 @@ Save files with the `.plugin.json` suffix inside the manifest directory:
 	"mediaTypes": ["paged"],
 	"permissions": {
 		"domains": ["example.com"],
-		"paths": ["/plugin-data"]
+		"paths": ["data"]
 	}
 }
 ```
+
+Notes:
+- `protocol` declares the transport; entrypoints are auto-resolved from the bundle/binary name.
+- `permissions.paths` must be sandbox-relative; they are normalized to absolute paths under the sandbox root.

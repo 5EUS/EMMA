@@ -7,9 +7,13 @@ namespace EMMA.PluginHost.Plugins;
 /// <summary>
 /// Loads plugin manifests from disk based on configured conventions.
 /// </summary>
-public sealed class PluginManifestLoader(IOptions<PluginHostOptions> options, ILogger<PluginManifestLoader> logger)
+public sealed class PluginManifestLoader(
+    IOptions<PluginHostOptions> options,
+    PluginPermissionSanitizer permissionSanitizer,
+    ILogger<PluginManifestLoader> logger)
 {
     private readonly PluginHostOptions _options = options.Value;
+    private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
     private readonly ILogger<PluginManifestLoader> _logger = logger;
 
     /// <summary>
@@ -56,6 +60,12 @@ public sealed class PluginManifestLoader(IOptions<PluginHostOptions> options, IL
                     continue;
                 }
 
+                var sanitizedPermissions = SanitizePermissions(manifest.Id, manifest.Permissions);
+                if (!ReferenceEquals(sanitizedPermissions, manifest.Permissions))
+                {
+                    manifest = manifest with { Permissions = sanitizedPermissions };
+                }
+
                 manifests.Add(manifest);
             }
             catch (Exception ex)
@@ -68,5 +78,21 @@ public sealed class PluginManifestLoader(IOptions<PluginHostOptions> options, IL
         }
 
         return manifests;
+    }
+
+    private PluginManifestPermissions? SanitizePermissions(string pluginId, PluginManifestPermissions? permissions)
+    {
+        if (permissions is null)
+        {
+            return null;
+        }
+
+        var sanitizedPaths = _permissionSanitizer.SanitizePaths(pluginId, permissions.Paths, "manifest");
+        if (ReferenceEquals(sanitizedPaths, permissions.Paths))
+        {
+            return permissions;
+        }
+
+        return permissions with { Paths = sanitizedPaths };
     }
 }

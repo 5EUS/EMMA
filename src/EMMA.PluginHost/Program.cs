@@ -1,8 +1,11 @@
+using EMMA.Application.Ports;
+using EMMA.Infrastructure.Cache;
+using EMMA.Infrastructure.Http;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
-using System.Runtime.InteropServices;
+using EMMA.Storage;
 
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
@@ -10,24 +13,48 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddGrpc();
 builder.Services.Configure<PluginHostOptions>(builder.Configuration.GetSection("PluginHost"));
+builder.Services.Configure<PluginSignatureOptions>(builder.Configuration.GetSection("PluginSignature"));
 builder.Services.AddSingleton<PluginRegistry>();
 builder.Services.AddSingleton<PluginManifestLoader>();
+builder.Services.AddSingleton<PluginPermissionSanitizer>();
+builder.Services.AddSingleton<IPluginEntrypointResolver, PluginEntrypointResolver>();
 builder.Services.AddSingleton<PluginProcessManager>();
+builder.Services.AddSingleton<PluginEndpointAllocator>();
+builder.Services.AddSingleton<PluginResolutionService>();
+builder.Services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
+builder.Services.AddSingleton(StorageOptions.Default);
+builder.Services.AddSingleton<StorageInitializer>();
+builder.Services.AddSingleton<TempAssetCleanupService>();
+builder.Services.AddSingleton(PageAssetCacheOptions.Default);
+builder.Services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
+builder.Services.AddSingleton<IPageAssetCachePort>(sp =>
+    new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
+builder.Services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
 builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();
 
-    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) // TODO RuntimeInformation does not report correctly with iOS and Android
+    if (OperatingSystem.IsAndroid())
+    {
+        return new AndroidPluginSandboxManager(options, sp.GetRequiredService<ILogger<AndroidPluginSandboxManager>>());
+    }
+
+    if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
+    {
+        return new IosPluginSandboxManager(options, sp.GetRequiredService<ILogger<IosPluginSandboxManager>>());
+    }
+
+    if (OperatingSystem.IsWindows())
     {
         return new WindowsPluginSandboxManager(options, sp.GetRequiredService<ILogger<WindowsPluginSandboxManager>>());
     }
 
-    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+    if (OperatingSystem.IsLinux())
     {
         return new LinuxPluginSandboxManager(options, sp.GetRequiredService<ILogger<LinuxPluginSandboxManager>>());
     }
 
-    if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+    if (OperatingSystem.IsMacOS())
     {
         return new MacOsPluginSandboxManager(options, sp.GetRequiredService<ILogger<MacOsPluginSandboxManager>>());
     }
@@ -41,9 +68,12 @@ builder.Services.AddHostedService<PluginLifecycleHostedService>();
 
 var app = builder.Build();
 
+var storageInitializer = app.Services.GetRequiredService<StorageInitializer>();
+await storageInitializer.InitializeAsync(CancellationToken.None);
+
 app.MapGrpcService<PluginControlService>();
+app.MapPagedPipelineEndpoints();
 app.MapPluginHostEndpoints();
-app.MapProbeEndpoints();
 app.MapGet("/", () => "EMMA plugin host is running.");
 
 app.Run();

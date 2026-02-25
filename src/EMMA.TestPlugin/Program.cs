@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using EMMA.TestPlugin.Services;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 
@@ -15,17 +17,27 @@ public static class Program
 
         builder.WebHost.ConfigureKestrel(options =>
         {
-            options.ListenAnyIP(port, listen =>
+            options.Listen(IPAddress.Loopback, port, listen =>
             {
                 listen.Protocols = HttpProtocols.Http2;
             });
+
+            if (Socket.OSSupportsIPv6)
+            {
+                options.Listen(IPAddress.IPv6Loopback, port, listen =>
+                {
+                    listen.Protocols = HttpProtocols.Http2;
+                });
+            }
         });
 
         builder.Services.AddGrpc();
-
-        var fixturePath = Environment.GetEnvironmentVariable("EMMA_TEST_PLUGIN_FIXTURE")
-            ?? Path.Combine(builder.Environment.ContentRootPath, "fixture.json");
-        TestPluginData.LoadFromFile(fixturePath);
+        builder.Services.AddHttpClient<MangadexClient>(client =>
+        {
+            client.BaseAddress = new Uri("https://api.mangadex.org");
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("EMMA-TestPlugin/1.0");
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        });
 
         var app = builder.Build();
 

@@ -1,36 +1,53 @@
 using EMMA.Contracts.Plugins;
 using Grpc.Core;
+using Microsoft.Extensions.Logging;
 
 namespace EMMA.TestPlugin.Services;
 
 /// <summary>
 /// Minimal page provider stub for testing.
 /// </summary>
-public sealed class TestPageProviderService : PageProvider.PageProviderBase
+public sealed class TestPageProviderService(
+    MangadexClient mangadexClient,
+    ILogger<TestPageProviderService> logger) : PageProvider.PageProviderBase
 {
-    public override Task<ChaptersResponse> GetChapters(ChaptersRequest request, ServerCallContext context)
+    private readonly MangadexClient _mangadexClient = mangadexClient;
+    private readonly ILogger<TestPageProviderService> _logger = logger;
+
+    public override async Task<ChaptersResponse> GetChapters(ChaptersRequest request, ServerCallContext context)
     {
+        TestPluginRpcGuard.EnsureActive(context);
+        var correlationId = TestPluginRpcGuard.GetCorrelationId(context, request.Context?.CorrelationId);
+
+        _logger.LogInformation(
+            "Chapters request {CorrelationId} mediaId={MediaId}",
+            correlationId,
+            request.MediaId);
+
         var response = new ChaptersResponse();
-
-        if (string.Equals(request.MediaId, TestPluginData.DemoMediaId, StringComparison.OrdinalIgnoreCase))
-        {
-            response.Chapters.AddRange(TestPluginData.Chapters);
-        }
-
-        return Task.FromResult(response);
+        var chapters = await _mangadexClient.GetChaptersAsync(request.MediaId, context.CancellationToken);
+        response.Chapters.AddRange(chapters);
+        return response;
     }
 
-    public override Task<PageResponse> GetPage(PageRequest request, ServerCallContext context)
+    public override async Task<PageResponse> GetPage(PageRequest request, ServerCallContext context)
     {
+        TestPluginRpcGuard.EnsureActive(context);
+        var correlationId = TestPluginRpcGuard.GetCorrelationId(context, request.Context?.CorrelationId);
+
+        _logger.LogInformation(
+            "Page request {CorrelationId} mediaId={MediaId} chapterId={ChapterId} index={Index}",
+            correlationId,
+            request.MediaId,
+            request.ChapterId,
+            request.Index);
+
         var response = new PageResponse();
-
-        if (string.Equals(request.MediaId, TestPluginData.DemoMediaId, StringComparison.OrdinalIgnoreCase)
-            && string.Equals(request.ChapterId, TestPluginData.DemoChapterId, StringComparison.OrdinalIgnoreCase)
-            && request.Index == 0)
+        var page = await _mangadexClient.GetPageAsync(request.ChapterId, request.Index, context.CancellationToken);
+        if (page is not null)
         {
-            response.Page = TestPluginData.Page;
+            response.Page = page;
         }
-
-        return Task.FromResult(response);
+        return response;
     }
 }

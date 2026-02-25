@@ -1,7 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <ItemGroup>
+    <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
     <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
+    <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="..\EMMA.Storage\EMMA.Storage.csproj" />
   </ItemGroup>
 
   <ItemGroup>

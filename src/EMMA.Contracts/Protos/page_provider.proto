@@ -4,6 +4,8 @@ package emma.plugins;
 
 option csharp_namespace = "EMMA.Contracts.Plugins";
 
+import "request_context.proto";
+
 service PageProvider {
   rpc GetChapters (ChaptersRequest) returns (ChaptersResponse);
   rpc GetPage (PageRequest) returns (PageResponse);
@@ -11,6 +13,7 @@ service PageProvider {
 
 message ChaptersRequest {
   string media_id = 1;
+  RequestContext context = 100;
 }
 
 message ChaptersResponse {
@@ -21,6 +24,7 @@ message PageRequest {
   string media_id = 1;
   string chapter_id = 2;
   int32 index = 3;
+  RequestContext context = 100;
 }
 
 message PageResponse {

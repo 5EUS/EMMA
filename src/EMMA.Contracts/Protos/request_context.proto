@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package emma.plugins;
+
+option csharp_namespace = "EMMA.Contracts.Plugins";
+
+message RequestContext {
+  string correlation_id = 1;
+  string deadline_utc = 2;
+}

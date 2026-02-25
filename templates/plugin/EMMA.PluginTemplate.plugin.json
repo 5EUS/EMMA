@@ -1,0 +1,29 @@
+{
+  "id": "emma.plugin.template",
+  "name": "EMMA Plugin Template",
+  "version": "0.1.0",
+  "description": "Starter manifest for a gRPC plugin.",
+  "author": "Your Name",
+  "protocol": "grpc",
+  "mediaTypes": [
+    "paged",
+    "video"
+  ],
+  "capabilities": {
+    "network": [
+      "https"
+    ],
+    "fileSystem": [],
+    "cache": false,
+    "cpuBudgetMs": 200,
+    "memoryMb": 256
+  },
+  "permissions": {
+    "domains": [],
+    "paths": []
+  },
+  "signature": {
+    "algorithm": "hmac-sha256",
+    "value": "THUio4DSs4ye6MxE7YF+QJ7tY6a5AuwTvKyqHysUVq4="
+  }
+}

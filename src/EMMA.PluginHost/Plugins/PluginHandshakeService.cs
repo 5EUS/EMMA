@@ -4,6 +4,7 @@ using EMMA.PluginHost.Configuration;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
 using EMMA.PluginHost.Sandboxing;
+using Grpc.Core;
 
 namespace EMMA.PluginHost.Plugins;
 
@@ -15,6 +16,8 @@ public sealed class PluginHandshakeService(
     PluginRegistry registry,
     IPluginSandboxManager sandboxManager,
     PluginProcessManager processManager,
+    PluginPermissionSanitizer permissionSanitizer,
+    PluginEndpointAllocator endpointAllocator,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
@@ -22,6 +25,8 @@ public sealed class PluginHandshakeService(
     private readonly PluginRegistry _registry = registry;
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginProcessManager _processManager = processManager;
+    private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
+    private readonly PluginEndpointAllocator _endpointAllocator = endpointAllocator;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -30,25 +35,32 @@ public sealed class PluginHandshakeService(
     /// </summary>
     public async Task HandshakeAllAsync(CancellationToken cancellationToken)
     {
+        var manifests = await _loader.LoadManifestsAsync(cancellationToken);
+        foreach (var manifest in manifests)
+        {
+            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
+        }
+
         if (!_options.HandshakeOnStartup)
         {
             _logger.LogInformation("Plugin handshake is disabled by configuration.");
             return;
         }
 
-        var manifests = await _loader.LoadManifestsAsync(cancellationToken);
         foreach (var manifest in manifests)
         {
-            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
-                manifest,
-                _registry.GetRuntime(manifest),
+                updated,
+                _registry.GetRuntime(updated),
                 cancellationToken);
-            _registry.UpdateRuntime(manifest, runtime);
+            _registry.UpdateRuntime(updated, runtime);
 
-            var status = await HandshakeAsync(manifest, runtime, cancellationToken);
-            runtime = _registry.GetRuntime(manifest);
-            _registry.Upsert(manifest, status, runtime);
+            var status = await HandshakeAsync(updated, runtime, cancellationToken);
+            runtime = _registry.GetRuntime(updated);
+            _registry.Upsert(updated, status, runtime);
         }
     }
 
@@ -72,16 +84,17 @@ public sealed class PluginHandshakeService(
 
         foreach (var manifest in manifests)
         {
-            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
-                manifest,
-                _registry.GetRuntime(manifest),
+                updated,
+                _registry.GetRuntime(updated),
                 cancellationToken);
-            _registry.UpdateRuntime(manifest, runtime);
+            _registry.UpdateRuntime(updated, runtime);
 
-            var status = await HandshakeAsync(manifest, runtime, cancellationToken);
-            runtime = _registry.GetRuntime(manifest);
-            _registry.Upsert(manifest, status, runtime);
+            var status = await HandshakeAsync(updated, runtime, cancellationToken);
+            runtime = _registry.GetRuntime(updated);
+            _registry.Upsert(updated, status, runtime);
         }
     }
 
@@ -89,10 +102,11 @@ public sealed class PluginHandshakeService(
         PluginManifest manifest,
         CancellationToken cancellationToken)
     {
-        var runtime = _registry.GetRuntime(manifest);
-        var status = await HandshakeAsync(manifest, runtime, cancellationToken);
-        runtime = _registry.GetRuntime(manifest);
-        _registry.Upsert(manifest, status, runtime);
+        var updated = _endpointAllocator.EnsureEndpoint(manifest);
+        var runtime = _registry.GetRuntime(updated);
+        var status = await HandshakeAsync(updated, runtime, cancellationToken);
+        runtime = _registry.GetRuntime(updated);
+        _registry.Upsert(updated, status, runtime);
         return status;
     }
 
@@ -106,19 +120,19 @@ public sealed class PluginHandshakeService(
             return Failed($"Plugin is {runtime.State.ToString().ToLowerInvariant()}.");
         }
 
-        if (manifest.Entry is null)
+        if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
-            return Failed("Missing entry section.");
+            return Failed("Missing protocol.");
         }
 
-        if (!string.Equals(manifest.Entry.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
         {
-            return Failed($"Unsupported protocol: {manifest.Entry.Protocol}.");
+            return Failed($"Unsupported protocol: {manifest.Protocol}.");
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Endpoint))
+        if (string.IsNullOrWhiteSpace(manifest.Endpoint))
         {
-            return Failed("Missing entry endpoint.");
+            return Failed("Missing endpoint.");
         }
 
         try
@@ -126,7 +140,7 @@ public sealed class PluginHandshakeService(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(_options.HandshakeTimeoutSeconds));
 
-            var address = new Uri(manifest.Entry.Endpoint, UriKind.Absolute);
+            var address = new Uri(manifest.Endpoint, UriKind.Absolute);
             using var httpClient = CreateHttpClient(address);
             using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
             {
@@ -134,14 +148,30 @@ public sealed class PluginHandshakeService(
             });
 
             var client = new PluginControl.PluginControlClient(channel);
-            var health = await client.GetHealthAsync(new HealthRequest(), cancellationToken: cts.Token);
-            var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest(), cancellationToken: cts.Token);
+            var correlationId = CreateCorrelationId();
+            var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(_options.HandshakeTimeoutSeconds);
+            var headers = CreateHeaders(correlationId);
+            var context = CreateRequestContext(correlationId, deadlineUtc);
+            var health = await client.GetHealthAsync(new HealthRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
+            var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
 
             var caps = capabilities.Capabilities.ToArray();
             var budgets = capabilities.Budgets;
             var permissions = capabilities.Permissions;
             var manifestCaps = manifest.Capabilities;
             var manifestPermissions = manifest.Permissions;
+            IReadOnlyList<string> effectivePaths;
+            if (manifestPermissions?.Paths is not null)
+            {
+                effectivePaths = manifestPermissions.Paths;
+            }
+            else
+            {
+                effectivePaths = _permissionSanitizer.SanitizePaths(
+                    manifest.Id,
+                    permissions?.Paths.ToArray() ?? [],
+                    "grpc") ?? [];
+            }
             var message = string.IsNullOrWhiteSpace(health.Message) ? "Handshake ok" : health.Message;
 
             return new PluginHandshakeStatus(
@@ -153,16 +183,16 @@ public sealed class PluginHandshakeService(
                 manifestCaps?.CpuBudgetMs ?? budgets?.CpuBudgetMs ?? 0,
                 manifestCaps?.MemoryMb ?? budgets?.MemoryMb ?? 0,
                 manifestPermissions?.Domains?.ToArray() ?? permissions?.Domains.ToArray() ?? [],
-                manifestPermissions?.Paths?.ToArray() ?? permissions?.Paths.ToArray() ?? []);
+                [.. effectivePaths]);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             await HandleTimeoutAsync(manifest, runtime, cancellationToken);
             return Failed("Handshake timed out.");
         }
-        catch (Grpc.Core.RpcException ex) when (
-            ex.StatusCode == Grpc.Core.StatusCode.DeadlineExceeded
-            || ex.StatusCode == Grpc.Core.StatusCode.Cancelled)
+        catch (RpcException ex) when (
+            ex.StatusCode == StatusCode.DeadlineExceeded
+            || ex.StatusCode == StatusCode.Cancelled)
         {
             await HandleTimeoutAsync(manifest, runtime, cancellationToken);
             return Failed("Handshake timed out.");
@@ -202,6 +232,22 @@ public sealed class PluginHandshakeService(
         };
 
         return httpClient;
+    }
+
+    private static string CreateCorrelationId() => Guid.NewGuid().ToString("n");
+
+    private static Metadata CreateHeaders(string correlationId) => new()
+    {
+        { "x-correlation-id", correlationId }
+    };
+
+    private static RequestContext CreateRequestContext(string correlationId, DateTimeOffset deadlineUtc)
+    {
+        return new RequestContext
+        {
+            CorrelationId = correlationId,
+            DeadlineUtc = deadlineUtc.ToString("O")
+        };
     }
 
     private static PluginHandshakeStatus Failed(string message)

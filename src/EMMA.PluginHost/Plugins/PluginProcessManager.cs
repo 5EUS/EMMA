@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 using System.Net;
 using System.Net.Sockets;
 using EMMA.PluginHost.Configuration;
+using EMMA.PluginHost.Sandboxing;
 using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Plugins;
@@ -10,8 +12,17 @@ namespace EMMA.PluginHost.Plugins;
 /// Minimal process supervisor for plugin startup and shutdown.
 /// TODO: Deprecate once a dedicated supervisor service is implemented.
 /// </summary>
-public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, ILogger<PluginProcessManager> logger)
+public sealed class PluginProcessManager(
+    IOptions<PluginHostOptions> options,
+    IPluginSandboxManager sandboxManager,
+    IPluginEntrypointResolver entrypointResolver,
+    IOptions<PluginSignatureOptions> signatureOptions,
+    IPluginSignatureVerifier signatureVerifier,
+    ILogger<PluginProcessManager> logger)
 {
+    private static readonly Regex CorrelationIdRegex = new(
+        "CorrelationId\\s*[:=]\\s*(?<id>[A-Za-z0-9-]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private sealed record ProcessHandle(Process Process, string StartupCommand, DateTimeOffset StartedAt);
     private sealed class LogBuffer(int maxLines)
     {
@@ -52,6 +63,10 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
     }
 
     private readonly PluginHostOptions _options = options.Value;
+    private readonly PluginSignatureOptions _signatureOptions = signatureOptions.Value;
+    private readonly IPluginSignatureVerifier _signatureVerifier = signatureVerifier;
+    private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
+    private readonly IPluginEntrypointResolver _entrypointResolver = entrypointResolver;
     private readonly ILogger<PluginProcessManager> _logger = logger;
     private readonly Dictionary<string, ProcessHandle> _processes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LogBuffer> _logs = new(StringComparer.OrdinalIgnoreCase);
@@ -62,18 +77,11 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         PluginRuntimeStatus current,
         CancellationToken cancellationToken)
     {
-        if (manifest.Entry is null)
+        if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
-            return current.WithState(PluginRuntimeState.Disabled, "entry-missing", "Plugin manifest entry is missing.");
+            return current.WithState(PluginRuntimeState.Disabled, "protocol-missing", "Plugin manifest protocol is missing.");
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Startup))
-        {
-            // External plugin endpoint; we do not manage its lifecycle here.
-            return current.State == PluginRuntimeState.Unknown
-                ? PluginRuntimeStatus.External()
-                : current;
-        }
 
         if (current.State == PluginRuntimeState.Timeout
             && current.NextRetryAt.HasValue
@@ -85,6 +93,17 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         if (current.State == PluginRuntimeState.Quarantined)
         {
             return current;
+        }
+
+        if (_signatureOptions.RequireSignedPlugins)
+        {
+            if (!_signatureVerifier.Verify(manifest, out var reason))
+            {
+                return current.WithState(
+                    PluginRuntimeState.Disabled,
+                    "signature-invalid",
+                    reason ?? "Plugin signature validation failed.");
+            }
         }
 
         if (TryGetProcess(manifest.Id, out var existing))
@@ -99,7 +118,29 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
             return current.WithState(PluginRuntimeState.Crashed, "process-exited", "Plugin process exited.", exitCode);
         }
 
-        var startInfo = BuildStartInfo(manifest.Entry.Startup);
+        var executable = (string?)null;
+        var hasEndpoint = !string.IsNullOrWhiteSpace(manifest.Endpoint);
+        if (hasEndpoint && !TryResolveEntrypoint(manifest, out executable))
+        {
+            return current.State == PluginRuntimeState.Unknown
+                ? PluginRuntimeStatus.External()
+                : current;
+        }
+
+        await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+
+        var startInfo = BuildStartInfo(manifest, executable);
+        ApplyPluginPort(manifest, startInfo);
+        startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            _logger.LogInformation(
+                "Starting plugin {PluginId} with {FileName} {Arguments} (cwd={WorkingDirectory})",
+                manifest.Id,
+                startInfo.FileName,
+                startInfo.Arguments,
+                string.IsNullOrWhiteSpace(startInfo.WorkingDirectory) ? "<none>" : startInfo.WorkingDirectory);
+        }
         var process = new Process
         {
             StartInfo = startInfo,
@@ -111,11 +152,23 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
             return current.WithState(PluginRuntimeState.Crashed, "start-failed", "Failed to start plugin process.");
         }
 
-        AddProcess(manifest.Id, process, manifest.Entry.Startup);
+        if (process.HasExited)
+        {
+            var exitCode = SafeExitCode(process);
+            return current.WithState(
+                PluginRuntimeState.Crashed,
+                "process-exited",
+                "Plugin process exited immediately.",
+                exitCode);
+        }
+
+        AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty);
         AttachLogCapture(manifest.Id, process);
 
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Endpoint)
-            || !Uri.TryCreate(manifest.Entry.Endpoint, UriKind.Absolute, out var address))
+        await _sandboxManager.EnforceAsync(manifest, process, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(manifest.Endpoint)
+            || !Uri.TryCreate(manifest.Endpoint, UriKind.Absolute, out var address))
         {
             return PluginRuntimeStatus.Running();
         }
@@ -128,6 +181,15 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
 
         if (!ready)
         {
+            if (process.HasExited)
+            {
+                var exitCode = SafeExitCode(process);
+                return current.WithState(
+                    PluginRuntimeState.Crashed,
+                    "process-exited",
+                    "Plugin process exited during startup.",
+                    exitCode);
+            }
             await StopAsync(manifest.Id, cancellationToken);
             return current.WithRetry(
                 current.RetryCount + 1,
@@ -250,41 +312,52 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         }
     }
 
-    private ProcessStartInfo BuildStartInfo(string startup)
+    private ProcessStartInfo BuildStartInfo(PluginManifest manifest, string? executable)
     {
-        if (TryParseCommandLine(startup, out var fileName, out var arguments))
-        {
-            return new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-        }
-
-        // TODO: Deprecate shell fallback once startup commands are structured.
-        if (OperatingSystem.IsWindows())
-        {
-            return new ProcessStartInfo
-            {
-                FileName = "cmd.exe",
-                Arguments = $"/c {startup}",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-        }
-
+        var pluginRoot = _entrypointResolver.GetPluginRoot(manifest.Id);
+        executable ??= _entrypointResolver.ResolveEntrypoint(manifest);
         return new ProcessStartInfo
         {
-            FileName = "/bin/sh",
-            Arguments = $"-c {startup}",
+            FileName = executable,
+            WorkingDirectory = pluginRoot,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+    }
+
+    private bool TryResolveEntrypoint(PluginManifest manifest, out string executable)
+    {
+        try
+        {
+            executable = _entrypointResolver.ResolveEntrypoint(manifest);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            executable = string.Empty;
+            return false;
+        }
+    }
+
+    private static void ApplyPluginPort(PluginManifest manifest, ProcessStartInfo startInfo)
+    {
+        if (string.IsNullOrWhiteSpace(manifest.Endpoint))
+        {
+            return;
+        }
+
+        if (!Uri.TryCreate(manifest.Endpoint, UriKind.Absolute, out var address))
+        {
+            return;
+        }
+
+        if (address.Port <= 0)
+        {
+            return;
+        }
+
+        startInfo.Environment["EMMA_PLUGIN_PORT"] = address.Port.ToString();
     }
 
     private void AttachLogCapture(string pluginId, Process process)
@@ -299,6 +372,7 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
             if (!string.IsNullOrWhiteSpace(args.Data))
             {
                 buffer.Append(args.Data);
+                ForwardLogLine(pluginId, args.Data);
             }
         };
         process.ErrorDataReceived += (_, args) =>
@@ -306,6 +380,7 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
             if (!string.IsNullOrWhiteSpace(args.Data))
             {
                 buffer.Append(args.Data);
+                ForwardLogLine(pluginId, args.Data);
             }
         };
 
@@ -313,58 +388,34 @@ public sealed class PluginProcessManager(IOptions<PluginHostOptions> options, IL
         process.BeginErrorReadLine();
     }
 
-    private static bool TryParseCommandLine(
-        string command,
-        out string fileName,
-        out string arguments)
+    private void ForwardLogLine(string pluginId, string line)
     {
-        fileName = string.Empty;
-        arguments = string.Empty;
-
-        if (string.IsNullOrWhiteSpace(command))
+        var correlationId = TryExtractCorrelationId(line);
+        if (string.IsNullOrWhiteSpace(correlationId))
         {
-            return false;
+            _logger.LogInformation("Plugin log {PluginId} {Line}", pluginId, line);
+            return;
         }
 
-        var parts = new List<string>();
-        var current = new List<char>();
-        var inQuotes = false;
-
-        foreach (var ch in command)
-        {
-            if (ch == '"')
-            {
-                inQuotes = !inQuotes;
-                continue;
-            }
-
-            if (!inQuotes && char.IsWhiteSpace(ch))
-            {
-                if (current.Count > 0)
-                {
-                    parts.Add(new string(current.ToArray()));
-                    current.Clear();
-                }
-                continue;
-            }
-
-            current.Add(ch);
-        }
-
-        if (current.Count > 0)
-        {
-            parts.Add(new string(current.ToArray()));
-        }
-
-        if (parts.Count == 0)
-        {
-            return false;
-        }
-
-        fileName = parts[0];
-        arguments = string.Join(' ', parts.Skip(1));
-        return true;
+        _logger.LogInformation("Plugin log {PluginId} {CorrelationId} {Line}", pluginId, correlationId, line);
     }
+
+    private static string? TryExtractCorrelationId(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return null;
+        }
+
+        var match = CorrelationIdRegex.Match(line);
+        if (match.Success)
+        {
+            return match.Groups["id"].Value;
+        }
+
+        return null;
+    }
+
 
     private static async Task<bool> WaitForEndpointAsync(
         Uri address,

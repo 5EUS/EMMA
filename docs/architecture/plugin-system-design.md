@@ -32,11 +32,8 @@ contracts in gRPC messages.
   "version": "semver",
   "description": "string",
   "author": "string",
-  "entry": {
-    "protocol": "grpc",
-    "endpoint": "string",
-    "startup": "string"
-  },
+  "protocol": "grpc",
+  "endpoint": "string",
   "capabilities": {
     "network": ["https"],
     "fileSystem": ["read"],
@@ -47,7 +44,7 @@ contracts in gRPC messages.
   "mediaTypes": ["paged", "video"],
   "permissions": {
     "domains": ["example.com"],
-    "paths": ["/plugin-data"]
+    "paths": ["data"]
   },
   "signing": {
     "publisher": "string",
@@ -57,7 +54,8 @@ contracts in gRPC messages.
 ```
 
 Notes:
-- `startup` defines how the host launches the plugin process on supported OS.
+- `protocol` declares the transport; entrypoints are auto-resolved from the bundle/binary name.
+- `permissions.paths` are sandbox-relative and normalized under the sandbox root.
 - `capabilities` are enforced by the host; they do not imply trust.
 - `signing` is required for installation and execution.
 
