@@ -9,9 +9,14 @@
     "endpoint": "http://127.0.0.1:5005",
     "entrypoint": "EMMA.PluginTemplate"
   },
-  "mediaTypes": ["paged", "video"],
+  "mediaTypes": [
+    "paged",
+    "video"
+  ],
   "capabilities": {
-    "network": ["https"],
+    "network": [
+      "https"
+    ],
     "fileSystem": [],
     "cache": false,
     "cpuBudgetMs": 200,
@@ -23,6 +28,6 @@
   },
   "signature": {
     "algorithm": "hmac-sha256",
-    "value": "CHANGE_ME"
+    "value": "THUio4DSs4ye6MxE7YF+QJ7tY6a5AuwTvKyqHysUVq4="
   }
 }

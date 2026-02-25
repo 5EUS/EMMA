@@ -50,6 +50,14 @@ Before using it, replace:
 - `permissions.paths` with sandbox-relative paths.
 - `signature.value` if the host requires signed manifests.
 
+## Build + signing scripts
+
+Scripts live under `templates/plugin/scripts`:
+
+- `build-plugin.sh` publishes a Release build to `templates/plugin/artifacts`.
+- `sign-plugin.sh` updates the manifest signature using `EMMA_HMAC_KEY_BASE64`.
+- `generate-hmac-key.sh` prints a random base64 key (default 32 bytes).
+
 ## HTTP + JSON helper
 
 `HttpJsonClient` wraps `HttpClient` with helpers:
