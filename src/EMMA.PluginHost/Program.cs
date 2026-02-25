@@ -19,6 +19,7 @@ builder.Services.AddSingleton<PluginManifestLoader>();
 builder.Services.AddSingleton<PluginPermissionSanitizer>();
 builder.Services.AddSingleton<IPluginEntrypointResolver, PluginEntrypointResolver>();
 builder.Services.AddSingleton<PluginProcessManager>();
+builder.Services.AddSingleton<PluginEndpointAllocator>();
 builder.Services.AddSingleton<PluginResolutionService>();
 builder.Services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
 builder.Services.AddSingleton(StorageOptions.Default);

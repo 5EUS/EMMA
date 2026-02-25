@@ -46,7 +46,7 @@ The template includes a starter manifest:
 Before using it, replace:
 
 - `entry.entrypoint` with the plugin executable file name (or .app bundle name) placed in the plugin sandbox directory.
-- `entry.endpoint` if you change ports.
+- `entry.endpoint` is optional; the host assigns a free port.
 - `permissions.paths` with sandbox-relative paths.
 - `signature.value` if the host requires signed manifests.
 

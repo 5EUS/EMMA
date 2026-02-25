@@ -38,7 +38,6 @@ payload = "|".join([
     manifest.get("id") or "",
     manifest.get("version") or "",
     entry.get("protocol") or "",
-    entry.get("endpoint") or "",
     entry.get("entrypoint") or "",
 ])
 

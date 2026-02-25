@@ -8,13 +8,15 @@ public sealed class PluginResolutionService(
     PluginManifestLoader manifestLoader,
     IPluginSandboxManager sandboxManager,
     PluginProcessManager processManager,
-    PluginHandshakeService handshakeService)
+    PluginHandshakeService handshakeService,
+    Plugins.PluginEndpointAllocator endpointAllocator)
 {
     private readonly PluginRegistry _registry = registry;
     private readonly PluginManifestLoader _manifestLoader = manifestLoader;
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginProcessManager _processManager = processManager;
     private readonly PluginHandshakeService _handshakeService = handshakeService;
+    private readonly Plugins.PluginEndpointAllocator _endpointAllocator = endpointAllocator;
 
     public async Task<(PluginRecord? Record, Uri? Address, IResult? Error)> ResolveAsync(
         string? pluginId,
@@ -45,13 +47,14 @@ public sealed class PluginResolutionService(
                 return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
             }
 
-            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
-                manifest,
-                _registry.GetRuntime(manifest),
+                updated,
+                _registry.GetRuntime(updated),
                 cancellationToken);
-            _registry.UpdateRuntime(manifest, runtime);
-            await _handshakeService.HandshakeSingleAsync(manifest, cancellationToken);
+            _registry.UpdateRuntime(updated, runtime);
+            await _handshakeService.HandshakeSingleAsync(updated, cancellationToken);
 
             snapshot = _registry.GetSnapshot();
             record = snapshot.FirstOrDefault(item =>

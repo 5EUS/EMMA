@@ -17,6 +17,7 @@ public sealed class PluginHandshakeService(
     IPluginSandboxManager sandboxManager,
     PluginProcessManager processManager,
     PluginPermissionSanitizer permissionSanitizer,
+    PluginEndpointAllocator endpointAllocator,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
@@ -25,6 +26,7 @@ public sealed class PluginHandshakeService(
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginProcessManager _processManager = processManager;
     private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
+    private readonly PluginEndpointAllocator _endpointAllocator = endpointAllocator;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -36,7 +38,8 @@ public sealed class PluginHandshakeService(
         var manifests = await _loader.LoadManifestsAsync(cancellationToken);
         foreach (var manifest in manifests)
         {
-            _registry.Upsert(manifest, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(manifest));
+            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
         }
 
         if (!_options.HandshakeOnStartup)
@@ -47,16 +50,17 @@ public sealed class PluginHandshakeService(
 
         foreach (var manifest in manifests)
         {
-            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
-                manifest,
-                _registry.GetRuntime(manifest),
+                updated,
+                _registry.GetRuntime(updated),
                 cancellationToken);
-            _registry.UpdateRuntime(manifest, runtime);
+            _registry.UpdateRuntime(updated, runtime);
 
-            var status = await HandshakeAsync(manifest, runtime, cancellationToken);
-            runtime = _registry.GetRuntime(manifest);
-            _registry.Upsert(manifest, status, runtime);
+            var status = await HandshakeAsync(updated, runtime, cancellationToken);
+            runtime = _registry.GetRuntime(updated);
+            _registry.Upsert(updated, status, runtime);
         }
     }
 
@@ -80,16 +84,17 @@ public sealed class PluginHandshakeService(
 
         foreach (var manifest in manifests)
         {
-            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
-                manifest,
-                _registry.GetRuntime(manifest),
+                updated,
+                _registry.GetRuntime(updated),
                 cancellationToken);
-            _registry.UpdateRuntime(manifest, runtime);
+            _registry.UpdateRuntime(updated, runtime);
 
-            var status = await HandshakeAsync(manifest, runtime, cancellationToken);
-            runtime = _registry.GetRuntime(manifest);
-            _registry.Upsert(manifest, status, runtime);
+            var status = await HandshakeAsync(updated, runtime, cancellationToken);
+            runtime = _registry.GetRuntime(updated);
+            _registry.Upsert(updated, status, runtime);
         }
     }
 
@@ -97,10 +102,11 @@ public sealed class PluginHandshakeService(
         PluginManifest manifest,
         CancellationToken cancellationToken)
     {
-        var runtime = _registry.GetRuntime(manifest);
-        var status = await HandshakeAsync(manifest, runtime, cancellationToken);
-        runtime = _registry.GetRuntime(manifest);
-        _registry.Upsert(manifest, status, runtime);
+        var updated = _endpointAllocator.EnsureEndpoint(manifest);
+        var runtime = _registry.GetRuntime(updated);
+        var status = await HandshakeAsync(updated, runtime, cancellationToken);
+        runtime = _registry.GetRuntime(updated);
+        _registry.Upsert(updated, status, runtime);
         return status;
     }
 

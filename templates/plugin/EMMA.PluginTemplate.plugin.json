@@ -6,7 +6,6 @@
   "author": "Your Name",
   "entry": {
     "protocol": "grpc",
-    "endpoint": "http://127.0.0.1:5005",
     "entrypoint": "EMMA.PluginTemplate.app"
   },
   "mediaTypes": [

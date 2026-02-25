@@ -56,7 +56,6 @@ public sealed class HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions>
             manifest.Id ?? string.Empty,
             manifest.Version ?? string.Empty,
             entry?.Protocol ?? string.Empty,
-            entry?.Endpoint ?? string.Empty,
             entry?.Entrypoint ?? string.Empty);
 
         return payload;
