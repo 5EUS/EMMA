@@ -16,6 +16,8 @@ All strings are UTF-8. Any non-null string returned from EMMA must be freed with
   - Returns JSON array of media summaries. `null` on error.
 - `const char* emma_runtime_list_plugins_json()`
   - Returns JSON array of plugins. Currently returns `[]`.
+- `const char* emma_runtime_search_media_json(int handle, const char* queryUtf8)`
+  - Returns JSON array of media summaries matching the query. `null` on error.
 - `int emma_runtime_open_plugin(int handle, const char* pluginIdUtf8)`
   - Returns `1` on success, `0` on failure. Currently unimplemented.
 - `const char* emma_last_error()`
