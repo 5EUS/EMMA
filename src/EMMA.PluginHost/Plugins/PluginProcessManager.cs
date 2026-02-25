@@ -128,7 +128,17 @@ public sealed class PluginProcessManager(
         await _sandboxManager.PrepareAsync(manifest, cancellationToken);
 
         var startInfo = BuildStartInfo(manifest);
+        ApplyPluginPort(manifest, startInfo);
         startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            _logger.LogInformation(
+                "Starting plugin {PluginId} with {FileName} {Arguments} (cwd={WorkingDirectory})",
+                manifest.Id,
+                startInfo.FileName,
+                startInfo.Arguments,
+                string.IsNullOrWhiteSpace(startInfo.WorkingDirectory) ? "<none>" : startInfo.WorkingDirectory);
+        }
         var process = new Process
         {
             StartInfo = startInfo,
@@ -138,6 +148,16 @@ public sealed class PluginProcessManager(
         if (!process.Start())
         {
             return current.WithState(PluginRuntimeState.Crashed, "start-failed", "Failed to start plugin process.");
+        }
+
+        if (process.HasExited)
+        {
+            var exitCode = SafeExitCode(process);
+            return current.WithState(
+                PluginRuntimeState.Crashed,
+                "process-exited",
+                "Plugin process exited immediately.",
+                exitCode);
         }
 
         AddProcess(manifest.Id, process, manifest.Entry.Entrypoint ?? string.Empty);
@@ -159,6 +179,15 @@ public sealed class PluginProcessManager(
 
         if (!ready)
         {
+            if (process.HasExited)
+            {
+                var exitCode = SafeExitCode(process);
+                return current.WithState(
+                    PluginRuntimeState.Crashed,
+                    "process-exited",
+                    "Plugin process exited during startup.",
+                    exitCode);
+            }
             await StopAsync(manifest.Id, cancellationToken);
             return current.WithRetry(
                 current.RetryCount + 1,
@@ -294,6 +323,26 @@ public sealed class PluginProcessManager(
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+    }
+
+    private static void ApplyPluginPort(PluginManifest manifest, ProcessStartInfo startInfo)
+    {
+        if (manifest.Entry is null || string.IsNullOrWhiteSpace(manifest.Entry.Endpoint))
+        {
+            return;
+        }
+
+        if (!Uri.TryCreate(manifest.Entry.Endpoint, UriKind.Absolute, out var address))
+        {
+            return;
+        }
+
+        if (address.Port <= 0)
+        {
+            return;
+        }
+
+        startInfo.Environment["EMMA_PLUGIN_PORT"] = address.Port.ToString();
     }
 
     private void AttachLogCapture(string pluginId, Process process)

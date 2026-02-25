@@ -1,5 +1,6 @@
 using EMMA.PluginHost.Configuration;
 using Microsoft.Extensions.Options;
+using System.Xml.Linq;
 
 namespace EMMA.PluginHost.Plugins;
 
@@ -58,6 +59,11 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         }
 
         var candidate = Path.Combine(pluginRoot, entrypoint);
+        if (entrypoint.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+        {
+            return ResolveAppBundle(candidate, entrypoint);
+        }
+
         if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Path.GetExtension(candidate)))
         {
             var exeCandidate = candidate + ".exe";
@@ -73,5 +79,65 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         }
 
         return candidate;
+    }
+
+    private static string ResolveAppBundle(string bundlePath, string entrypoint)
+    {
+        if (!Directory.Exists(bundlePath))
+        {
+            throw new InvalidOperationException("Plugin app bundle not found.");
+        }
+
+        var infoPlist = Path.Combine(bundlePath, "Contents", "Info.plist");
+        if (!File.Exists(infoPlist))
+        {
+            throw new InvalidOperationException("Plugin app bundle is missing Info.plist.");
+        }
+
+        var executable = ReadBundleExecutable(infoPlist)
+            ?? Path.GetFileNameWithoutExtension(entrypoint);
+
+        var candidate = Path.Combine(bundlePath, "Contents", "MacOS", executable);
+        if (!File.Exists(candidate))
+        {
+            throw new InvalidOperationException("Plugin app bundle executable not found.");
+        }
+
+        return candidate;
+    }
+
+    private static string? ReadBundleExecutable(string infoPlist)
+    {
+        try
+        {
+            var document = XDocument.Load(infoPlist);
+            var dict = document.Root?.Element("dict");
+            if (dict is null)
+            {
+                return null;
+            }
+
+            string? key = null;
+            foreach (var node in dict.Elements())
+            {
+                if (node.Name.LocalName == "key")
+                {
+                    key = node.Value;
+                    continue;
+                }
+
+                if (key == "CFBundleExecutable")
+                {
+                    return node.Value;
+                }
+
+                key = null;
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
     }
 }

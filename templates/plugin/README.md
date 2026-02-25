@@ -45,7 +45,7 @@ The template includes a starter manifest:
 
 Before using it, replace:
 
-- `entry.entrypoint` with the plugin executable file name placed in the plugin sandbox directory.
+- `entry.entrypoint` with the plugin executable file name (or .app bundle name) placed in the plugin sandbox directory.
 - `entry.endpoint` if you change ports.
 - `permissions.paths` with sandbox-relative paths.
 - `signature.value` if the host requires signed manifests.
@@ -55,8 +55,10 @@ Before using it, replace:
 Scripts live under `templates/plugin/scripts`:
 
 - `build-plugin.sh` publishes a Release build to `templates/plugin/artifacts`.
+- `build-plugin-macos-app.sh` builds and signs a self-contained macOS `.app` bundle for App Sandbox.
 - `sign-plugin.sh` updates the manifest signature using `EMMA_HMAC_KEY_BASE64`.
 - `generate-hmac-key.sh` prints a random base64 key (default 32 bytes).
+- `sign-plugin-macos-app.sh` re-signs a macOS `.app` bundle with entitlements.
 
 ## HTTP + JSON helper
 

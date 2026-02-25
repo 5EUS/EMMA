@@ -5,7 +5,7 @@ namespace EMMA.PluginHost.Configuration;
 /// </summary>
 public sealed class PluginHostOptions
 {
-    public string ManifestDirectory { get; init; } = "plugins";
+    public string ManifestDirectory { get; init; } = "manifests";
     public int HandshakeTimeoutSeconds { get; init; } = 5;
     public bool HandshakeOnStartup { get; init; } = true;
     public string SandboxRootDirectory { get; init; } = "sandbox";
@@ -20,5 +20,4 @@ public sealed class PluginHostOptions
     public int ProbeTimeoutSeconds { get; init; } = 5;
     public int MaxConcurrentCallsPerPlugin { get; init; } = 8;
     public int PluginLogMaxLines { get; init; } = 200;
-    public IReadOnlyList<string> AllowedExecutableRoots { get; init; } = [];
 }

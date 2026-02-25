@@ -51,6 +51,20 @@ public static class PluginHostEndpoints
             return Results.Ok(results);
         });
 
+        app.MapGet("/plugins/logs", (
+            string? pluginId,
+            int? take,
+            PluginProcessManager processManager) =>
+        {
+            if (string.IsNullOrWhiteSpace(pluginId))
+            {
+                return Results.BadRequest(new { message = "pluginId is required." });
+            }
+
+            var lines = processManager.GetLogs(pluginId, take);
+            return Results.Ok(new { pluginId, lines });
+        });
+
         return app;
     }
 }
