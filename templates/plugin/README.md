@@ -45,9 +45,9 @@ The template includes a starter manifest:
 
 Before using it, replace:
 
-- `entry.executable` with an absolute path to `dotnet` (or your self-contained executable).
-- `entry.arguments` and `entry.workingDirectory` with absolute paths.
-- `entry.endpoint` and `EMMA_PLUGIN_PORT` if you change ports.
+- `entry.entrypoint` with the plugin executable file name placed in the plugin sandbox directory.
+- `entry.endpoint` if you change ports.
+- `permissions.paths` with sandbox-relative paths.
 - `signature.value` if the host requires signed manifests.
 
 ## HTTP + JSON helper

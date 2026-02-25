@@ -35,7 +35,7 @@ contracts in gRPC messages.
   "entry": {
     "protocol": "grpc",
     "endpoint": "string",
-    "startup": "string"
+    "entrypoint": "string"
   },
   "capabilities": {
     "network": ["https"],
@@ -47,7 +47,7 @@ contracts in gRPC messages.
   "mediaTypes": ["paged", "video"],
   "permissions": {
     "domains": ["example.com"],
-    "paths": ["/plugin-data"]
+    "paths": ["data"]
   },
   "signing": {
     "publisher": "string",
@@ -57,7 +57,8 @@ contracts in gRPC messages.
 ```
 
 Notes:
-- `startup` defines how the host launches the plugin process on supported OS.
+- `entrypoint` is a file name resolved inside the plugin sandbox root.
+- `permissions.paths` are sandbox-relative and normalized under the sandbox root.
 - `capabilities` are enforced by the host; they do not imply trust.
 - `signing` is required for installation and execution.
 

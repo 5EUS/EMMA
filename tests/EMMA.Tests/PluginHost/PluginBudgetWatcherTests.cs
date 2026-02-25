@@ -48,9 +48,11 @@ public sealed class PluginBudgetWatcherTests
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
         var signatureOptions = Options.Create(new PluginSignatureOptions());
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var resolver = new PluginEntrypointResolver(options);
         var processManager = new PluginProcessManager(
             options,
             sandbox,
+            resolver,
             signatureOptions,
             verifier,
             NullLogger<PluginProcessManager>.Instance);
@@ -104,9 +106,11 @@ public sealed class PluginBudgetWatcherTests
         var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
         var signatureOptions = Options.Create(new PluginSignatureOptions());
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var resolver = new PluginEntrypointResolver(options);
         var processManager = new PluginProcessManager(
             options,
             sandbox,
+            resolver,
             signatureOptions,
             verifier,
             NullLogger<PluginProcessManager>.Instance);

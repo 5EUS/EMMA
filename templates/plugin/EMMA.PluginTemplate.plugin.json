@@ -7,16 +7,7 @@
   "entry": {
     "protocol": "grpc",
     "endpoint": "http://127.0.0.1:5005",
-    "executable": "/absolute/path/to/dotnet",
-    "arguments": [
-      "run",
-      "--project",
-      "/absolute/path/to/templates/plugin/EMMA.PluginTemplate.csproj"
-    ],
-    "workingDirectory": "/absolute/path/to/templates/plugin",
-    "environment": {
-      "EMMA_PLUGIN_PORT": "5005"
-    }
+    "entrypoint": "EMMA.PluginTemplate"
   },
   "mediaTypes": ["paged", "video"],
   "capabilities": {

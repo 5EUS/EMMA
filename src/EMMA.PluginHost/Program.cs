@@ -16,6 +16,8 @@ builder.Services.Configure<PluginHostOptions>(builder.Configuration.GetSection("
 builder.Services.Configure<PluginSignatureOptions>(builder.Configuration.GetSection("PluginSignature"));
 builder.Services.AddSingleton<PluginRegistry>();
 builder.Services.AddSingleton<PluginManifestLoader>();
+builder.Services.AddSingleton<PluginPermissionSanitizer>();
+builder.Services.AddSingleton<IPluginEntrypointResolver, PluginEntrypointResolver>();
 builder.Services.AddSingleton<PluginProcessManager>();
 builder.Services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
 builder.Services.AddSingleton(StorageOptions.Default);

@@ -23,11 +23,7 @@ public sealed record PluginManifest(
 public sealed record PluginManifestEntry(
     string Protocol,
     string Endpoint,
-    string? Startup,
-    string? Executable,
-    IReadOnlyList<string>? Arguments,
-    string? WorkingDirectory,
-    IReadOnlyDictionary<string, string>? Environment);
+    string? Entrypoint);
 
 /// <summary>
 /// Declared plugin resource and capability hints.

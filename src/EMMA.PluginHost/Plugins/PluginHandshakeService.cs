@@ -16,6 +16,7 @@ public sealed class PluginHandshakeService(
     PluginRegistry registry,
     IPluginSandboxManager sandboxManager,
     PluginProcessManager processManager,
+    PluginPermissionSanitizer permissionSanitizer,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
@@ -23,6 +24,7 @@ public sealed class PluginHandshakeService(
     private readonly PluginRegistry _registry = registry;
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginProcessManager _processManager = processManager;
+    private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -152,6 +154,18 @@ public sealed class PluginHandshakeService(
             var permissions = capabilities.Permissions;
             var manifestCaps = manifest.Capabilities;
             var manifestPermissions = manifest.Permissions;
+            IReadOnlyList<string> effectivePaths;
+            if (manifestPermissions?.Paths is not null)
+            {
+                effectivePaths = manifestPermissions.Paths;
+            }
+            else
+            {
+                effectivePaths = _permissionSanitizer.SanitizePaths(
+                    manifest.Id,
+                    permissions?.Paths.ToArray() ?? [],
+                    "grpc") ?? [];
+            }
             var message = string.IsNullOrWhiteSpace(health.Message) ? "Handshake ok" : health.Message;
 
             return new PluginHandshakeStatus(
@@ -163,16 +177,16 @@ public sealed class PluginHandshakeService(
                 manifestCaps?.CpuBudgetMs ?? budgets?.CpuBudgetMs ?? 0,
                 manifestCaps?.MemoryMb ?? budgets?.MemoryMb ?? 0,
                 manifestPermissions?.Domains?.ToArray() ?? permissions?.Domains.ToArray() ?? [],
-                manifestPermissions?.Paths?.ToArray() ?? permissions?.Paths.ToArray() ?? []);
+                [.. effectivePaths]);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             await HandleTimeoutAsync(manifest, runtime, cancellationToken);
             return Failed("Handshake timed out.");
         }
-        catch (Grpc.Core.RpcException ex) when (
-            ex.StatusCode == Grpc.Core.StatusCode.DeadlineExceeded
-            || ex.StatusCode == Grpc.Core.StatusCode.Cancelled)
+        catch (RpcException ex) when (
+            ex.StatusCode == StatusCode.DeadlineExceeded
+            || ex.StatusCode == StatusCode.Cancelled)
         {
             await HandleTimeoutAsync(manifest, runtime, cancellationToken);
             return Failed("Handshake timed out.");

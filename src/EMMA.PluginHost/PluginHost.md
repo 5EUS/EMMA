@@ -58,7 +58,7 @@ Save files with the `.plugin.json` suffix inside the manifest directory:
 	"entry": {
 		"protocol": "grpc",
 		"endpoint": "http://localhost:5005",
-		"startup": null
+		"entrypoint": "demo-plugin"
 	},
 	"capabilities": {
 		"network": ["https"],
@@ -70,7 +70,11 @@ Save files with the `.plugin.json` suffix inside the manifest directory:
 	"mediaTypes": ["paged"],
 	"permissions": {
 		"domains": ["example.com"],
-		"paths": ["/plugin-data"]
+		"paths": ["data"]
 	}
 }
 ```
+
+Notes:
+- `entrypoint` is a file name resolved inside the plugin sandbox root; the manifest cannot specify an absolute path.
+- `permissions.paths` must be sandbox-relative; they are normalized to absolute paths under the sandbox root.

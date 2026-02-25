@@ -7,7 +7,7 @@
   "entry": {
     "protocol": "grpc",
     "endpoint": "http://localhost:5005",
-    "startup": null
+    "entrypoint": "demo-plugin"
   },
   "capabilities": {
     "network": ["https"],
@@ -19,6 +19,6 @@
   "mediaTypes": ["paged"],
   "permissions": {
     "domains": ["example.com"],
-    "paths": ["/plugin-data"]
+    "paths": ["data"]
   }
 }

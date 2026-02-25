@@ -52,16 +52,12 @@ public sealed class HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions>
     private static string BuildPayload(PluginManifest manifest)
     {
         var entry = manifest.Entry;
-        var args = entry?.Arguments is null ? string.Empty : string.Join(" ", entry.Arguments);
         var payload = string.Join("|",
             manifest.Id ?? string.Empty,
             manifest.Version ?? string.Empty,
             entry?.Protocol ?? string.Empty,
             entry?.Endpoint ?? string.Empty,
-            entry?.Executable ?? string.Empty,
-            entry?.Startup ?? string.Empty,
-            entry?.WorkingDirectory ?? string.Empty,
-            args);
+            entry?.Entrypoint ?? string.Empty);
 
         return payload;
     }
@@ -75,7 +71,7 @@ public sealed class HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions>
         }
         catch
         {
-            key = Array.Empty<byte>();
+            key = [];
             return false;
         }
     }
@@ -90,7 +86,7 @@ public sealed class HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions>
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return Array.Empty<byte>();
+            return [];
         }
 
         try
@@ -99,7 +95,7 @@ public sealed class HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions>
         }
         catch
         {
-            return Array.Empty<byte>();
+            return [];
         }
     }
 }
