@@ -22,7 +22,7 @@ public static class PagedPipelineEndpoints
         app.MapGet("/pipeline/paged/search", async (
             string? query,
             string? pluginId,
-            PluginRegistry registry,
+            PluginResolutionService pluginResolution,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -30,7 +30,7 @@ public static class PagedPipelineEndpoints
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
-            var (record, address, error) = TryResolvePlugin(registry, pluginId);
+            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null || address is null)
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
@@ -60,7 +60,7 @@ public static class PagedPipelineEndpoints
         app.MapGet("/pipeline/paged/chapters", async (
             string? mediaId,
             string? pluginId,
-            PluginRegistry registry,
+            PluginResolutionService pluginResolution,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -73,7 +73,7 @@ public static class PagedPipelineEndpoints
                 return Results.BadRequest(new { message = "mediaId is required." });
             }
 
-            var (record, address, error) = TryResolvePlugin(registry, pluginId);
+            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null || address is null)
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
@@ -104,7 +104,7 @@ public static class PagedPipelineEndpoints
             string? chapterId,
             int? index,
             string? pluginId,
-            PluginRegistry registry,
+            PluginResolutionService pluginResolution,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -117,7 +117,7 @@ public static class PagedPipelineEndpoints
                 return Results.BadRequest(new { message = "mediaId and chapterId are required." });
             }
 
-            var (record, address, error) = TryResolvePlugin(registry, pluginId);
+            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null || address is null)
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
@@ -152,7 +152,7 @@ public static class PagedPipelineEndpoints
             string? chapterId,
             int? index,
             string? pluginId,
-            PluginRegistry registry,
+            PluginResolutionService pluginResolution,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -165,7 +165,7 @@ public static class PagedPipelineEndpoints
                 return Results.BadRequest(new { message = "mediaId and chapterId are required." });
             }
 
-            var (record, address, error) = TryResolvePlugin(registry, pluginId);
+            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null || address is null)
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
@@ -241,52 +241,4 @@ public static class PagedPipelineEndpoints
             catalog);
     }
 
-    private static (PluginRecord? Record, Uri? Address, IResult? Error) TryResolvePlugin(
-        PluginRegistry registry,
-        string? pluginId)
-    {
-        var snapshot = registry.GetSnapshot();
-        if (snapshot.Count == 0)
-        {
-            return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
-        }
-
-        PluginRecord? record = null;
-        if (string.IsNullOrWhiteSpace(pluginId))
-        {
-            record = snapshot[0];
-        }
-        else
-        {
-            record = snapshot.FirstOrDefault(item =>
-                string.Equals(item.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (record is null)
-        {
-            return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
-        }
-
-        if (record.Manifest.Entry is null)
-        {
-            return (record, null, Results.Problem("Plugin manifest has no entry."));
-        }
-
-        if (!string.Equals(record.Manifest.Entry.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
-        {
-            return (record, null, Results.Problem($"Unsupported plugin protocol: {record.Manifest.Entry.Protocol}."));
-        }
-
-        if (string.IsNullOrWhiteSpace(record.Manifest.Entry.Endpoint))
-        {
-            return (record, null, Results.Problem("Plugin manifest entry is missing endpoint."));
-        }
-
-        if (!Uri.TryCreate(record.Manifest.Entry.Endpoint, UriKind.Absolute, out var address))
-        {
-            return (record, null, Results.Problem("Plugin manifest entry endpoint is invalid."));
-        }
-
-        return (record, address, null);
-    }
 }

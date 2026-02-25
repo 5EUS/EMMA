@@ -19,6 +19,7 @@ builder.Services.AddSingleton<PluginManifestLoader>();
 builder.Services.AddSingleton<PluginPermissionSanitizer>();
 builder.Services.AddSingleton<IPluginEntrypointResolver, PluginEntrypointResolver>();
 builder.Services.AddSingleton<PluginProcessManager>();
+builder.Services.AddSingleton<PluginResolutionService>();
 builder.Services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
 builder.Services.AddSingleton(StorageOptions.Default);
 builder.Services.AddSingleton<StorageInitializer>();
@@ -71,6 +72,7 @@ await storageInitializer.InitializeAsync(CancellationToken.None);
 
 app.MapGrpcService<PluginControlService>();
 app.MapPagedPipelineEndpoints();
+app.MapPluginHostEndpoints();
 app.MapGet("/", () => "EMMA plugin host is running.");
 
 app.Run();
