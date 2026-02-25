@@ -32,10 +32,8 @@ public sealed class PluginSecurityTests
             "demo",
             "Demo",
             "1.0.0",
-            new PluginManifestEntry(
-                "grpc",
-                "http://localhost:5005",
-                "plugin"),
+            "grpc",
+            null,
             null,
             null,
             null,
@@ -53,11 +51,12 @@ public sealed class PluginSecurityTests
     }
 
     [Fact]
-    public async Task EnsureStartedAsync_RejectsEntrypointWithDirectories()
+    public async Task EnsureStartedAsync_RejectsMissingExecutable()
     {
+        var sandboxRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox");
         var hostOptions = Options.Create(new PluginHostOptions
         {
-            SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
+            SandboxRootDirectory = sandboxRoot
         });
         var signatureOptions = Options.Create(new PluginSignatureOptions());
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);
@@ -70,131 +69,13 @@ public sealed class PluginSecurityTests
             verifier,
             NullLogger<PluginProcessManager>.Instance);
 
+        Directory.CreateDirectory(Path.Combine(sandboxRoot, "demo"));
         var manifest = new PluginManifest(
             "demo",
             "Demo",
             "1.0.0",
-            new PluginManifestEntry(
-                "grpc",
-                "http://localhost:5005",
-                "bin/plugin"),
+            "grpc",
             null,
-            null,
-            null,
-            null,
-            null,
-            null);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.EnsureStartedAsync(
-            manifest,
-            PluginRuntimeStatus.Unknown(),
-            CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task EnsureStartedAsync_RejectsAbsoluteEntrypoint()
-    {
-        var hostOptions = Options.Create(new PluginHostOptions
-        {
-            SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
-        });
-        var signatureOptions = Options.Create(new PluginSignatureOptions());
-        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
-        var resolver = new PluginEntrypointResolver(hostOptions);
-        var manager = new PluginProcessManager(
-            hostOptions,
-            new NoOpSandboxManager(),
-            resolver,
-            signatureOptions,
-            verifier,
-            NullLogger<PluginProcessManager>.Instance);
-
-        var manifest = new PluginManifest(
-            "demo",
-            "Demo",
-            "1.0.0",
-            new PluginManifestEntry(
-                "grpc",
-                "http://localhost:5005",
-                Path.Combine(Path.GetTempPath(), "evil")),
-            null,
-            null,
-            null,
-            null,
-            null,
-            null);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.EnsureStartedAsync(
-            manifest,
-            PluginRuntimeStatus.Unknown(),
-            CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task EnsureStartedAsync_RejectsEntrypointTraversal()
-    {
-        var hostOptions = Options.Create(new PluginHostOptions
-        {
-            SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
-        });
-        var signatureOptions = Options.Create(new PluginSignatureOptions());
-        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
-        var resolver = new PluginEntrypointResolver(hostOptions);
-        var manager = new PluginProcessManager(
-            hostOptions,
-            new NoOpSandboxManager(),
-            resolver,
-            signatureOptions,
-            verifier,
-            NullLogger<PluginProcessManager>.Instance);
-
-        var manifest = new PluginManifest(
-            "demo",
-            "Demo",
-            "1.0.0",
-            new PluginManifestEntry(
-                "grpc",
-                "http://localhost:5005",
-                "../evil"),
-            null,
-            null,
-            null,
-            null,
-            null,
-            null);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() => manager.EnsureStartedAsync(
-            manifest,
-            PluginRuntimeStatus.Unknown(),
-            CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task EnsureStartedAsync_RejectsMissingEntrypointExecutable()
-    {
-        var hostOptions = Options.Create(new PluginHostOptions
-        {
-            SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
-        });
-        var signatureOptions = Options.Create(new PluginSignatureOptions());
-        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
-        var resolver = new PluginEntrypointResolver(hostOptions);
-        var manager = new PluginProcessManager(
-            hostOptions,
-            new NoOpSandboxManager(),
-            resolver,
-            signatureOptions,
-            verifier,
-            NullLogger<PluginProcessManager>.Instance);
-
-        var manifest = new PluginManifest(
-            "demo",
-            "Demo",
-            "1.0.0",
-            new PluginManifestEntry(
-                "grpc",
-                "http://localhost:5005",
-                "missing-binary"),
             null,
             null,
             null,

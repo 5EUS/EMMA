@@ -51,12 +51,10 @@ public sealed class HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions>
 
     private static string BuildPayload(PluginManifest manifest)
     {
-        var entry = manifest.Entry;
         var payload = string.Join("|",
             manifest.Id ?? string.Empty,
             manifest.Version ?? string.Empty,
-            entry?.Protocol ?? string.Empty,
-            entry?.Entrypoint ?? string.Empty);
+            manifest.Protocol ?? string.Empty);
 
         return payload;
     }

@@ -29,7 +29,7 @@ public sealed class PluginRefreshTests
 
         var address = GetServerAddress(pluginApp);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
-        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }}\n}}\n");
+        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"protocol\": \"grpc\",\n  \"endpoint\": \"{address}\"\n}}\n");
 
         await using var factory = new WebApplicationFactory<global::Program>()
             .WithWebHostBuilder(builder =>

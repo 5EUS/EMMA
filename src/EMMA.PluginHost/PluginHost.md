@@ -56,11 +56,8 @@ Save files with the `.plugin.json` suffix inside the manifest directory:
 	"version": "1.0.0",
 	"description": "Local demo plugin host stub",
 	"author": "EMMA",
-	"entry": {
-		"protocol": "grpc",
-		"endpoint": "http://localhost:5005",
-		"entrypoint": "demo-plugin"
-	},
+	"protocol": "grpc",
+	"endpoint": "http://localhost:5005",
 	"capabilities": {
 		"network": ["https"],
 		"fileSystem": ["read"],
@@ -77,5 +74,5 @@ Save files with the `.plugin.json` suffix inside the manifest directory:
 ```
 
 Notes:
-- `entrypoint` is a file name resolved inside the plugin sandbox root; the manifest cannot specify an absolute path.
+- `protocol` declares the transport; entrypoints are auto-resolved from the bundle/binary name.
 - `permissions.paths` must be sandbox-relative; they are normalized to absolute paths under the sandbox root.

@@ -77,18 +77,11 @@ public sealed class PluginProcessManager(
         PluginRuntimeStatus current,
         CancellationToken cancellationToken)
     {
-        if (manifest.Entry is null)
+        if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
-            return current.WithState(PluginRuntimeState.Disabled, "entry-missing", "Plugin manifest entry is missing.");
+            return current.WithState(PluginRuntimeState.Disabled, "protocol-missing", "Plugin manifest protocol is missing.");
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Entrypoint))
-        {
-            // External plugin endpoint; we do not manage its lifecycle here.
-            return current.State == PluginRuntimeState.Unknown
-                ? PluginRuntimeStatus.External()
-                : current;
-        }
 
         if (current.State == PluginRuntimeState.Timeout
             && current.NextRetryAt.HasValue
@@ -125,9 +118,18 @@ public sealed class PluginProcessManager(
             return current.WithState(PluginRuntimeState.Crashed, "process-exited", "Plugin process exited.", exitCode);
         }
 
+        var executable = (string?)null;
+        var hasEndpoint = !string.IsNullOrWhiteSpace(manifest.Endpoint);
+        if (hasEndpoint && !TryResolveEntrypoint(manifest, out executable))
+        {
+            return current.State == PluginRuntimeState.Unknown
+                ? PluginRuntimeStatus.External()
+                : current;
+        }
+
         await _sandboxManager.PrepareAsync(manifest, cancellationToken);
 
-        var startInfo = BuildStartInfo(manifest);
+        var startInfo = BuildStartInfo(manifest, executable);
         ApplyPluginPort(manifest, startInfo);
         startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
         if (_logger.IsEnabled(LogLevel.Information))
@@ -160,13 +162,13 @@ public sealed class PluginProcessManager(
                 exitCode);
         }
 
-        AddProcess(manifest.Id, process, manifest.Entry.Entrypoint ?? string.Empty);
+        AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty);
         AttachLogCapture(manifest.Id, process);
 
         await _sandboxManager.EnforceAsync(manifest, process, cancellationToken);
 
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Endpoint)
-            || !Uri.TryCreate(manifest.Entry.Endpoint, UriKind.Absolute, out var address))
+        if (string.IsNullOrWhiteSpace(manifest.Endpoint)
+            || !Uri.TryCreate(manifest.Endpoint, UriKind.Absolute, out var address))
         {
             return PluginRuntimeStatus.Running();
         }
@@ -310,11 +312,10 @@ public sealed class PluginProcessManager(
         }
     }
 
-    private ProcessStartInfo BuildStartInfo(PluginManifest manifest)
+    private ProcessStartInfo BuildStartInfo(PluginManifest manifest, string? executable)
     {
-        _ = manifest.Entry ?? throw new InvalidOperationException("Plugin entry is missing.");
         var pluginRoot = _entrypointResolver.GetPluginRoot(manifest.Id);
-        var executable = _entrypointResolver.ResolveEntrypoint(manifest);
+        executable ??= _entrypointResolver.ResolveEntrypoint(manifest);
         return new ProcessStartInfo
         {
             FileName = executable,
@@ -325,14 +326,28 @@ public sealed class PluginProcessManager(
         };
     }
 
+    private bool TryResolveEntrypoint(PluginManifest manifest, out string executable)
+    {
+        try
+        {
+            executable = _entrypointResolver.ResolveEntrypoint(manifest);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            executable = string.Empty;
+            return false;
+        }
+    }
+
     private static void ApplyPluginPort(PluginManifest manifest, ProcessStartInfo startInfo)
     {
-        if (manifest.Entry is null || string.IsNullOrWhiteSpace(manifest.Entry.Endpoint))
+        if (string.IsNullOrWhiteSpace(manifest.Endpoint))
         {
             return;
         }
 
-        if (!Uri.TryCreate(manifest.Entry.Endpoint, UriKind.Absolute, out var address))
+        if (!Uri.TryCreate(manifest.Endpoint, UriKind.Absolute, out var address))
         {
             return;
         }

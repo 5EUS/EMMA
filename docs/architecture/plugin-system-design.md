@@ -32,11 +32,8 @@ contracts in gRPC messages.
   "version": "semver",
   "description": "string",
   "author": "string",
-  "entry": {
-    "protocol": "grpc",
-    "endpoint": "string",
-    "entrypoint": "string"
-  },
+  "protocol": "grpc",
+  "endpoint": "string",
   "capabilities": {
     "network": ["https"],
     "fileSystem": ["read"],
@@ -57,7 +54,7 @@ contracts in gRPC messages.
 ```
 
 Notes:
-- `entrypoint` is a file name resolved inside the plugin sandbox root.
+- `protocol` declares the transport; entrypoints are auto-resolved from the bundle/binary name.
 - `permissions.paths` are sandbox-relative and normalized under the sandbox root.
 - `capabilities` are enforced by the host; they do not imply trust.
 - `signing` is required for installation and execution.

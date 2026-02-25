@@ -120,19 +120,19 @@ public sealed class PluginHandshakeService(
             return Failed($"Plugin is {runtime.State.ToString().ToLowerInvariant()}.");
         }
 
-        if (manifest.Entry is null)
+        if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
-            return Failed("Missing entry section.");
+            return Failed("Missing protocol.");
         }
 
-        if (!string.Equals(manifest.Entry.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
         {
-            return Failed($"Unsupported protocol: {manifest.Entry.Protocol}.");
+            return Failed($"Unsupported protocol: {manifest.Protocol}.");
         }
 
-        if (string.IsNullOrWhiteSpace(manifest.Entry.Endpoint))
+        if (string.IsNullOrWhiteSpace(manifest.Endpoint))
         {
-            return Failed("Missing entry endpoint.");
+            return Failed("Missing endpoint.");
         }
 
         try
@@ -140,7 +140,7 @@ public sealed class PluginHandshakeService(
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(_options.HandshakeTimeoutSeconds));
 
-            var address = new Uri(manifest.Entry.Endpoint, UriKind.Absolute);
+            var address = new Uri(manifest.Endpoint, UriKind.Absolute);
             using var httpClient = CreateHttpClient(address);
             using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
             {

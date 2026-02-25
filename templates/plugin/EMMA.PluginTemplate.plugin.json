@@ -4,10 +4,7 @@
   "version": "0.1.0",
   "description": "Starter manifest for a gRPC plugin.",
   "author": "Your Name",
-  "entry": {
-    "protocol": "grpc",
-    "entrypoint": "EMMA.PluginTemplate.app"
-  },
+  "protocol": "grpc",
   "mediaTypes": [
     "paged",
     "video"

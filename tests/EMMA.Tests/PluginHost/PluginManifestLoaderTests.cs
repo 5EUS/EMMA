@@ -13,7 +13,7 @@ public sealed class PluginManifestLoaderTests
         Directory.CreateDirectory(tempRoot);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
 
-        await File.WriteAllTextAsync(manifestPath, "{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"http://localhost:5005\"\n  }\n}");
+        await File.WriteAllTextAsync(manifestPath, "{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"protocol\": \"grpc\",\n  \"endpoint\": \"http://localhost:5005\"\n}");
 
         var options = Options.Create(new EMMA.PluginHost.Configuration.PluginHostOptions
         {
@@ -38,7 +38,7 @@ public sealed class PluginManifestLoaderTests
         Directory.CreateDirectory(tempRoot);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
 
-        await File.WriteAllTextAsync(manifestPath, "{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"http://localhost:5005\"\n  },\n  \"permissions\": {\n    \"paths\": [\"/etc\", \"../escape\", \"data\", \"data\", \"DATA\", \"\"]\n  }\n}");
+        await File.WriteAllTextAsync(manifestPath, "{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"protocol\": \"grpc\",\n  \"endpoint\": \"http://localhost:5005\",\n  \"permissions\": {\n    \"paths\": [\"/etc\", \"../escape\", \"data\", \"data\", \"DATA\", \"\"]\n  }\n}");
 
         var options = Options.Create(new EMMA.PluginHost.Configuration.PluginHostOptions
         {

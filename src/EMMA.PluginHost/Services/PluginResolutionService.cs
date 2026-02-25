@@ -66,24 +66,24 @@ public sealed class PluginResolutionService(
             return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
         }
 
-        if (record.Manifest.Entry is null)
+        if (string.IsNullOrWhiteSpace(record.Manifest.Protocol))
         {
-            return (record, null, Results.Problem("Plugin manifest has no entry."));
+            return (record, null, Results.Problem("Plugin manifest protocol is missing."));
         }
 
-        if (!string.Equals(record.Manifest.Entry.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
         {
-            return (record, null, Results.Problem($"Unsupported plugin protocol: {record.Manifest.Entry.Protocol}."));
+            return (record, null, Results.Problem($"Unsupported plugin protocol: {record.Manifest.Protocol}."));
         }
 
-        if (string.IsNullOrWhiteSpace(record.Manifest.Entry.Endpoint))
+        if (string.IsNullOrWhiteSpace(record.Manifest.Endpoint))
         {
-            return (record, null, Results.Problem("Plugin manifest entry is missing endpoint."));
+            return (record, null, Results.Problem("Plugin manifest endpoint is missing."));
         }
 
-        if (!Uri.TryCreate(record.Manifest.Entry.Endpoint, UriKind.Absolute, out var address))
+        if (!Uri.TryCreate(record.Manifest.Endpoint, UriKind.Absolute, out var address))
         {
-            return (record, null, Results.Problem("Plugin manifest entry endpoint is invalid."));
+            return (record, null, Results.Problem("Plugin manifest endpoint is invalid."));
         }
 
         return (record, address, null);

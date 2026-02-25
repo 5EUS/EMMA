@@ -32,10 +32,8 @@ public sealed class ApiPageAssetProxyIntegrationTests
                     "id": "demo",
                     "name": "Demo Plugin",
                     "version": "1.0.0",
-                    "entry": {
-                        "protocol": "grpc",
-                        "endpoint": "{{pluginServer.Address}}"
-                    },
+                    "protocol": "grpc",
+                    "endpoint": "{{pluginServer.Address}}",
                     "capabilities": {
                         "network": ["http"],
                         "cache": true

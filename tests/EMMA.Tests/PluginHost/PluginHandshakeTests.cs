@@ -30,7 +30,7 @@ public sealed class PluginHandshakeTests
 
         var address = GetServerAddress(app);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
-        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }},\n  \"capabilities\": {{\n    \"cpuBudgetMs\": 300,\n    \"memoryMb\": 256\n  }},\n  \"permissions\": {{\n    \"domains\": [\"example.com\"],\n    \"paths\": [\"data\"]\n  }}\n}}\n");
+        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"protocol\": \"grpc\",\n  \"endpoint\": \"{address}\",\n  \"capabilities\": {{\n    \"cpuBudgetMs\": 300,\n    \"memoryMb\": 256\n  }},\n  \"permissions\": {{\n    \"domains\": [\"example.com\"],\n    \"paths\": [\"data\"]\n  }}\n}}\n");
 
         var options = Options.Create(new PluginHostOptions
         {
@@ -47,6 +47,7 @@ public sealed class PluginHandshakeTests
         var signatureOptions = Options.Create(new PluginSignatureOptions());
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);
         var resolver = new PluginEntrypointResolver(options);
+        var endpointAllocator = new PluginEndpointAllocator();
         var processManager = new PluginProcessManager(
             options,
             sandbox,
@@ -60,6 +61,7 @@ public sealed class PluginHandshakeTests
             sandbox,
             processManager,
             sanitizer,
+            endpointAllocator,
             options,
             NullLogger<PluginHandshakeService>.Instance);
 
@@ -98,7 +100,7 @@ public sealed class PluginHandshakeTests
 
         var address = GetServerAddress(app);
         var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
-        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"entry\": {{\n    \"protocol\": \"grpc\",\n    \"endpoint\": \"{address}\"\n  }},\n  \"capabilities\": {{\n    \"cpuBudgetMs\": 300,\n    \"memoryMb\": 256\n  }}\n}}\n");
+        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"protocol\": \"grpc\",\n  \"endpoint\": \"{address}\",\n  \"capabilities\": {{\n    \"cpuBudgetMs\": 300,\n    \"memoryMb\": 256\n  }}\n}}\n");
 
         var options = Options.Create(new PluginHostOptions
         {
@@ -115,6 +117,7 @@ public sealed class PluginHandshakeTests
         var signatureOptions = Options.Create(new PluginSignatureOptions());
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);
         var resolver = new PluginEntrypointResolver(options);
+        var endpointAllocator = new PluginEndpointAllocator();
         var processManager = new PluginProcessManager(
             options,
             sandbox,
@@ -128,6 +131,7 @@ public sealed class PluginHandshakeTests
             sandbox,
             processManager,
             sanitizer,
+            endpointAllocator,
             options,
             NullLogger<PluginHandshakeService>.Instance);
 

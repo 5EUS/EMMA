@@ -27,16 +27,14 @@ with open(manifest_path, "r", encoding="utf-8") as f:
 plugin_id = manifest.get("id") or "plugin"
 plugin_name = manifest.get("name") or plugin_id
 version = manifest.get("version") or "0.0.0"
-entrypoint = (manifest.get("entry") or {}).get("entrypoint") or "Plugin.app"
 
 print(plugin_id)
 print(plugin_name)
 print(version)
-print(entrypoint)
 PY
 )
 
-if [[ ${#manifest_fields[@]} -lt 4 ]]; then
+if [[ ${#manifest_fields[@]} -lt 3 ]]; then
   echo "Failed to parse manifest fields." >&2
   exit 1
 fi
@@ -44,14 +42,12 @@ fi
 PLUGIN_ID="${manifest_fields[0]}"
 PLUGIN_NAME="${manifest_fields[1]}"
 PLUGIN_VERSION="${manifest_fields[2]}"
-ENTRYPOINT="${manifest_fields[3]}"
-
-if [[ ! "$ENTRYPOINT" =~ \.app$ ]]; then
-  echo "entry.entrypoint must be a .app bundle for macOS packaging." >&2
-  exit 1
+APP_BUNDLE_NAME=$(echo "$PLUGIN_NAME" | tr -d '[:space:]')
+if [[ -z "$APP_BUNDLE_NAME" ]]; then
+  APP_BUNDLE_NAME="$PLUGIN_ID"
 fi
 
-APP_NAME="$ENTRYPOINT"
+APP_NAME="$APP_BUNDLE_NAME.app"
 mkdir -p "$PACK_DIR"
 
 for TARGET in $TARGETS; do
@@ -73,6 +69,14 @@ for TARGET in $TARGETS; do
   # Publish self-contained apphost for macOS to avoid system dotnet dependencies.
   dotnet publish "$PLUGIN_DIR/EMMA.PluginTemplate.csproj" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
 
+  APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
+  if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
+    echo "Failed to locate runtimeconfig in publish output." >&2
+    exit 1
+  fi
+
+  APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
+
   cp -R "$PUBLISH_DIR"/. "$MACOS_DIR/"
   rm -rf "$MACOS_DIR/artifacts"
 
@@ -92,7 +96,7 @@ for TARGET in $TARGETS; do
   <key>CFBundleShortVersionString</key>
   <string>$PLUGIN_VERSION</string>
   <key>CFBundleExecutable</key>
-  <string>${ENTRYPOINT%.app}</string>
+  <string>$APP_EXECUTABLE</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
 </dict>

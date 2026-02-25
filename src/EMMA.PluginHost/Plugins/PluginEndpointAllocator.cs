@@ -7,12 +7,12 @@ public sealed class PluginEndpointAllocator
 {
     public PluginManifest EnsureEndpoint(PluginManifest manifest)
     {
-        if (manifest.Entry is null)
+        if (!string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
         {
             return manifest;
         }
 
-        if (!string.Equals(manifest.Entry.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(manifest.Endpoint))
         {
             return manifest;
         }
@@ -20,8 +20,7 @@ public sealed class PluginEndpointAllocator
         var port = AllocatePort();
         var endpoint = $"http://127.0.0.1:{port}";
 
-        var updatedEntry = manifest.Entry with { Endpoint = endpoint };
-        return manifest with { Entry = updatedEntry };
+        return manifest with { Endpoint = endpoint };
     }
 
     private static int AllocatePort()

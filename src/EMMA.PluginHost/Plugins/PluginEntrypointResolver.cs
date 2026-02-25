@@ -26,59 +26,101 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
 
     public string ResolveEntrypoint(PluginManifest manifest)
     {
-        if (manifest.Entry is null)
+        if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
-            throw new InvalidOperationException("Plugin entry is missing.");
-        }
-
-        var entrypoint = manifest.Entry.Entrypoint?.Trim();
-        if (string.IsNullOrWhiteSpace(entrypoint))
-        {
-            throw new InvalidOperationException("Plugin entrypoint is missing.");
+            throw new InvalidOperationException("Plugin protocol is missing.");
         }
 
         var pluginRoot = GetPluginRoot(manifest.Id);
-        return ResolveEntrypointPath(pluginRoot, entrypoint);
+        return ResolveDefaultEntrypoint(pluginRoot, manifest);
     }
 
-    private static string ResolveEntrypointPath(string pluginRoot, string entrypoint)
+    private static string ResolveDefaultEntrypoint(string pluginRoot, PluginManifest manifest)
     {
-        if (Path.IsPathRooted(entrypoint))
+        if (OperatingSystem.IsMacOS())
         {
-            throw new InvalidOperationException("Plugin entrypoint must be a file name.");
+            var appCandidates = Directory.EnumerateDirectories(pluginRoot, "*.app", SearchOption.TopDirectoryOnly)
+                .ToList();
+            if (appCandidates.Count == 1)
+            {
+                return ResolveAppBundle(appCandidates[0], Path.GetFileName(appCandidates[0]));
+            }
         }
 
-        if (entrypoint.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]) >= 0)
+        var candidates = BuildNameCandidates(manifest);
+        foreach (var name in candidates)
         {
-            throw new InvalidOperationException("Plugin entrypoint must not include directories.");
+            if (TryResolveCandidate(pluginRoot, name, out var resolved))
+            {
+                return resolved;
+            }
         }
 
-        if (entrypoint.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        if (OperatingSystem.IsMacOS())
         {
-            throw new InvalidOperationException("Plugin entrypoint contains invalid characters.");
+            throw new InvalidOperationException("Plugin executable not found; no .app bundle was found.");
         }
 
-        var candidate = Path.Combine(pluginRoot, entrypoint);
-        if (entrypoint.EndsWith(".app", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("Plugin executable not found; no matching binary was found.");
+    }
+
+    private static List<string> BuildNameCandidates(PluginManifest manifest)
+    {
+        var names = new List<string>();
+        if (!string.IsNullOrWhiteSpace(manifest.Name))
         {
-            return ResolveAppBundle(candidate, entrypoint);
+            names.Add(RemoveSpaces(manifest.Name));
         }
 
-        if (OperatingSystem.IsWindows() && string.IsNullOrWhiteSpace(Path.GetExtension(candidate)))
+        if (!string.IsNullOrWhiteSpace(manifest.Id))
+        {
+            names.Add(manifest.Id);
+        }
+
+        return names.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static string RemoveSpaces(string value)
+    {
+        return new string(value.Where(ch => !char.IsWhiteSpace(ch)).ToArray());
+    }
+
+    private static bool TryResolveCandidate(string pluginRoot, string name, out string resolved)
+    {
+        resolved = string.Empty;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return false;
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            var bundlePath = Path.Combine(pluginRoot, name + ".app");
+            if (Directory.Exists(bundlePath))
+            {
+                resolved = ResolveAppBundle(bundlePath, Path.GetFileName(bundlePath));
+                return true;
+            }
+        }
+
+        var candidate = Path.Combine(pluginRoot, name);
+        if (OperatingSystem.IsWindows())
         {
             var exeCandidate = candidate + ".exe";
             if (File.Exists(exeCandidate))
             {
-                return exeCandidate;
+                resolved = exeCandidate;
+                return true;
             }
         }
 
-        if (!File.Exists(candidate))
+        if (File.Exists(candidate))
         {
-            throw new InvalidOperationException("Plugin entrypoint executable not found.");
+            resolved = candidate;
+            return true;
         }
 
-        return candidate;
+        return false;
     }
 
     private static string ResolveAppBundle(string bundlePath, string entrypoint)

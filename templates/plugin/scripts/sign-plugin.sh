@@ -33,12 +33,10 @@ key_b64 = os.environ.get("EMMA_HMAC_KEY_BASE64")
 with open(manifest_path, "r", encoding="utf-8") as f:
     manifest = json.load(f)
 
-entry = manifest.get("entry") or {}
 payload = "|".join([
     manifest.get("id") or "",
     manifest.get("version") or "",
-    entry.get("protocol") or "",
-    entry.get("entrypoint") or "",
+    manifest.get("protocol") or "",
 ])
 
 key = base64.b64decode(key_b64)

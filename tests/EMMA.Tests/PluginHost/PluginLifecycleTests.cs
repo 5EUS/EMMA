@@ -28,15 +28,13 @@ public sealed class PluginLifecycleTests
             SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
         });
 
-        var entrypointName = CopyEntrypointToSandbox(entrypointPath, options.Value.SandboxRootDirectory, "demo");
+        CopyEntrypointToSandbox(entrypointPath, options.Value.SandboxRootDirectory, "demo");
         var manifest = new PluginManifest(
             "demo",
-            "Demo Plugin",
+            "EMMA.TestPlugin",
             "1.0.0",
-            new PluginManifestEntry(
-                "grpc",
-                $"http://localhost:{port}",
-                entrypointName),
+            "grpc",
+            $"http://localhost:{port}",
             null,
             null,
             null,
@@ -93,15 +91,13 @@ public sealed class PluginLifecycleTests
             SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
         });
 
-        var entrypointName = CopyEntrypointToSandbox(entrypointPath, options.Value.SandboxRootDirectory, "demo");
+        CopyEntrypointToSandbox(entrypointPath, options.Value.SandboxRootDirectory, "demo");
         var manifest = new PluginManifest(
             "demo",
-            "Demo Plugin",
+            "EMMA.TestPlugin",
             "1.0.0",
-            new PluginManifestEntry(
-                "grpc",
-                $"http://localhost:{port}",
-                entrypointName),
+            "grpc",
+            $"http://localhost:{port}",
             null,
             null,
             null,
@@ -204,7 +200,7 @@ public sealed class PluginLifecycleTests
         throw new FileNotFoundException("Test plugin entrypoint not found.", outputDir);
     }
 
-    private static string CopyEntrypointToSandbox(string entrypointPath, string sandboxRoot, string pluginId)
+    private static void CopyEntrypointToSandbox(string entrypointPath, string sandboxRoot, string pluginId)
     {
         var pluginRoot = Path.Combine(sandboxRoot, pluginId);
         Directory.CreateDirectory(pluginRoot);
@@ -216,9 +212,14 @@ public sealed class PluginLifecycleTests
         }
         var fileName = Path.GetFileName(entrypointPath);
         var destination = Path.Combine(pluginRoot, fileName);
-        TryMakeExecutable(destination);
+        if (File.Exists(destination))
+        {
+            TryMakeExecutable(destination);
+            return;
+        }
 
-        return fileName;
+        File.Copy(entrypointPath, destination, true);
+        TryMakeExecutable(destination);
     }
 
     private static void TryMakeExecutable(string path)
