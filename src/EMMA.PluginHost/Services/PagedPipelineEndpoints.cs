@@ -23,6 +23,7 @@ public static class PagedPipelineEndpoints
             string? query,
             string? pluginId,
             PluginResolutionService pluginResolution,
+            PluginProcessManager processManager,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -35,6 +36,8 @@ public static class PagedPipelineEndpoints
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
+
+            using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
             var correlationId = PluginGrpcHelpers.CreateCorrelationId();
             var pipeline = CreatePipeline(
@@ -61,6 +64,7 @@ public static class PagedPipelineEndpoints
             string? mediaId,
             string? pluginId,
             PluginResolutionService pluginResolution,
+            PluginProcessManager processManager,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -78,6 +82,8 @@ public static class PagedPipelineEndpoints
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
+
+            using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
             var correlationId = PluginGrpcHelpers.CreateCorrelationId();
             var pipeline = CreatePipeline(
@@ -105,6 +111,7 @@ public static class PagedPipelineEndpoints
             int? index,
             string? pluginId,
             PluginResolutionService pluginResolution,
+            PluginProcessManager processManager,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -122,6 +129,8 @@ public static class PagedPipelineEndpoints
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
+
+            using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
             var correlationId = PluginGrpcHelpers.CreateCorrelationId();
             var pipeline = CreatePipeline(
@@ -153,6 +162,7 @@ public static class PagedPipelineEndpoints
             int? index,
             string? pluginId,
             PluginResolutionService pluginResolution,
+            PluginProcessManager processManager,
             IOptions<PluginHostOptions> options,
             IMediaCatalogPort catalog,
             IPageAssetCachePort pageAssetCache,
@@ -170,6 +180,8 @@ public static class PagedPipelineEndpoints
             {
                 return error ?? Results.Problem("Plugin resolution failed.");
             }
+
+            using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
             var correlationId = PluginGrpcHelpers.CreateCorrelationId();
             var pipeline = CreatePipeline(

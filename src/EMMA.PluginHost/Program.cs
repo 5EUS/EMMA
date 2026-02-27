@@ -65,6 +65,7 @@ builder.Services.AddSingleton<PluginHandshakeService>();
 builder.Services.AddHostedService<PluginHandshakeHostedService>();
 builder.Services.AddHostedService<PluginBudgetWatcher>();
 builder.Services.AddHostedService<PluginLifecycleHostedService>();
+builder.Services.AddHostedService<PluginIdleCleanupHostedService>();
 
 var app = builder.Build();
 

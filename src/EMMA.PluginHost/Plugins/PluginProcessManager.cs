@@ -23,7 +23,37 @@ public sealed class PluginProcessManager(
     private static readonly Regex CorrelationIdRegex = new(
         "CorrelationId\\s*[:=]\\s*(?<id>[A-Za-z0-9-]+)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
-    private sealed record ProcessHandle(Process Process, string StartupCommand, DateTimeOffset StartedAt);
+    private sealed class ProcessHandle(Process process, string startupCommand, DateTimeOffset startedAt)
+    {
+        public Process Process { get; } = process;
+        public string StartupCommand { get; } = startupCommand;
+        public DateTimeOffset StartedAt { get; } = startedAt;
+        public DateTimeOffset LastUsedAt { get; set; } = startedAt;
+        public int ActiveLeases { get; set; }
+    }
+
+    private sealed class UsageLease(PluginProcessManager owner, string pluginId) : IDisposable
+    {
+        private readonly PluginProcessManager _owner = owner;
+        private readonly string _pluginId = pluginId;
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            {
+                return;
+            }
+
+            _owner.ReleaseUsageLease(_pluginId);
+        }
+    }
+
+    private sealed class NoOpLease : IDisposable
+    {
+        public static readonly NoOpLease Instance = new();
+        public void Dispose() { }
+    }
     private sealed class LogBuffer(int maxLines)
     {
         private readonly int _maxLines = Math.Max(10, maxLines);
@@ -216,22 +246,7 @@ public sealed class PluginProcessManager(
             return;
         }
 
-        try
-        {
-            if (!handle.Process.HasExited)
-            {
-                handle.Process.Kill(entireProcessTree: true);
-            }
-
-            await handle.Process.WaitForExitAsync(cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            if (_logger.IsEnabled(LogLevel.Warning))
-            {
-                _logger.LogWarning(ex, "Failed to stop plugin process {PluginId}.", pluginId);
-            }
-        }
+        await StopHandleAsync(pluginId, handle, cancellationToken);
     }
 
     public async Task StopAllAsync(CancellationToken cancellationToken)
@@ -246,6 +261,70 @@ public sealed class PluginProcessManager(
         {
             await StopAsync(pluginId, cancellationToken);
         }
+    }
+
+    public IDisposable AcquireUsageLease(string pluginId)
+    {
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            return NoOpLease.Instance;
+        }
+
+        lock (_lock)
+        {
+            if (!_processes.TryGetValue(pluginId, out var handle) || handle.Process.HasExited)
+            {
+                return NoOpLease.Instance;
+            }
+
+            handle.ActiveLeases++;
+            handle.LastUsedAt = DateTimeOffset.UtcNow;
+            return new UsageLease(this, pluginId);
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> StopIdleProcessesAsync(CancellationToken cancellationToken)
+    {
+        var idleFor = TimeSpan.FromSeconds(Math.Max(1, _options.PluginIdleTimeoutSeconds));
+        var now = DateTimeOffset.UtcNow;
+
+        List<(string PluginId, ProcessHandle Handle)> toStop = [];
+        lock (_lock)
+        {
+            foreach (var entry in _processes)
+            {
+                var handle = entry.Value;
+
+                if (handle.ActiveLeases > 0)
+                {
+                    continue;
+                }
+
+                if (handle.Process.HasExited || now - handle.LastUsedAt >= idleFor)
+                {
+                    toStop.Add((entry.Key, handle));
+                }
+            }
+
+            foreach (var entry in toStop)
+            {
+                _processes.Remove(entry.PluginId);
+            }
+        }
+
+        if (toStop.Count == 0)
+        {
+            return [];
+        }
+
+        var stopped = new List<string>(toStop.Count);
+        foreach (var entry in toStop)
+        {
+            await StopHandleAsync(entry.PluginId, entry.Handle, cancellationToken);
+            stopped.Add(entry.PluginId);
+        }
+
+        return stopped;
     }
 
     public PluginRuntimeStatus RecordTimeout(PluginRuntimeStatus current)
@@ -274,6 +353,44 @@ public sealed class PluginProcessManager(
         {
             _processes[pluginId] = new ProcessHandle(process, command, DateTimeOffset.UtcNow);
             _logs.TryAdd(pluginId, new LogBuffer(_options.PluginLogMaxLines));
+        }
+    }
+
+    private void ReleaseUsageLease(string pluginId)
+    {
+        lock (_lock)
+        {
+            if (!_processes.TryGetValue(pluginId, out var handle))
+            {
+                return;
+            }
+
+            if (handle.ActiveLeases > 0)
+            {
+                handle.ActiveLeases--;
+            }
+
+            handle.LastUsedAt = DateTimeOffset.UtcNow;
+        }
+    }
+
+    private async Task StopHandleAsync(string pluginId, ProcessHandle handle, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (!handle.Process.HasExited)
+            {
+                handle.Process.Kill(entireProcessTree: true);
+            }
+
+            await handle.Process.WaitForExitAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            if (_logger.IsEnabled(LogLevel.Warning))
+            {
+                _logger.LogWarning(ex, "Failed to stop plugin process {PluginId}.", pluginId);
+            }
         }
     }
 
