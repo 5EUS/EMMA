@@ -68,9 +68,7 @@ case "$RID" in
     DEST_DIRS+=("$EMMAUI_DIR/build/windows/x64/runner/Release")
     ;;
   linux-*)
-    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/debug/bundle")
-    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/profile/bundle")
-    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/release/bundle")
+    DEST_DIRS+=("$EMMAUI_DIR/linux/runner")
     ;;
 esac
 
@@ -87,6 +85,7 @@ for dir in "${DEST_DIRS[@]}"; do
   cp -R "$HOST_OUTPUT_DIR"/* "$RUNTIME_DEST_DIR/"
 
   chmod +x "$RUNTIME_DEST_DIR/$HOST_BINARY_NAME" || true
+  find "$RUNTIME_DEST_DIR" -type f \( -name "EMMA.PluginHost" -o -name "*.so" -o -name "libhostfxr.so" -o -name "libcoreclr.so" \) -exec chmod +x {} \; || true
   echo "  -> $RUNTIME_DEST_DIR/$HOST_BINARY_NAME"
 done
 

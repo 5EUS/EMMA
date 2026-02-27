@@ -49,7 +49,7 @@ case "$RID" in
     ;;
   linux-*|android-*)
     EXPECTED_NAME="libemma_native.so"
-    SOURCE_NAME="libEMMA.Native.so"
+    SOURCE_NAME="EMMA.Native.so"
     ;;
   ios-*|iossimulator-*)
     EXPECTED_NAME="libemma_native.a"
@@ -60,6 +60,17 @@ esac
 if [[ -n "$EXPECTED_NAME" && -n "$SOURCE_NAME" ]]; then
   if [[ -f "$OUTPUT_DIR/$SOURCE_NAME" && ! -f "$OUTPUT_DIR/$EXPECTED_NAME" ]]; then
     cp "$OUTPUT_DIR/$SOURCE_NAME" "$OUTPUT_DIR/$EXPECTED_NAME"
+  fi
+fi
+
+if [[ "$RID" == linux-* || "$RID" == android-* ]]; then
+  if [[ ! -f "$OUTPUT_DIR/$EXPECTED_NAME" ]]; then
+    for candidate in "EMMA.Native.so" "libEMMA.Native.so" "emma_native.so"; do
+      if [[ -f "$OUTPUT_DIR/$candidate" ]]; then
+        cp "$OUTPUT_DIR/$candidate" "$OUTPUT_DIR/$EXPECTED_NAME"
+        break
+      fi
+    done
   fi
 fi
 

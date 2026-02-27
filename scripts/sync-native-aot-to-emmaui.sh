@@ -53,9 +53,20 @@ esac
 
 SOURCE_FILE="$AOT_DIR/$ARTIFACT_NAME"
 if [[ ! -f "$SOURCE_FILE" ]]; then
-  echo "Expected artifact not found: $SOURCE_FILE"
-  echo "Run ./scripts/publish-native-aot.sh $RID first (or pass a custom AOT dir)."
-  exit 1
+  if [[ "$RID" == linux-* || "$RID" == android-* ]]; then
+    for candidate in "EMMA.Native.so" "libEMMA.Native.so" "emma_native.so"; do
+      if [[ -f "$AOT_DIR/$candidate" ]]; then
+        SOURCE_FILE="$AOT_DIR/$candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ ! -f "$SOURCE_FILE" ]]; then
+    echo "Expected artifact not found: $SOURCE_FILE"
+    echo "Run ./scripts/publish-native-aot.sh $RID first (or pass a custom AOT dir)."
+    exit 1
+  fi
 fi
 
 declare -a DEST_DIRS=()
@@ -85,18 +96,7 @@ case "$RID" in
     ;;
 
   linux-*)
-    FLUTTER_ARCH=""
-    case "$RID" in
-      linux-x64) FLUTTER_ARCH="x64" ;;
-      linux-arm64) FLUTTER_ARCH="arm64" ;;
-      *)
-        echo "Unsupported Linux RID for Flutter build mapping: $RID"
-        exit 1
-        ;;
-    esac
-    DEST_DIRS+=("$EMMAUI_DIR/build/linux/$FLUTTER_ARCH/debug/bundle/lib")
-    DEST_DIRS+=("$EMMAUI_DIR/build/linux/$FLUTTER_ARCH/profile/bundle/lib")
-    DEST_DIRS+=("$EMMAUI_DIR/build/linux/$FLUTTER_ARCH/release/bundle/lib")
+    DEST_DIRS+=("$EMMAUI_DIR/linux/runner")
     ;;
 
   win-*)
