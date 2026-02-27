@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Http;
 using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -12,11 +13,17 @@ namespace EMMA.Native;
 
 public static class NativeExports
 {
-    private sealed record RuntimeState(EmbeddedRuntime Runtime, InMemoryMediaStore Store);
+    private sealed class RuntimeState(EmbeddedRuntime runtime, InMemoryMediaStore store)
+    {
+        public EmbeddedRuntime Runtime { get; } = runtime;
+        public InMemoryMediaStore Store { get; } = store;
+        public string? SelectedPluginId { get; set; }
+    }
     private sealed record PluginSummary(string Id, string Title);
     private sealed record PluginPathConfiguration(string? ManifestsDirectory, string? PluginsDirectory);
 
     private static readonly ConcurrentDictionary<int, RuntimeState> States = new();
+    private static readonly HttpClient PluginHostClient = new();
     private static int _nextHandle;
     private static PluginPathConfiguration _pluginPathConfiguration = new(null, null);
 
@@ -144,7 +151,7 @@ public static class NativeExports
 
         try
         {
-            if (!States.ContainsKey(handle))
+            if (!States.TryGetValue(handle, out var state))
             {
                 SetLastError("Runtime handle not found.");
                 return 0;
@@ -157,8 +164,16 @@ public static class NativeExports
                 return 0;
             }
 
-            SetLastError("Plugin open is not implemented for the embedded runtime.");
-            return 0;
+            var plugins = DiscoverPlugins();
+            if (!plugins.Any(plugin => string.Equals(plugin.Id, pluginId, StringComparison.OrdinalIgnoreCase)))
+            {
+                SetLastError($"Plugin '{pluginId}' was not found in configured manifests/plugins directories.");
+                return 0;
+            }
+
+            state.SelectedPluginId = pluginId.Trim();
+
+            return 1;
         }
         catch (Exception ex)
         {
@@ -181,10 +196,22 @@ public static class NativeExports
             }
 
             var query = PtrToString(queryUtf8) ?? string.Empty;
-            var results = state.Runtime.Pipeline
-                .SearchAsync(query, CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
+            var activePluginId = ResolveActivePluginId(state);
+
+            IReadOnlyList<MediaSummary> results;
+            if (!string.IsNullOrWhiteSpace(activePluginId))
+            {
+                results = SearchViaPluginHost(activePluginId, query, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            else
+            {
+                results = state.Runtime.Pipeline
+                    .SearchAsync(query, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
 
             var json = BuildMediaJson(results);
             return AllocUtf8(json);
@@ -269,6 +296,86 @@ public static class NativeExports
 
         sb.Append(']');
         return sb.ToString();
+    }
+
+    private static string? ResolveActivePluginId(RuntimeState state)
+    {
+        if (!string.IsNullOrWhiteSpace(state.SelectedPluginId))
+        {
+            return state.SelectedPluginId;
+        }
+
+        var discovered = DiscoverPlugins();
+        var selected = discovered.FirstOrDefault()?.Id;
+        state.SelectedPluginId = selected;
+        return selected;
+    }
+
+    private static async Task<IReadOnlyList<MediaSummary>> SearchViaPluginHost(
+        string pluginId,
+        string query,
+        CancellationToken cancellationToken)
+    {
+        var baseUrl = Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_BASE_URL");
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            baseUrl = "http://localhost:5223";
+        }
+
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
+        {
+            throw new InvalidOperationException("Invalid EMMA_PLUGIN_HOST_BASE_URL value.");
+        }
+
+        var builder = new UriBuilder(new Uri(baseUri, "/pipeline/paged/search"));
+        var escapedQuery = Uri.EscapeDataString(query ?? string.Empty);
+        var escapedPluginId = Uri.EscapeDataString(pluginId);
+        builder.Query = $"query={escapedQuery}&pluginId={escapedPluginId}";
+
+        using var response = await PluginHostClient.GetAsync(builder.Uri, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var details = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!string.IsNullOrWhiteSpace(details))
+            {
+                throw new InvalidOperationException(details);
+            }
+
+            throw new InvalidOperationException(
+                $"Plugin host search failed with status {(int)response.StatusCode}.");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var results = new List<MediaSummary>();
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            var id = GetStringProperty(item, "id");
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                continue;
+            }
+
+            var source = GetStringProperty(item, "source") ?? string.Empty;
+            var title = GetStringProperty(item, "title") ?? string.Empty;
+            var mediaType = GetStringProperty(item, "mediaType");
+
+            results.Add(new MediaSummary(
+                MediaId.Create(id),
+                source,
+                title,
+                string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
+                    ? MediaType.Video
+                    : MediaType.Paged));
+        }
+
+        return results;
     }
 
     private static string BuildPluginsJson(IReadOnlyList<PluginSummary> plugins)
