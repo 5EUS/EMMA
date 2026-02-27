@@ -37,6 +37,13 @@ case "$RID" in
     MANIFEST_SOURCE="$ROOT_DIR/src/EMMA.TestPlugin/EMMA.TestPlugin.plugin.json"
     PLUGIN_APP_SOURCE="$PLUGIN_OUT_DIR/$PLUGIN_ID/$APP_NAME"
     ;;
+  linux-*)
+    PLUGIN_ID="emma.plugin.test"
+    MANIFEST_SOURCE="$ROOT_DIR/src/EMMA.TestPlugin/EMMA.TestPlugin.plugin.json"
+    PLUGIN_DIR_SOURCE="$PLUGIN_OUT_DIR/$PLUGIN_ID/linux"
+    XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+    LINUX_EMMA_ROOT="$XDG_DATA_HOME/com.example.emmaui/emmaui"
+    ;;
   *)
     echo "Unsupported RID for test plugin sync: $RID"
     exit 1
@@ -52,6 +59,9 @@ case "$RID" in
     DEST_DIRS+=("$EMMAUI_DIR/build/macos/Build/Products/Profile/emmaui.app/Contents/Frameworks")
     DEST_DIRS+=("$EMMAUI_DIR/build/macos/Build/Products/Release/emmaui.app/Contents/Frameworks")
     ;;
+  linux-*)
+    DEST_DIRS+=("$LINUX_EMMA_ROOT")
+    ;;
 esac
 
 if [[ ! -f "$MANIFEST_SOURCE" ]]; then
@@ -59,17 +69,48 @@ if [[ ! -f "$MANIFEST_SOURCE" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$PLUGIN_APP_SOURCE" ]]; then
-  echo "Test plugin app bundle not found: $PLUGIN_APP_SOURCE"
-  echo "Run ./scripts/publish-test-plugin.sh $RID first."
-  exit 1
+if [[ "$RID" == osx-* ]]; then
+  if [[ ! -d "$PLUGIN_APP_SOURCE" ]]; then
+    echo "Test plugin app bundle not found: $PLUGIN_APP_SOURCE"
+    echo "Run ./scripts/publish-test-plugin.sh $RID first."
+    exit 1
+  fi
+fi
+
+if [[ "$RID" == linux-* ]]; then
+  if [[ ! -d "$PLUGIN_DIR_SOURCE" ]]; then
+    echo "Test plugin Linux bundle not found: $PLUGIN_DIR_SOURCE"
+    echo "Run ./scripts/publish-test-plugin.sh $RID first."
+    exit 1
+  fi
 fi
 
 echo "Syncing EMMA.TestPlugin seed bundle for RID '$RID'"
-echo "  source app: $PLUGIN_APP_SOURCE"
+if [[ "$RID" == osx-* ]]; then
+  echo "  source app: $PLUGIN_APP_SOURCE"
+else
+  echo "  source dir: $PLUGIN_DIR_SOURCE"
+fi
 echo "  source manifest: $MANIFEST_SOURCE"
 
 for dir in "${DEST_DIRS[@]}"; do
+  if [[ "$RID" == linux-* ]]; then
+    manifests_dir="$dir/manifests"
+    plugins_root="$dir/plugins"
+    plugin_dest_root="$plugins_root/$PLUGIN_ID"
+
+    mkdir -p "$manifests_dir" "$plugins_root"
+    rm -rf "$plugin_dest_root"
+    mkdir -p "$plugin_dest_root"
+
+    cp "$MANIFEST_SOURCE" "$manifests_dir/$PLUGIN_ID.plugin.json"
+    cp -R "$PLUGIN_DIR_SOURCE"/. "$plugin_dest_root/"
+
+    find "$plugin_dest_root" -type f \( -name "EMMATestPlugin" -o -name "EMMA.TestPlugin" -o -name "*.so" \) -exec chmod +x {} \; || true
+    echo "  -> $plugin_dest_root"
+    continue
+  fi
+
   if [[ "$dir" == *"/Frameworks" ]]; then
     rm -rf "$dir/EMMA.Plugins"
     echo "  -> removed $dir/EMMA.Plugins"

@@ -12,13 +12,17 @@ fi
 
 case "$RID" in
   osx-*)
+    echo "Publishing EMMA.TestPlugin app bundle for $RID..."
+    "$ROOT_DIR/src/EMMA.TestPlugin/scripts/build-plugin-macos-app.sh"
+    ;;
+  linux-*)
+    echo "Publishing EMMA.TestPlugin Linux bundle for $RID..."
+    bash "$ROOT_DIR/src/EMMA.TestPlugin/scripts/build-plugin-linux-bundle.sh" "$RID"
     ;;
   *)
-    echo "Test plugin publish is currently supported only for macOS RIDs."
+    echo "Test plugin publish is currently supported only for macOS and Linux RIDs."
     exit 1
     ;;
 esac
 
-echo "Publishing EMMA.TestPlugin app bundle for $RID..."
-"$ROOT_DIR/src/EMMA.TestPlugin/scripts/build-plugin-macos-app.sh"
 echo "Test plugin publish succeeded."

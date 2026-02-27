@@ -66,8 +66,9 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         IReadOnlyList<string>? allowedPaths)
     {
         var builder = new StringBuilder();
-        // --unshare-all disables host namespaces, including network.
-        builder.Append("--unshare-all --die-with-parent --new-session ");
+        // Use namespace isolation but share host networking so PluginHost can
+        // reach plugin endpoints bound on localhost.
+        builder.Append("--unshare-all --share-net --die-with-parent --new-session ");
         builder.Append("--proc /proc --dev /dev --tmpfs /tmp ");
         builder.Append("--ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /etc /etc ");
         if (Directory.Exists("/sbin"))
@@ -95,7 +96,7 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         builder.Append($"--bind {Quote(pluginRoot)} /sandbox ");
         builder.Append("--chdir /sandbox ");
         builder.Append("-- ");
-        builder.Append(Quote(fileName));
+        builder.Append(Quote(ToSandboxEntrypoint(pluginRoot, fileName)));
         if (!string.IsNullOrWhiteSpace(args))
         {
             builder.Append(' ');
@@ -123,6 +124,36 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         }
 
         return null;
+    }
+
+    private static string ToSandboxEntrypoint(string pluginRoot, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return fileName;
+        }
+
+        if (!Path.IsPathRooted(fileName))
+        {
+            return fileName;
+        }
+
+        var fullPluginRoot = Path.GetFullPath(pluginRoot);
+        var fullFileName = Path.GetFullPath(fileName);
+        var pluginPrefix = fullPluginRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? fullPluginRoot
+            : fullPluginRoot + Path.DirectorySeparatorChar;
+
+        if (!fullFileName.StartsWith(pluginPrefix, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(fullFileName, fullPluginRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return fileName;
+        }
+
+        var relative = Path.GetRelativePath(fullPluginRoot, fullFileName)
+            .Replace(Path.DirectorySeparatorChar, '/');
+
+        return relative == "." ? "/sandbox" : $"/sandbox/{relative}";
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";
