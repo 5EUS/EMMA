@@ -339,6 +339,21 @@ public sealed class PluginProcessManager(
         return current.WithRetry(retryCount, nextRetryAt, "rpc-timeout", "Plugin RPC timed out.");
     }
 
+    public bool IsProcessRunning(string pluginId)
+    {
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            return false;
+        }
+
+        if (!TryGetProcess(pluginId, out var handle))
+        {
+            return false;
+        }
+
+        return !handle.Process.HasExited;
+    }
+
     private bool TryGetProcess(string pluginId, out ProcessHandle handle)
     {
         lock (_lock)

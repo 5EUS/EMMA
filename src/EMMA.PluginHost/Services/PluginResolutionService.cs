@@ -67,11 +67,14 @@ public sealed class PluginResolutionService(
         }
 
         var runtimeState = record.Runtime.State;
+        var staleRunningState = runtimeState == PluginRuntimeState.Running
+            && !_processManager.IsProcessRunning(record.Manifest.Id);
         var shouldEnsureRuntime = runtimeState is PluginRuntimeState.Unknown
             or PluginRuntimeState.Starting
             or PluginRuntimeState.Stopped
             or PluginRuntimeState.Crashed
-            or PluginRuntimeState.Timeout;
+            or PluginRuntimeState.Timeout
+            || staleRunningState;
         var shouldRehandshake = !record.Status.Success
             && runtimeState is PluginRuntimeState.Running or PluginRuntimeState.External;
 
