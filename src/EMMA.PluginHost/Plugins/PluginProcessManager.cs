@@ -114,8 +114,6 @@ public sealed class PluginProcessManager(
             }
 
             RemoveProcess(manifest.Id);
-            var exitCode = SafeExitCode(existing.Process);
-            return current.WithState(PluginRuntimeState.Crashed, "process-exited", "Plugin process exited.", exitCode);
         }
 
         var executable = (string?)null;

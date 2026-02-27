@@ -63,9 +63,6 @@ declare -a DEST_DIRS=()
 case "$RID" in
   osx-*)
     DEST_DIRS+=("$EMMAUI_DIR/macos/Runner/Frameworks")
-    DEST_DIRS+=("$EMMAUI_DIR/build/macos/Build/Products/Debug/emmaui.app/Contents/Frameworks")
-    DEST_DIRS+=("$EMMAUI_DIR/build/macos/Build/Products/Profile/emmaui.app/Contents/Frameworks")
-    DEST_DIRS+=("$EMMAUI_DIR/build/macos/Build/Products/Release/emmaui.app/Contents/Frameworks")
     ;;
 
   ios-*|iossimulator-*)

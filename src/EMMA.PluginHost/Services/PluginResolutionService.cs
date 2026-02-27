@@ -66,9 +66,64 @@ public sealed class PluginResolutionService(
             return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
         }
 
+        var runtimeState = record.Runtime.State;
+        var shouldEnsureRuntime = runtimeState is PluginRuntimeState.Unknown
+            or PluginRuntimeState.Starting
+            or PluginRuntimeState.Stopped
+            or PluginRuntimeState.Crashed
+            or PluginRuntimeState.Timeout;
+        var shouldRehandshake = !record.Status.Success
+            && runtimeState is PluginRuntimeState.Running or PluginRuntimeState.External;
+
+        if (shouldEnsureRuntime || shouldRehandshake)
+        {
+            var updated = _endpointAllocator.EnsureEndpoint(record.Manifest);
+            await _sandboxManager.PrepareAsync(updated, cancellationToken);
+
+            var runtime = await _processManager.EnsureStartedAsync(
+                updated,
+                _registry.GetRuntime(updated),
+                cancellationToken);
+            _registry.UpdateRuntime(updated, runtime);
+
+            if (runtime.State is PluginRuntimeState.Running or PluginRuntimeState.External)
+            {
+                await _handshakeService.HandshakeSingleAsync(updated, cancellationToken);
+            }
+
+            snapshot = _registry.GetSnapshot();
+            record = snapshot.FirstOrDefault(item =>
+                string.Equals(item.Manifest.Id, updated.Id, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (record is null)
+        {
+            return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
+        }
+
         if (string.IsNullOrWhiteSpace(record.Manifest.Protocol))
         {
             return (record, null, Results.Problem("Plugin manifest protocol is missing."));
+        }
+
+        if (record.Runtime.State is not (PluginRuntimeState.Running or PluginRuntimeState.External))
+        {
+            return (
+                record,
+                null,
+                Results.Problem(
+                    $"Plugin '{record.Manifest.Id}' runtime is '{record.Runtime.State}' ({record.Runtime.LastErrorCode ?? "no-code"}: {record.Runtime.LastErrorMessage ?? "no-details"}).",
+                    statusCode: StatusCodes.Status503ServiceUnavailable));
+        }
+
+        if (record.Runtime.State != PluginRuntimeState.External && !record.Status.Success)
+        {
+            return (
+                record,
+                null,
+                Results.Problem(
+                    $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
+                    statusCode: StatusCodes.Status503ServiceUnavailable));
         }
 
         if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
