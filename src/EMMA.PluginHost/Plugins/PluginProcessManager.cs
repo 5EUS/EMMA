@@ -125,6 +125,14 @@ public sealed class PluginProcessManager(
             return current;
         }
 
+        if (!TryValidateMinHostVersion(manifest, out var hostVersionReason))
+        {
+            return current.WithState(
+                PluginRuntimeState.Disabled,
+                "host-version-incompatible",
+                hostVersionReason ?? "Plugin runtime minHostVersion is incompatible with this host.");
+        }
+
         if (_signatureOptions.RequireSignedPlugins)
         {
             if (!_signatureVerifier.Verify(manifest, out var reason))
@@ -227,6 +235,50 @@ public sealed class PluginProcessManager(
         }
 
         return PluginRuntimeStatus.Running();
+    }
+
+    private bool TryValidateMinHostVersion(PluginManifest manifest, out string? reason)
+    {
+        reason = null;
+
+        var minHostVersion = manifest.Runtime?.MinHostVersion;
+        if (string.IsNullOrWhiteSpace(minHostVersion))
+        {
+            return true;
+        }
+
+        if (!TryParseVersion(minHostVersion, out var required))
+        {
+            reason = $"Invalid runtime.minHostVersion '{minHostVersion}'.";
+            return false;
+        }
+
+        var hostVersionText = typeof(PluginProcessManager).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+        if (!TryParseVersion(hostVersionText, out var current))
+        {
+            reason = $"Host version '{hostVersionText}' is not parseable for compatibility checks.";
+            return false;
+        }
+
+        if (current < required)
+        {
+            reason = $"Plugin requires host version >= {required}, current host is {current}.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseVersion(string value, out Version version)
+    {
+        var normalized = value.Trim();
+        var prereleaseIndex = normalized.IndexOf('-');
+        if (prereleaseIndex >= 0)
+        {
+            normalized = normalized[..prereleaseIndex];
+        }
+
+        return Version.TryParse(normalized, out version!);
     }
 
     public async Task StopAsync(string pluginId, CancellationToken cancellationToken)

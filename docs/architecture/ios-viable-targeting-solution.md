@@ -73,9 +73,10 @@ Acceptance criteria:
 
 ### Phase 1 - Manifest and resolver evolution
 
+Status: Completed (2026-02-28)
+
 Steps:
 - Extend plugin manifest with runtime metadata:
-  - `runtime.kind`: `wasm | csharp`
   - `runtime.minHostVersion` for compatibility gates.
 - Update plugin resolution service to route by runtime kind and auto-resolve runtime entrypoints from trusted host rules.
 - Keep backward compatibility by defaulting legacy manifests to existing behavior.

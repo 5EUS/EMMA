@@ -16,7 +16,14 @@ public sealed record PluginManifest(
     PluginManifestPermissions? Permissions,
     PluginManifestSignature? Signature,
     string? Description,
-    string? Author);
+    string? Author,
+    PluginManifestRuntime? Runtime = null);
+
+/// <summary>
+/// Declares runtime routing metadata for a plugin.
+/// </summary>
+public sealed record PluginManifestRuntime(
+    string? MinHostVersion);
 
 /// <summary>
 /// Declared plugin resource and capability hints.
