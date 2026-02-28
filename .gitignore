@@ -55,3 +55,5 @@ package.json
 # Logs
 .tmp/
 logs/
+
+EMMA.code-workspace
