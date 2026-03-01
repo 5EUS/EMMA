@@ -23,7 +23,21 @@ public sealed record PluginManifest(
 /// Declares runtime routing metadata for a plugin.
 /// </summary>
 public sealed record PluginManifestRuntime(
-    string? MinHostVersion);
+    string? MinHostVersion,
+    PluginManifestWasmHostBridge? WasmHostBridge = null);
+
+/// <summary>
+/// Optional host-side bridge configuration for WASM plugins.
+/// </summary>
+public sealed record PluginManifestWasmHostBridge(
+    IReadOnlyDictionary<string, PluginManifestWasmHttpOperation>? Http = null);
+
+/// <summary>
+/// Host-mediated HTTP operation descriptor for WASM operation payload bridging.
+/// </summary>
+public sealed record PluginManifestWasmHttpOperation(
+    string UrlTemplate,
+    string? Method = null);
 
 /// <summary>
 /// Declared plugin resource and capability hints.

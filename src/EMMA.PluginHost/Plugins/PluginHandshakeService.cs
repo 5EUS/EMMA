@@ -4,6 +4,7 @@ using EMMA.PluginHost.Configuration;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
 using EMMA.PluginHost.Sandboxing;
+using EMMA.PluginHost.Services;
 using Grpc.Core;
 
 namespace EMMA.PluginHost.Plugins;
@@ -18,6 +19,7 @@ public sealed class PluginHandshakeService(
     PluginProcessManager processManager,
     PluginPermissionSanitizer permissionSanitizer,
     PluginEndpointAllocator endpointAllocator,
+    IWasmPluginRuntimeHost wasmRuntimeHost,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
@@ -27,6 +29,7 @@ public sealed class PluginHandshakeService(
     private readonly PluginProcessManager _processManager = processManager;
     private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
     private readonly PluginEndpointAllocator _endpointAllocator = endpointAllocator;
+    private readonly IWasmPluginRuntimeHost _wasmRuntimeHost = wasmRuntimeHost;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -123,6 +126,23 @@ public sealed class PluginHandshakeService(
         if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
             return Failed("Missing protocol.");
+        }
+
+        if (_wasmRuntimeHost.IsWasmPlugin(manifest))
+        {
+            try
+            {
+                return await _wasmRuntimeHost.HandshakeAsync(manifest, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                if (_logger.IsEnabled(LogLevel.Warning))
+                {
+                    _logger.LogWarning(ex, "WASM component handshake failed for plugin {PluginId}", manifest.Id);
+                }
+
+                return Failed(ex.Message);
+            }
         }
 
         if (!string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))

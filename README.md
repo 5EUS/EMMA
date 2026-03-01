@@ -26,6 +26,7 @@ untrusted plugins, and streaming-friendly pipelines for paged and video media.
 - Media pipeline design: [docs/architecture/media-pipeline-design.md](docs/architecture/media-pipeline-design.md)
 - Solution structure: [docs/architecture/solution-structure.md](docs/architecture/solution-structure.md)
 - Implementation roadmap: [docs/architecture/implementation-roadmap.md](docs/architecture/implementation-roadmap.md)
+- Tooling scripts reference: [docs/architecture/tooling-scripts-reference.md](docs/architecture/tooling-scripts-reference.md)
 
 ## Getting Started
 

@@ -7,6 +7,7 @@ MANIFEST_PATH="${1:-$PLUGIN_DIR/EMMA.PluginTemplate.plugin.json}"
 OUT_DIR="$PLUGIN_DIR/artifacts"
 PACK_DIR="$OUT_DIR/pack"
 TARGETS=${TARGETS:-"osx-arm64"}
+WASM_MODULE_PATH="${WASM_MODULE_PATH:-$OUT_DIR/wasm/plugin.wasm}"
 
 if [[ ! -f "$MANIFEST_PATH" ]]; then
   echo "Manifest not found: $MANIFEST_PATH" >&2
@@ -51,36 +52,37 @@ APP_NAME="$APP_BUNDLE_NAME.app"
 mkdir -p "$PACK_DIR"
 
 for TARGET in $TARGETS; do
-  if [[ "$TARGET" != osx-* ]]; then
-    echo "Unsupported target for .app packaging: $TARGET" >&2
-    exit 1
-  fi
-
   BUILD_DIR="$OUT_DIR/build-$TARGET"
   PUBLISH_DIR="$BUILD_DIR/publish"
-  APP_DIR="$BUILD_DIR/$APP_NAME"
-  CONTENTS_DIR="$APP_DIR/Contents"
-  MACOS_DIR="$CONTENTS_DIR/MacOS"
-  RESOURCES_DIR="$CONTENTS_DIR/Resources"
+  PACKAGE_ROOT="$PACK_DIR/$PLUGIN_VERSION-$TARGET"
+  MANIFEST_OUT_DIR="$PACKAGE_ROOT/manifest"
+  PLUGIN_OUT_DIR="$PACKAGE_ROOT/$PLUGIN_ID"
 
-  rm -rf "$BUILD_DIR" "$PACK_DIR/$PLUGIN_VERSION-$TARGET" "$PACK_DIR/${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip"
-  mkdir -p "$PUBLISH_DIR" "$MACOS_DIR" "$RESOURCES_DIR" "$PACK_DIR/$PLUGIN_VERSION-$TARGET"
+  rm -rf "$BUILD_DIR" "$PACKAGE_ROOT" "$PACK_DIR/${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip"
+  mkdir -p "$PUBLISH_DIR" "$MANIFEST_OUT_DIR" "$PLUGIN_OUT_DIR"
 
-  # Publish self-contained apphost for macOS to avoid system dotnet dependencies.
-  dotnet publish "$PLUGIN_DIR/EMMA.PluginTemplate.csproj" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
+  if [[ "$TARGET" == osx-* ]]; then
+    APP_DIR="$BUILD_DIR/$APP_NAME"
+    CONTENTS_DIR="$APP_DIR/Contents"
+    MACOS_DIR="$CONTENTS_DIR/MacOS"
+    RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-  APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
-  if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
-    echo "Failed to locate runtimeconfig in publish output." >&2
-    exit 1
-  fi
+    mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-  APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
+    dotnet publish "$PLUGIN_DIR/EMMA.PluginTemplate.csproj" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
 
-  cp -R "$PUBLISH_DIR"/. "$MACOS_DIR/"
-  rm -rf "$MACOS_DIR/artifacts"
+    APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
+    if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
+      echo "Failed to locate runtimeconfig in publish output." >&2
+      exit 1
+    fi
 
-  cat > "$CONTENTS_DIR/Info.plist" <<PLIST
+    APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
+
+    cp -R "$PUBLISH_DIR"/. "$MACOS_DIR/"
+    rm -rf "$MACOS_DIR/artifacts"
+
+    cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -103,11 +105,42 @@ for TARGET in $TARGETS; do
 </plist>
 PLIST
 
-  codesign --force --deep --sign - --entitlements "$PLUGIN_DIR/entitlements.plist" "$APP_DIR"
+    codesign --force --deep --sign - --entitlements "$PLUGIN_DIR/entitlements.plist" "$APP_DIR"
+    cp -R "$APP_DIR" "$PLUGIN_OUT_DIR/"
+  elif [[ "$TARGET" == linux-* ]]; then
+    dotnet publish "$PLUGIN_DIR/EMMA.PluginTemplate.csproj" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
 
-  MANIFEST_OUT_DIR="$PACK_DIR/$PLUGIN_VERSION-$TARGET/manifest"
-  PLUGIN_OUT_DIR="$PACK_DIR/$PLUGIN_VERSION-$TARGET/$PLUGIN_ID"
-  mkdir -p "$MANIFEST_OUT_DIR" "$PLUGIN_OUT_DIR"
+    APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
+    if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
+      echo "Failed to locate runtimeconfig in publish output." >&2
+      exit 1
+    fi
+
+    APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
+    ENTRYPOINT_NAME="$APP_BUNDLE_NAME"
+
+    mkdir -p "$PLUGIN_OUT_DIR/linux"
+    cp -R "$PUBLISH_DIR"/. "$PLUGIN_OUT_DIR/linux/"
+    if [[ -f "$PLUGIN_OUT_DIR/linux/$APP_EXECUTABLE" && "$APP_EXECUTABLE" != "$ENTRYPOINT_NAME" ]]; then
+      cp "$PLUGIN_OUT_DIR/linux/$APP_EXECUTABLE" "$PLUGIN_OUT_DIR/linux/$ENTRYPOINT_NAME"
+    fi
+
+    chmod +x "$PLUGIN_OUT_DIR/linux/$APP_EXECUTABLE" || true
+    chmod +x "$PLUGIN_OUT_DIR/linux/$ENTRYPOINT_NAME" || true
+    find "$PLUGIN_OUT_DIR/linux" -maxdepth 1 -type f -name "*.so" -exec chmod +x {} \; || true
+  elif [[ "$TARGET" == wasm* ]]; then
+    if [[ ! -f "$WASM_MODULE_PATH" ]]; then
+      echo "WASM component not found: $WASM_MODULE_PATH" >&2
+      echo "Build the wasm component first or set WASM_MODULE_PATH=/absolute/path/plugin.wasm" >&2
+      exit 1
+    fi
+
+    mkdir -p "$PLUGIN_OUT_DIR/wasm"
+    cp "$WASM_MODULE_PATH" "$PLUGIN_OUT_DIR/wasm/plugin.wasm"
+  else
+    echo "Unsupported target for packaging: $TARGET" >&2
+    exit 1
+  fi
 
   MANIFEST_OUT="$MANIFEST_OUT_DIR/$PLUGIN_ID.json"
   cp "$MANIFEST_PATH" "$MANIFEST_OUT"
@@ -116,9 +149,7 @@ PLIST
     "$SCRIPT_DIR/sign-plugin.sh" "$MANIFEST_OUT"
   fi
 
-  cp -R "$APP_DIR" "$PLUGIN_OUT_DIR/"
-
-  ( cd "$PACK_DIR/$PLUGIN_VERSION-$TARGET" && zip -r "../${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip" . ) >/dev/null
+  ( cd "$PACKAGE_ROOT" && zip -r "../${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip" . ) >/dev/null
 
   echo "Packaged plugin: $PACK_DIR/${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip"
 done

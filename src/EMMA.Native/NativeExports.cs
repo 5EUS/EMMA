@@ -36,6 +36,8 @@ public static class NativeExports
     private static PluginPathConfiguration _pluginPathConfiguration = new(null, null);
     private static HostRuntimeConfiguration _hostRuntimeConfiguration = new(null, null, null);
     private static Process? _managedPluginHostProcess;
+    private static string? _managedPluginHostStdoutLogPath;
+    private static string? _managedPluginHostStderrLogPath;
 
     [ThreadStatic]
     private static string? _lastError;
@@ -363,9 +365,44 @@ public static class NativeExports
         builder.Query = $"query={escapedQuery}&pluginId={escapedPluginId}";
 
         const int maxAttempts = 3;
+        var attemptTimeout = TimeSpan.FromSeconds(25);
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            using var response = await PluginHostClient.GetAsync(builder.Uri, cancellationToken);
+            HttpResponseMessage response;
+            try
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(attemptTimeout);
+                response = await PluginHostClient.GetAsync(builder.Uri, timeoutCts.Token);
+            }
+            catch (HttpRequestException) when (attempt < maxAttempts)
+            {
+                TryRecoverManagedPluginHost(TimeSpan.FromSeconds(2));
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), cancellationToken);
+                continue;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), cancellationToken);
+                continue;
+            }
+            catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                var hostState = DescribeManagedPluginHostState();
+                throw new InvalidOperationException(
+                    $"Plugin host request timed out at {baseUri} after {maxAttempts} attempts. {hostState}",
+                    ex);
+            }
+            catch (HttpRequestException ex)
+            {
+                var hostState = DescribeManagedPluginHostState();
+                throw new InvalidOperationException(
+                    $"Plugin host was not reachable at {baseUri} after {maxAttempts} attempts. Transport detail: {ex.Message}. {hostState}",
+                    ex);
+            }
+
+            using (response)
+            {
             if (response.IsSuccessStatusCode)
             {
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -407,8 +444,7 @@ public static class NativeExports
                     || response.StatusCode == HttpStatusCode.ServiceUnavailable
                     || response.StatusCode == HttpStatusCode.GatewayTimeout))
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
-                EnsurePluginHostReady();
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * attempt), cancellationToken);
                 continue;
             }
 
@@ -420,12 +456,18 @@ public static class NativeExports
 
             throw new InvalidOperationException(
                 $"Plugin host search failed with status {(int)response.StatusCode}.");
+            }
         }
 
         throw new InvalidOperationException("Plugin host search failed after retries.");
     }
 
     private static void EnsurePluginHostReady()
+    {
+        EnsurePluginHostReady(TimeSpan.FromSeconds(30));
+    }
+
+    private static void EnsurePluginHostReady(TimeSpan waitTimeout)
     {
         var mode = GetPluginHostMode();
         if (string.Equals(mode, PluginHostModeDisabled, StringComparison.OrdinalIgnoreCase))
@@ -466,7 +508,7 @@ public static class NativeExports
 
             if (_managedPluginHostProcess is not null && !_managedPluginHostProcess.HasExited)
             {
-                if (WaitForPluginHost(baseUri, TimeSpan.FromSeconds(30)))
+                if (WaitForPluginHost(baseUri, waitTimeout))
                 {
                     return;
                 }
@@ -474,7 +516,7 @@ public static class NativeExports
 
             _managedPluginHostProcess = StartManagedPluginHostProcess(baseUri);
 
-            if (!WaitForPluginHost(baseUri, TimeSpan.FromSeconds(30)))
+            if (!WaitForPluginHost(baseUri, waitTimeout))
             {
                 throw new InvalidOperationException(
                     $"PluginHost did not become reachable at {baseUri}.");
@@ -513,6 +555,9 @@ public static class NativeExports
     private static Process StartManagedPluginHostProcess(Uri baseUri)
     {
         var startInfo = BuildPluginHostStartInfo(baseUri);
+        var (stdoutLogPath, stderrLogPath) = CreateManagedPluginHostLogPaths();
+        startInfo.RedirectStandardOutput = true;
+        startInfo.RedirectStandardError = true;
 
         var process = new Process
         {
@@ -525,7 +570,56 @@ public static class NativeExports
             throw new InvalidOperationException("Failed to start PluginHost process.");
         }
 
+        _managedPluginHostStdoutLogPath = stdoutLogPath;
+        _managedPluginHostStderrLogPath = stderrLogPath;
+        AttachManagedPluginHostLogCapture(process, stdoutLogPath, stderrLogPath);
+
         return process;
+    }
+
+    private static (string stdoutLogPath, string stderrLogPath) CreateManagedPluginHostLogPaths()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "emma-pluginhost-logs");
+        Directory.CreateDirectory(directory);
+
+        var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+        var nonce = Guid.NewGuid().ToString("N");
+        return (
+            Path.Combine(directory, $"pluginhost-{stamp}-{nonce}.stdout.log"),
+            Path.Combine(directory, $"pluginhost-{stamp}-{nonce}.stderr.log"));
+    }
+
+    private static void AttachManagedPluginHostLogCapture(Process process, string stdoutLogPath, string stderrLogPath)
+    {
+        process.OutputDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Data))
+            {
+                TryAppendLogLine(stdoutLogPath, args.Data);
+            }
+        };
+
+        process.ErrorDataReceived += (_, args) =>
+        {
+            if (!string.IsNullOrWhiteSpace(args.Data))
+            {
+                TryAppendLogLine(stderrLogPath, args.Data);
+            }
+        };
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+    }
+
+    private static void TryAppendLogLine(string path, string line)
+    {
+        try
+        {
+            File.AppendAllText(path, line + Environment.NewLine);
+        }
+        catch
+        {
+        }
     }
 
     private static ProcessStartInfo BuildPluginHostStartInfo(Uri baseUri)
@@ -638,6 +732,114 @@ public static class NativeExports
         catch
         {
             return false;
+        }
+    }
+
+    private static void TryRecoverManagedPluginHost(TimeSpan waitTimeout)
+    {
+        if (!string.Equals(GetPluginHostMode(), PluginHostModeInternal, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var baseUri = GetPluginHostBaseUri();
+
+        lock (PluginHostSync)
+        {
+            if (_managedPluginHostProcess is not null
+                && !_managedPluginHostProcess.HasExited
+                && !IsPluginHostReachable(baseUri))
+            {
+                try
+                {
+                    _managedPluginHostProcess.Kill(entireProcessTree: true);
+                    _managedPluginHostProcess.WaitForExit(1000);
+                }
+                catch
+                {
+                }
+                finally
+                {
+                    _managedPluginHostProcess.Dispose();
+                    _managedPluginHostProcess = null;
+                }
+            }
+
+            if (_managedPluginHostProcess is not null && !_managedPluginHostProcess.HasExited)
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            EnsurePluginHostReady(waitTimeout);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string DescribeManagedPluginHostState()
+    {
+        if (!string.Equals(GetPluginHostMode(), PluginHostModeInternal, StringComparison.OrdinalIgnoreCase))
+        {
+            return "PluginHost mode is not internal.";
+        }
+
+        lock (PluginHostSync)
+        {
+            if (_managedPluginHostProcess is null)
+            {
+                return $"No managed PluginHost process is tracked. {DescribeManagedPluginHostLogs()}";
+            }
+
+            if (_managedPluginHostProcess.HasExited)
+            {
+                return $"Managed PluginHost process exited with code {_managedPluginHostProcess.ExitCode}. {DescribeManagedPluginHostLogs()}";
+            }
+
+            return $"Managed PluginHost process is running (PID {_managedPluginHostProcess.Id}). {DescribeManagedPluginHostLogs()}";
+        }
+    }
+
+    private static string DescribeManagedPluginHostLogs()
+    {
+        if (string.IsNullOrWhiteSpace(_managedPluginHostStdoutLogPath)
+            && string.IsNullOrWhiteSpace(_managedPluginHostStderrLogPath))
+        {
+            return "No managed PluginHost log paths are set.";
+        }
+
+        var stderrPath = _managedPluginHostStderrLogPath;
+        var stdoutPath = _managedPluginHostStdoutLogPath;
+        var stderrTail = ReadLogTail(stderrPath, 20);
+        var stdoutTail = ReadLogTail(stdoutPath, 8);
+
+        return $"stdout={stdoutPath ?? "<null>"}; stderr={stderrPath ?? "<null>"}; stderrTail='{stderrTail}'; stdoutTail='{stdoutTail}'.";
+    }
+
+    private static string ReadLogTail(string? path, int maxLines)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                return string.Empty;
+            }
+
+            var lines = File.ReadAllLines(path);
+            if (lines.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            var tail = lines.TakeLast(Math.Max(1, maxLines));
+            return string.Join(" | ", tail).Trim();
+        }
+        catch
+        {
+            return string.Empty;
         }
     }
 
@@ -838,14 +1040,26 @@ public static class NativeExports
 
     private static string? GetStringProperty(JsonElement element, string propertyName)
     {
-        if (!element.TryGetProperty(propertyName, out var property)
-            || property.ValueKind != JsonValueKind.String)
+        if (element.TryGetProperty(propertyName, out var property)
+            && property.ValueKind == JsonValueKind.String)
         {
-            return null;
+            var directValue = property.GetString();
+            return string.IsNullOrWhiteSpace(directValue) ? null : directValue.Trim();
         }
 
-        var value = property.GetString();
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        foreach (var candidate in element.EnumerateObject())
+        {
+            if (!string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase)
+                || candidate.Value.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var matchedValue = candidate.Value.GetString();
+            return string.IsNullOrWhiteSpace(matchedValue) ? null : matchedValue.Trim();
+        }
+
+        return null;
     }
 
     private static IEnumerable<string> GetManifestDirectories()

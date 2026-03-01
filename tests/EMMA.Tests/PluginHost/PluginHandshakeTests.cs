@@ -3,6 +3,8 @@ using EMMA.Contracts.Plugins;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
+using EMMA.PluginHost.Services;
+using EMMA.Domain;
 using Grpc.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -62,6 +64,7 @@ public sealed class PluginHandshakeTests
             processManager,
             sanitizer,
             endpointAllocator,
+            new NoOpWasmPluginRuntimeHost(),
             options,
             NullLogger<PluginHandshakeService>.Instance);
 
@@ -132,6 +135,7 @@ public sealed class PluginHandshakeTests
             processManager,
             sanitizer,
             endpointAllocator,
+            new NoOpWasmPluginRuntimeHost(),
             options,
             NullLogger<PluginHandshakeService>.Instance);
 
@@ -249,6 +253,31 @@ public sealed class PluginHandshakeTests
             response.Permissions.Paths.Add(string.Empty);
             response.Permissions.Paths.Add("runtime-data");
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class NoOpWasmPluginRuntimeHost : IWasmPluginRuntimeHost
+    {
+        public bool IsWasmPlugin(PluginManifest manifest) => false;
+
+        public Task<PluginHandshakeStatus> HandshakeAsync(PluginManifest manifest, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<EMMA.Domain.MediaSummary>> SearchAsync(PluginRecord record, string query, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<EMMA.Domain.MediaChapter>> GetChaptersAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<EMMA.Domain.MediaPage> GetPageAsync(PluginRecord record, MediaId mediaId, string chapterId, int pageIndex, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
         }
     }
 }

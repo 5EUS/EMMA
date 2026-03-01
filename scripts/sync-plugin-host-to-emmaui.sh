@@ -69,6 +69,10 @@ case "$RID" in
     ;;
   linux-*)
     DEST_DIRS+=("$EMMAUI_DIR/linux/runner")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/debug/bundle")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/debug/intermediates_do_not_run")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/release/bundle")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/release/intermediates_do_not_run")
     ;;
 esac
 

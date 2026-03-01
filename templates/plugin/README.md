@@ -56,14 +56,33 @@ Scripts live under `templates/plugin/scripts`:
 
 - `build-plugin.sh` publishes a Release build to `templates/plugin/artifacts`.
 - `build-plugin-macos-app.sh` builds and signs a self-contained macOS `.app` bundle for App Sandbox.
-- `build-pack-plugin.sh` builds, signs, and packages a versioned zip (macOS `.app` bundle).
+- `build-pack-plugin.sh` builds and packages versioned zips for `osx-*`, `linux-*`, and `wasm*` targets.
 - `sign-plugin.sh` updates the manifest signature using `EMMA_HMAC_KEY_BASE64`.
 - `generate-hmac-key.sh` prints a random base64 key (default 32 bytes).
 - `sign-plugin-macos-app.sh` re-signs a macOS `.app` bundle with entitlements.
 
+For full behavior, platform constraints, and root-level sync/publish tooling, see:
+
+- [docs/architecture/tooling-scripts-reference.md](../../docs/architecture/tooling-scripts-reference.md)
+
 `build-pack-plugin.sh` supports multiple targets via `TARGETS` (space-separated). Each zip is named:
 
 `PLUGINID_VERSION_TARGET.zip`
+
+Examples:
+
+```bash
+TARGETS="osx-arm64 linux-x64" templates/plugin/scripts/build-pack-plugin.sh
+```
+
+```bash
+TARGETS="wasm" WASM_MODULE_PATH=/absolute/path/plugin.wasm templates/plugin/scripts/build-pack-plugin.sh
+```
+
+Notes:
+
+- `wasm*` targets package `plugin.wasm` from `WASM_MODULE_PATH` (default: `templates/plugin/artifacts/wasm/plugin.wasm`).
+- Dev sync scripts still use unzipped runtime artifacts; zip packages are for distribution.
 
 ## HTTP + JSON helper
 

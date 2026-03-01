@@ -116,6 +116,53 @@ public sealed class PluginRuntimeRoutingTests
             CancellationToken.None));
     }
 
+    [Fact]
+    public async Task EnsureStartedAsync_ReturnsExternal_WhenWasmComponentIsInferred()
+    {
+        var sandboxRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox");
+        var options = Options.Create(new PluginHostOptions
+        {
+            SandboxRootDirectory = sandboxRoot
+        });
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var resolver = new PluginEntrypointResolver(options);
+        var manager = new PluginProcessManager(
+            options,
+            new NoOpSandboxManager(),
+            resolver,
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
+
+        var pluginRoot = Path.Combine(sandboxRoot, "demo");
+        Directory.CreateDirectory(pluginRoot);
+        await File.WriteAllBytesAsync(
+            Path.Combine(pluginRoot, "plugin.wasm"),
+            [0x00, 0x61, 0x73, 0x6D, 0x0D, 0x00, 0x01, 0x00]);
+
+        var manifest = new PluginManifest(
+            "demo",
+            "Demo",
+            "1.0.0",
+            "grpc",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        var status = await manager.EnsureStartedAsync(
+            manifest,
+            PluginRuntimeStatus.Unknown(),
+            CancellationToken.None);
+
+        Assert.Equal(PluginRuntimeState.External, status.State);
+    }
+
     private sealed class ThrowingEntrypointResolver : IPluginEntrypointResolver
     {
         public string GetPluginRoot(string pluginId)
@@ -126,6 +173,12 @@ public sealed class PluginRuntimeRoutingTests
         public string ResolveEntrypoint(PluginManifest manifest)
         {
             throw new InvalidOperationException("No entrypoint available in test resolver.");
+        }
+
+        public bool TryResolveWasmComponent(PluginManifest manifest, out string componentPath)
+        {
+            componentPath = string.Empty;
+            return false;
         }
     }
 

@@ -37,7 +37,11 @@ if [[ "$RID" == osx-* || "$RID" == linux-* ]]; then
   "$ROOT_DIR/scripts/publish-test-plugin.sh" "$RID"
 
   echo "[6/6] Syncing EMMA.TestPlugin artifacts..."
-  "$ROOT_DIR/scripts/sync-test-plugin-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
+  if [[ "$RID" == linux-* ]]; then
+    PLUGIN_MODE=linux "$ROOT_DIR/scripts/sync-test-plugin-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
+  else
+    "$ROOT_DIR/scripts/sync-test-plugin-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
+  fi
 
   echo "Done. Native AOT + PluginHost + TestPlugin artifacts are published and synced for $RID."
 else

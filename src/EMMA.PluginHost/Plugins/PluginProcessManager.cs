@@ -133,6 +133,11 @@ public sealed class PluginProcessManager(
                 hostVersionReason ?? "Plugin runtime minHostVersion is incompatible with this host.");
         }
 
+        if (_entrypointResolver.TryResolveWasmComponent(manifest, out _))
+        {
+            return PluginRuntimeStatus.External();
+        }
+
         if (_signatureOptions.RequireSignedPlugins)
         {
             if (!_signatureVerifier.Verify(manifest, out var reason))

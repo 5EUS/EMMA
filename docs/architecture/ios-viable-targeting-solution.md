@@ -53,8 +53,18 @@ Use a hybrid plugin runtime model behind one host contract:
 - Stable app-facing contracts (search/paged/video) independent of execution lane.
 - Fail closed on signature, runtime mismatch, or policy violations.
 
+## Non-negotiable guardrails
+
+- iOS-family targets must not use external executable runner processes for WASM plugins.
+- iOS-family targets must not rely on CLI/child-process execution paths for plugin operations.
+- If in-process WASM execution is unavailable on iOS-family targets, activation must fail closed with explicit error.
+- Desktop-only runner paths (for example Rust host binaries) are allowed only as temporary desktop lanes and must be blocked on iOS-family targets.
+
 Decision record:
 - ADR-0001: `adr-0001-hybrid-plugin-runtime-for-ios-post-deploy-pluggability.md`
+
+Tooling reference:
+- `tooling-scripts-reference.md`
 
 ## Phased migration plan
 
@@ -78,7 +88,7 @@ Status: Completed (2026-02-28)
 Steps:
 - Extend plugin manifest with runtime metadata:
   - `runtime.minHostVersion` for compatibility gates.
-- Update plugin resolution service to route by runtime kind and auto-resolve runtime entrypoints from trusted host rules.
+- Update plugin resolution service to infer runtime lane from trusted host rules (package/registry metadata) and auto-resolve runtime entrypoints.
 - Keep backward compatibility by defaulting legacy manifests to existing behavior.
 
 Acceptance criteria:
@@ -87,8 +97,10 @@ Acceptance criteria:
 
 ### Phase 2 - Internal WASM runtime host (minimum ABI)
 
+Status: Completed (2026-02-28)
+
 Steps:
-- Embed a WASM runtime in PluginHost internal mode.
+- Embed an internal WASM runtime host lane in PluginHost (module inferred from trusted package layout).
 - Define minimal ABI and bridge calls for:
   - Health and capabilities.
   - Search (`query -> media summaries`).
@@ -117,7 +129,7 @@ Acceptance criteria:
 ### Phase 4 - Developer toolchain and packaging
 
 Steps:
-- Create plugin packaging format that can carry either WASM module or remote descriptor.
+- Create plugin packaging format that can carry either WASM component artifact or remote descriptor.
 - Add build scripts/templates for WASM plugin authors.
 - Update plugin validation CLI to check ABI compatibility and manifest/runtime consistency.
 
@@ -175,16 +187,15 @@ Manifest additions (outline):
 ```json
 {
   "runtime": {
-    "kind": "wasm",
     "minHostVersion": "1.2.0"
   }
 }
 ```
 
 Host requirements:
-- Reject unknown `runtime.kind`.
 - Verify `minHostVersion` before activation.
-- Auto-resolve runtime entrypoint from package/registry metadata (ignore/reject manifest-specified entrypoints).
+- Infer runtime lane from package/registry metadata (no manifest-declared kind).
+- Auto-resolve runtime entrypoint from trusted package/registry metadata (ignore/reject manifest-specified entrypoints).
 - Resolve runtime lane before handshake.
 
 ## Operational concerns

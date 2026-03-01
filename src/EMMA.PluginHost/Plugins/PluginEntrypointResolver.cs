@@ -8,6 +8,7 @@ public interface IPluginEntrypointResolver
 {
     string GetPluginRoot(string pluginId);
     string ResolveEntrypoint(PluginManifest manifest);
+    bool TryResolveWasmComponent(PluginManifest manifest, out string componentPath);
 }
 
 public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options) : IPluginEntrypointResolver
@@ -33,6 +34,73 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
 
         var pluginRoot = GetPluginRoot(manifest.Id);
         return ResolveDefaultEntrypoint(pluginRoot, manifest);
+    }
+
+    public bool TryResolveWasmComponent(PluginManifest manifest, out string componentPath)
+    {
+        componentPath = string.Empty;
+        var pluginRoot = GetPluginRoot(manifest.Id);
+        if (!Directory.Exists(pluginRoot))
+        {
+            return false;
+        }
+
+        var candidates = new List<string>
+        {
+            Path.Combine(pluginRoot, "plugin.wasm"),
+            Path.Combine(pluginRoot, "wasm", "plugin.wasm")
+        };
+
+        if (!string.IsNullOrWhiteSpace(manifest.Id))
+        {
+            candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".wasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".wasm"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifest.Name))
+        {
+            candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".wasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".wasm"));
+        }
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(candidate) && IsWasmComponentBinary(candidate))
+            {
+                componentPath = candidate;
+                return true;
+            }
+        }
+
+        var wildcard = Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
+            .Where(IsWasmComponentBinary)
+            .ToList();
+        if (wildcard.Count == 1)
+        {
+            componentPath = wildcard[0];
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsWasmComponentBinary(string path)
+    {
+        using var stream = File.OpenRead(path);
+        Span<byte> header = stackalloc byte[8];
+        if (stream.Read(header) != header.Length)
+        {
+            return false;
+        }
+
+        return header[0] == 0x00
+            && header[1] == 0x61
+            && header[2] == 0x73
+            && header[3] == 0x6D
+            && header[4] == 0x0D
+            && header[5] == 0x00
+            && header[6] == 0x01
+            && header[7] == 0x00;
     }
 
     private static string ResolveDefaultEntrypoint(string pluginRoot, PluginManifest manifest)
