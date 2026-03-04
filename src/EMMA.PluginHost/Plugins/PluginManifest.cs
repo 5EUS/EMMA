@@ -65,11 +65,18 @@ public sealed record PluginManifestSignature(
 
 /// <summary>
 /// Shared JSON serializer defaults for manifest parsing.
+/// Uses source-generated context for NativeAOT compatibility.
 /// </summary>
 public static class PluginManifestDefaults
 {
-    public static readonly JsonSerializerOptions JsonOptions = new()
+    public static readonly JsonSerializerOptions JsonOptions = GetOptions();
+
+    private static JsonSerializerOptions GetOptions()
     {
-        PropertyNameCaseInsensitive = true
-    };
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+#pragma warning disable SYSLIB0049
+        options.AddContext<PluginManifestJsonContext>();
+#pragma warning restore SYSLIB0049
+        return options;
+    }
 }

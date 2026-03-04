@@ -21,43 +21,37 @@ if [[ ! -d "$EMMAUI_DIR" ]]; then
 fi
 
 if [[ "$RID" == osx-* || "$RID" == linux-* ]]; then
-  echo "[1/6] Publishing EMMA.Native ($RID)..."
+  echo "[1/5] Building WASM runtime ($RID)..."
+  "$ROOT_DIR/scripts/build-wasm-runtime-native.sh" "$RID"
+
+  echo "[2/5] Publishing EMMA.Native (with embedded PluginHost) ($RID)..."
   "$ROOT_DIR/scripts/publish-native-aot.sh" "$RID"
 
-  echo "[2/6] Syncing EMMA.Native into emmaui..."
+  echo "[3/5] Syncing EMMA.Native + WASM runtime into emmaui..."
   "$ROOT_DIR/scripts/sync-native-aot-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
 
-  echo "[3/6] Publishing EMMA.PluginHost ($RID)..."
-  "$ROOT_DIR/scripts/publish-plugin-host.sh" "$RID"
-
-  echo "[4/6] Syncing EMMA.PluginHost into emmaui..."
-  "$ROOT_DIR/scripts/sync-plugin-host-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
-
-  echo "[5/6] Publishing EMMA.TestPlugin ($RID)..."
+  echo "[4/5] Publishing EMMA.TestPlugin ($RID)..."
   "$ROOT_DIR/scripts/publish-test-plugin.sh" "$RID"
 
-  echo "[6/6] Syncing EMMA.TestPlugin artifacts..."
+  echo "[5/5] Syncing EMMA.TestPlugin artifacts..."
   if [[ "$RID" == linux-* ]]; then
     PLUGIN_MODE=linux "$ROOT_DIR/scripts/sync-test-plugin-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
   else
     "$ROOT_DIR/scripts/sync-test-plugin-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
   fi
 
-  echo "Done. Native AOT + PluginHost + TestPlugin artifacts are published and synced for $RID."
+  echo "Done. WASM runtime + Native AOT (with embedded PluginHost) + TestPlugin artifacts are published and synced for $RID."
 else
-  echo "[1/4] Publishing EMMA.Native ($RID)..."
+  echo "[1/3] Building WASM runtime ($RID)..."
+  "$ROOT_DIR/scripts/build-wasm-runtime-native.sh" "$RID"
+
+  echo "[2/3] Publishing EMMA.Native (with embedded PluginHost) ($RID)..."
   "$ROOT_DIR/scripts/publish-native-aot.sh" "$RID"
 
-  echo "[2/4] Syncing EMMA.Native into emmaui..."
+  echo "[3/3] Syncing EMMA.Native + WASM runtime into emmaui..."
   "$ROOT_DIR/scripts/sync-native-aot-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
-
-  echo "[3/4] Publishing EMMA.PluginHost ($RID)..."
-  "$ROOT_DIR/scripts/publish-plugin-host.sh" "$RID"
-
-  echo "[4/4] Syncing EMMA.PluginHost into emmaui..."
-  "$ROOT_DIR/scripts/sync-plugin-host-to-emmaui.sh" "$RID" "" "$EMMAUI_DIR"
 
   echo "TestPlugin steps are macOS-only and intentionally skipped for non-macOS RID '$RID'."
 
-  echo "Done. Native AOT + PluginHost artifacts are published and synced for $RID (TestPlugin skipped by design)."
+  echo "Done. WASM runtime + Native AOT (with embedded PluginHost) artifacts are published and synced for $RID (TestPlugin skipped by design)."
 fi

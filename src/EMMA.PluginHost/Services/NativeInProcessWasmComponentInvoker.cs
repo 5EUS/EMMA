@@ -25,7 +25,7 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
             throw new ArgumentException("Operation is required.", nameof(operation));
         }
 
-        var argsJson = JsonSerializer.Serialize(operationArgs ?? []);
+        var argsJson = JsonSerializer.Serialize(operationArgs ?? [], WasmComponentInvokerJsonContext.Default.IReadOnlyListString);
         var timeoutMs = 30_000u;
 
         var componentPtr = Marshal.StringToCoTaskMemUTF8(componentPath);

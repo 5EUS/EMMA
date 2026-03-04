@@ -110,10 +110,19 @@ public sealed class WasmPluginRuntimeHost(
         args = await EnrichOperationArgsAsync(record.Manifest, componentPath, SearchOperation, args, cancellationToken);
 
         var searchJson = await RunComponentAsync(componentPath, SearchOperation, args, cancellationToken);
+
         var searchItems = DeserializeJson<IReadOnlyList<WasmSearchItem>>(searchJson);
-        if (searchItems is null || searchItems.Count == 0)
+        if (searchItems is null)
         {
-            return [];
+            var truncated = searchJson?.Length > 500 ? searchJson.Substring(0, 500) + "..." : searchJson;
+            throw new InvalidOperationException($"Failed to deserialize WASM search response. Raw response: {truncated}");
+        }
+        
+        if (searchItems.Count == 0)
+        {
+            // Throw to make debugging easier - show what the WASM component actually returned
+            var truncated = searchJson?.Length > 500 ? searchJson.Substring(0, 500) + "..." : searchJson;
+            throw new InvalidOperationException($"WASM component returned 0 results. Query: '{query}'. WASM output: {truncated}");
         }
 
         return [.. searchItems.Select(item => new MediaSummary(
@@ -208,7 +217,7 @@ public sealed class WasmPluginRuntimeHost(
         }
     }
 
-    private static T? DeserializeJson<T>(string? json)
+    private T? DeserializeJson<T>(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -240,15 +249,25 @@ public sealed class WasmPluginRuntimeHost(
         return default;
     }
 
-    private static bool TryDeserialize<T>(string json, out T? value)
+    private bool TryDeserialize<T>(string json, out T? value)
     {
         try
         {
-            value = JsonSerializer.Deserialize<T>(json, PluginManifestDefaults.JsonOptions);
+            // Use the context's GetTypeInfo to avoid reflection
+            var typeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<T>?)WasmResponseJsonContext.Default.GetTypeInfo(typeof(T));
+            if (typeInfo == null)
+            {
+                _logger.LogWarning("No JSON type info for {Type} in WasmResponseJsonContext", typeof(T).Name);
+                value = default;
+                return false;
+            }
+            
+            value = JsonSerializer.Deserialize(json, typeInfo);
             return true;
         }
-        catch
+        catch (JsonException ex)
         {
+            _logger.LogWarning(ex, "JSON deserialization failed for type {Type}: {Message}", typeof(T).Name, ex.Message);
             value = default;
             return false;
         }
@@ -279,6 +298,7 @@ public sealed class WasmPluginRuntimeHost(
         }
 
         var payload = await FetchBridgePayloadAsync(manifest, bridgeOperation, operationArgs, cancellationToken);
+
         var payloadArg = await WriteBridgePayloadAsync(componentPath, operation, payload, cancellationToken);
         operationArgs.Add(payloadArg);
 
@@ -335,10 +355,11 @@ public sealed class WasmPluginRuntimeHost(
         using var request = new HttpRequestMessage(method, requestUri);
         using var response = await HostHttpClient.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
+
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
-    private static async Task<string> WriteBridgePayloadAsync(
+    private async Task<string> WriteBridgePayloadAsync(
         string componentPath,
         string operation,
         string payload,
@@ -410,12 +431,4 @@ public sealed class WasmPluginRuntimeHost(
 
         return client;
     }
-
-    private sealed record WasmHealth(string? Version, string? Message);
-
-    private sealed record WasmSearchItem(string Id, string? Source, string Title, string? MediaType);
-
-    private sealed record WasmChapterItem(string Id, int Number, string Title);
-
-    private sealed record WasmPageItem(string Id, int Index, string ContentUri);
 }

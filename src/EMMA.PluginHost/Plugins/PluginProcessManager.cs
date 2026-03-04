@@ -100,6 +100,7 @@ public sealed class PluginProcessManager(
     private readonly ILogger<PluginProcessManager> _logger = logger;
     private readonly Dictionary<string, ProcessHandle> _processes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LogBuffer> _logs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SemaphoreSlim> _startupGuards = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _lock = new();
 
     public async Task<PluginRuntimeStatus> EnsureStartedAsync(
@@ -107,8 +108,19 @@ public sealed class PluginProcessManager(
         PluginRuntimeStatus current,
         CancellationToken cancellationToken)
     {
+        AppendProcessEvent(
+            manifest.Id,
+            $"ensure-start requested state={current.State} protocol={manifest.Protocol ?? "<none>"} endpoint={manifest.Endpoint ?? "<none>"}");
+
+        var guardKey = string.IsNullOrWhiteSpace(manifest.Id) ? "<unknown>" : manifest.Id;
+        var startupGuard = GetStartupGuard(guardKey);
+        await startupGuard.WaitAsync(cancellationToken);
+
+        try
+        {
         if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
+            AppendProcessEvent(manifest.Id, "startup aborted: protocol missing");
             return current.WithState(PluginRuntimeState.Disabled, "protocol-missing", "Plugin manifest protocol is missing.");
         }
 
@@ -135,6 +147,7 @@ public sealed class PluginProcessManager(
 
         if (_entrypointResolver.TryResolveWasmComponent(manifest, out _))
         {
+            AppendProcessEvent(manifest.Id, "startup skipped: wasm component plugin (external runtime)");
             return PluginRuntimeStatus.External();
         }
 
@@ -153,9 +166,11 @@ public sealed class PluginProcessManager(
         {
             if (!existing.Process.HasExited)
             {
+                AppendProcessEvent(manifest.Id, $"startup skipped: process already running pid={existing.Process.Id}");
                 return current.WithState(PluginRuntimeState.Running, current.LastErrorCode, current.LastErrorMessage);
             }
 
+            AppendProcessEvent(manifest.Id, $"existing process was exited pid={existing.Process.Id}, removing stale handle");
             RemoveProcess(manifest.Id);
         }
 
@@ -163,16 +178,22 @@ public sealed class PluginProcessManager(
         var hasEndpoint = !string.IsNullOrWhiteSpace(manifest.Endpoint);
         if (hasEndpoint && !TryResolveEntrypoint(manifest, out executable))
         {
+            AppendProcessEvent(manifest.Id, "startup skipped: endpoint configured but no local entrypoint resolvable");
             return current.State == PluginRuntimeState.Unknown
                 ? PluginRuntimeStatus.External()
                 : current;
         }
 
+        AppendProcessEvent(manifest.Id, "preparing sandbox");
         await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+        AppendProcessEvent(manifest.Id, "sandbox prepared");
 
         var startInfo = BuildStartInfo(manifest, executable);
         ApplyPluginPort(manifest, startInfo);
         startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
+        AppendProcessEvent(
+            manifest.Id,
+            $"launch envelope file={startInfo.FileName} cwd={startInfo.WorkingDirectory} args={startInfo.Arguments} fileExists={File.Exists(startInfo.FileName ?? string.Empty)} cwdExists={Directory.Exists(startInfo.WorkingDirectory ?? string.Empty)} envPort={ReadEnv(startInfo, "EMMA_PLUGIN_PORT") ?? "<none>"}");
         if (_logger.IsEnabled(LogLevel.Information))
         {
             _logger.LogInformation(
@@ -190,30 +211,38 @@ public sealed class PluginProcessManager(
 
         if (!process.Start())
         {
+            AppendProcessEvent(manifest.Id, "process.Start() returned false");
             return current.WithState(PluginRuntimeState.Crashed, "start-failed", "Failed to start plugin process.");
         }
+
+        AppendProcessEvent(manifest.Id, $"process started pid={process.Id}");
+
+        AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty);
+        AttachLogCapture(manifest.Id, process);
 
         if (process.HasExited)
         {
             var exitCode = SafeExitCode(process);
+            var details = BuildProcessExitDetails(manifest.Id, process);
+            AppendProcessEvent(manifest.Id, $"process exited immediately exitCode={exitCode?.ToString() ?? "unknown"}");
+            RemoveProcess(manifest.Id);
             return current.WithState(
                 PluginRuntimeState.Crashed,
                 "process-exited",
-                "Plugin process exited immediately.",
+                details,
                 exitCode);
         }
-
-        AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty);
-        AttachLogCapture(manifest.Id, process);
 
         await _sandboxManager.EnforceAsync(manifest, process, cancellationToken);
 
         if (string.IsNullOrWhiteSpace(manifest.Endpoint)
             || !Uri.TryCreate(manifest.Endpoint, UriKind.Absolute, out var address))
         {
+            AppendProcessEvent(manifest.Id, "startup ready: no endpoint probe required");
             return PluginRuntimeStatus.Running();
         }
 
+        AppendProcessEvent(manifest.Id, $"probing endpoint {address}");
         var ready = await WaitForEndpointAsync(
             address,
             TimeSpan.FromSeconds(_options.StartupTimeoutSeconds),
@@ -225,13 +254,17 @@ public sealed class PluginProcessManager(
             if (process.HasExited)
             {
                 var exitCode = SafeExitCode(process);
+                var details = BuildProcessExitDetails(manifest.Id, process);
+                AppendProcessEvent(manifest.Id, $"process exited during startup exitCode={exitCode?.ToString() ?? "unknown"}");
+                RemoveProcess(manifest.Id);
                 return current.WithState(
                     PluginRuntimeState.Crashed,
                     "process-exited",
-                    "Plugin process exited during startup.",
+                    details,
                     exitCode);
             }
             await StopAsync(manifest.Id, cancellationToken);
+            AppendProcessEvent(manifest.Id, $"startup timeout after {_options.StartupTimeoutSeconds}s");
             return current.WithRetry(
                 current.RetryCount + 1,
                 DateTimeOffset.UtcNow.AddSeconds(Math.Max(1, _options.TimeoutBackoffSeconds) * (current.RetryCount + 1)),
@@ -239,7 +272,28 @@ public sealed class PluginProcessManager(
                 "Plugin did not become ready in time.");
         }
 
+        AppendProcessEvent(manifest.Id, "startup ready: endpoint probe succeeded");
         return PluginRuntimeStatus.Running();
+        }
+        finally
+        {
+            startupGuard.Release();
+        }
+    }
+
+    private SemaphoreSlim GetStartupGuard(string pluginId)
+    {
+        lock (_lock)
+        {
+            if (_startupGuards.TryGetValue(pluginId, out var existing))
+            {
+                return existing;
+            }
+
+            var created = new SemaphoreSlim(1, 1);
+            _startupGuards[pluginId] = created;
+            return created;
+        }
     }
 
     private bool TryValidateMinHostVersion(PluginManifest manifest, out string? reason)
@@ -428,6 +482,32 @@ public sealed class PluginProcessManager(
         }
     }
 
+    private void AppendProcessEvent(string pluginId, string message)
+    {
+        if (string.IsNullOrWhiteSpace(pluginId) || string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        LogBuffer buffer;
+        lock (_lock)
+        {
+            if (!_logs.TryGetValue(pluginId, out buffer!))
+            {
+                buffer = new LogBuffer(_options.PluginLogMaxLines);
+                _logs[pluginId] = buffer;
+            }
+        }
+
+        var line = $"[startup] {message}";
+        buffer.Append(line);
+
+        if (_logger.IsEnabled(LogLevel.Information))
+        {
+            _logger.LogInformation("Plugin startup {PluginId} {Message}", pluginId, message);
+        }
+    }
+
     private void ReleaseUsageLease(string pluginId)
     {
         lock (_lock)
@@ -499,11 +579,77 @@ public sealed class PluginProcessManager(
         }
     }
 
+    private string BuildProcessExitDetails(string pluginId, Process process)
+    {
+        var exitCode = SafeExitCode(process);
+        var logs = GetLogs(pluginId, 20);
+        var output = TryReadProcessOutput(process);
+        var hint = BuildExitCodeHint(exitCode);
+
+        var parts = new List<string>
+        {
+            $"Plugin process exited during startup (exitCode={exitCode?.ToString() ?? "unknown"})."
+        };
+
+        if (!string.IsNullOrWhiteSpace(hint))
+        {
+            parts.Add(hint!);
+        }
+
+        if (!string.IsNullOrWhiteSpace(output))
+        {
+            parts.Add($"Process output: {output}");
+        }
+
+        if (logs.Count > 0)
+        {
+            var tail = string.Join(" | ", logs.Select(line => line.Trim()));
+            parts.Add($"Recent logs: {tail}");
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static string? TryReadProcessOutput(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                return null;
+            }
+
+            var stderr = process.StandardError.ReadToEnd();
+            var stdout = process.StandardOutput.ReadToEnd();
+            var combined = string.Join(" ", new[] { stderr, stdout }
+                .Where(text => !string.IsNullOrWhiteSpace(text))
+                .Select(text => text.Trim()));
+
+            return string.IsNullOrWhiteSpace(combined)
+                ? null
+                : combined;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? BuildExitCodeHint(int? exitCode)
+    {
+        if (exitCode == 133)
+        {
+            return "Exit code 133 commonly maps to SIGTRAP/abort on macOS; check process output and native crash reports under ~/Library/Logs/DiagnosticReports.";
+        }
+
+        return null;
+    }
+
     private ProcessStartInfo BuildStartInfo(PluginManifest manifest, string? executable)
     {
         var pluginRoot = _entrypointResolver.GetPluginRoot(manifest.Id);
         executable ??= _entrypointResolver.ResolveEntrypoint(manifest);
-        return new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
             FileName = executable,
             WorkingDirectory = pluginRoot,
@@ -511,6 +657,24 @@ public sealed class PluginProcessManager(
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
+
+        SanitizePluginProcessEnvironment(startInfo);
+        return startInfo;
+    }
+
+    private static void SanitizePluginProcessEnvironment(ProcessStartInfo startInfo)
+    {
+        // Prevent host/debug dynamic-loader variables from destabilizing plugin startup
+        // (for example when launched under flutter run on macOS).
+        startInfo.Environment.Remove("DYLD_INSERT_LIBRARIES");
+        startInfo.Environment.Remove("DYLD_LIBRARY_PATH");
+        startInfo.Environment.Remove("DYLD_FRAMEWORK_PATH");
+        startInfo.Environment.Remove("DYLD_FALLBACK_LIBRARY_PATH");
+        startInfo.Environment.Remove("DYLD_FALLBACK_FRAMEWORK_PATH");
+
+        // Plugin process should boot independently of host runtime probing.
+        startInfo.Environment.Remove("DOTNET_STARTUP_HOOKS");
+        startInfo.Environment.Remove("DOTNET_ADDITIONAL_DEPS");
     }
 
     private bool TryResolveEntrypoint(PluginManifest manifest, out string executable)
@@ -545,6 +709,13 @@ public sealed class PluginProcessManager(
         }
 
         startInfo.Environment["EMMA_PLUGIN_PORT"] = address.Port.ToString();
+    }
+
+    private static string? ReadEnv(ProcessStartInfo startInfo, string key)
+    {
+        return startInfo.Environment.TryGetValue(key, out var value)
+            ? value
+            : null;
     }
 
     private void AttachLogCapture(string pluginId, Process process)

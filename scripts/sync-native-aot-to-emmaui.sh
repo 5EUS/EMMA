@@ -39,7 +39,10 @@ case "$RID" in
   win-*)
     ARTIFACT_NAME="emma_native.dll"
     ;;
-  linux-*|android-*)
+  linux-*)
+    ARTIFACT_NAME="libemma_native.so"
+    ;;
+  android-*)
     ARTIFACT_NAME="libemma_native.so"
     ;;
   ios-*|iossimulator-*)
@@ -53,20 +56,9 @@ esac
 
 SOURCE_FILE="$AOT_DIR/$ARTIFACT_NAME"
 if [[ ! -f "$SOURCE_FILE" ]]; then
-  if [[ "$RID" == linux-* || "$RID" == android-* ]]; then
-    for candidate in "EMMA.Native.so" "libEMMA.Native.so" "emma_native.so"; do
-      if [[ -f "$AOT_DIR/$candidate" ]]; then
-        SOURCE_FILE="$AOT_DIR/$candidate"
-        break
-      fi
-    done
-  fi
-
-  if [[ ! -f "$SOURCE_FILE" ]]; then
-    echo "Expected artifact not found: $SOURCE_FILE"
-    echo "Run ./scripts/publish-native-aot.sh $RID first (or pass a custom AOT dir)."
-    exit 1
-  fi
+  echo "Expected artifact not found: $SOURCE_FILE"
+  echo "Run ./scripts/publish-native-aot.sh $RID first (or pass a custom AOT dir)."
+  exit 1
 fi
 
 declare -a DEST_DIRS=()
@@ -133,5 +125,78 @@ for dir in "${DEST_DIRS[@]}"; do
   cp "$SOURCE_FILE" "$dir/$ARTIFACT_NAME"
   echo "  -> $dir/$ARTIFACT_NAME"
 done
+
+# Also sync the WASM runtime library (required by embedded PluginHost)
+RUNTIME_LIB_DIR="$ROOT_DIR/artifacts/wasm-runtime-native/$RID"
+RUNTIME_LIB_NAME=""
+
+case "$RID" in
+  osx-*)
+    RUNTIME_LIB_NAME="libemma_wasm_runtime.dylib"
+    ;;
+  win-*)
+    RUNTIME_LIB_NAME="emma_wasm_runtime.dll"
+    ;;
+  linux-*)
+    RUNTIME_LIB_NAME="libemma_wasm_runtime.so"
+    ;;
+  ios-*|iossimulator-*)
+    RUNTIME_LIB_NAME="libemma_wasm_runtime.a"
+    ;;
+  android-*)
+    RUNTIME_LIB_NAME="libemma_wasm_runtime.so"
+    ;;
+esac
+
+if [[ -n "$RUNTIME_LIB_NAME" ]]; then
+  SOURCE_RUNTIME_LIB="$RUNTIME_LIB_DIR/$RUNTIME_LIB_NAME"
+  if [[ -f "$SOURCE_RUNTIME_LIB" ]]; then
+    echo ""
+    echo "Syncing WASM runtime: $RUNTIME_LIB_NAME"
+    for dir in "${DEST_DIRS[@]}"; do
+      cp "$SOURCE_RUNTIME_LIB" "$dir/$RUNTIME_LIB_NAME"
+      echo "  -> $dir/$RUNTIME_LIB_NAME"
+    done
+  else
+    echo ""
+    echo "Warning: WASM runtime library not found: $SOURCE_RUNTIME_LIB"
+    echo "The embedded PluginHost requires this library at runtime."
+    echo "Run ./scripts/build-wasm-runtime-native.sh $RID to build it."
+  fi
+fi
+
+# Also sync the SQLite native library (required by storage layer)
+SQLITE_LIB_NAME=""
+case "$RID" in
+  osx-*)
+    SQLITE_LIB_NAME="libe_sqlite3.dylib"
+    ;;
+  win-*)
+    SQLITE_LIB_NAME="e_sqlite3.dll"
+    ;;
+  linux-*|android-*)
+    SQLITE_LIB_NAME="libe_sqlite3.so"
+    ;;
+  ios-*|iossimulator-*)
+    # For iOS, libe_sqlite3 is statically linked, no separate file needed
+    SQLITE_LIB_NAME=""
+    ;;
+esac
+
+if [[ -n "$SQLITE_LIB_NAME" ]]; then
+  SOURCE_SQLITE_LIB="$AOT_DIR/$SQLITE_LIB_NAME"
+  if [[ -f "$SOURCE_SQLITE_LIB" ]]; then
+    echo ""
+    echo "Syncing SQLite native library: $SQLITE_LIB_NAME"
+    for dir in "${DEST_DIRS[@]}"; do
+      cp "$SOURCE_SQLITE_LIB" "$dir/$SQLITE_LIB_NAME"
+      echo "  -> $dir/$SQLITE_LIB_NAME"
+    done
+  else
+    echo ""
+    echo "Warning: SQLite native library not found: $SOURCE_SQLITE_LIB"
+    echo "This is bundled automatically during NativeAOT publish."
+  fi
+fi
 
 echo "Sync complete."

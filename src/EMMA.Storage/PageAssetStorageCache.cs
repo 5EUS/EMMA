@@ -12,10 +12,16 @@ namespace EMMA.Storage;
 public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCachePort
 {
     private readonly StorageOptions _options = options;
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+#pragma warning disable SYSLIB0049
+        options.AddContext<StorageJsonContext>();
+#pragma warning restore SYSLIB0049
+        return options;
+    }
 
     public async Task<MediaPageAsset?> GetAsync(string key, CancellationToken cancellationToken)
     {
@@ -94,5 +100,5 @@ public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCa
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
-    private sealed record PageAssetMetadata(string ContentType, DateTimeOffset FetchedAtUtc);
+    public sealed record PageAssetMetadata(string ContentType, DateTimeOffset FetchedAtUtc);
 }

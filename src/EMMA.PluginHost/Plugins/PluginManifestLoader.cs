@@ -37,9 +37,9 @@ public sealed class PluginManifestLoader(
             try
             {
                 await using var stream = File.OpenRead(path);
-                var manifest = await JsonSerializer.DeserializeAsync<PluginManifest>(
+                var manifest = await JsonSerializer.DeserializeAsync(
                     stream,
-                    PluginManifestDefaults.JsonOptions,
+                    PluginManifestJsonContext.Default.PluginManifest,
                     cancellationToken);
 
                 if (manifest is null)

@@ -48,19 +48,25 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         var candidates = new List<string>
         {
             Path.Combine(pluginRoot, "plugin.wasm"),
-            Path.Combine(pluginRoot, "wasm", "plugin.wasm")
+            Path.Combine(pluginRoot, "wasm", "plugin.wasm"),
+            Path.Combine(pluginRoot, "plugin.cwasm"),
+            Path.Combine(pluginRoot, "wasm", "plugin.cwasm")
         };
 
         if (!string.IsNullOrWhiteSpace(manifest.Id))
         {
             candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".wasm"));
             candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".wasm"));
+            candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".cwasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".cwasm"));
         }
 
         if (!string.IsNullOrWhiteSpace(manifest.Name))
         {
             candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".wasm"));
             candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".wasm"));
+            candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".cwasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".cwasm"));
         }
 
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -75,6 +81,9 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         var wildcard = Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
             .Where(IsWasmComponentBinary)
             .ToList();
+        wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
+            .Where(IsWasmComponentBinary));
+
         if (wildcard.Count == 1)
         {
             componentPath = wildcard[0];

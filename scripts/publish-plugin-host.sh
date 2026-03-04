@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "================================================================================"
+echo "WARNING: This script is DEPRECATED"
+echo "================================================================================"
+echo ""
+echo "EMMA.PluginHost is now embedded in EMMA.Native as a static library."
+echo "Use ./scripts/publish-native-aot.sh instead."
+echo ""
+echo "The PluginHost functionality is provided by EMMA.PluginHost.Library,"
+echo "which is compiled into libemma_native.a (or emma_native.lib on Windows)."
+echo ""
+echo "This script is kept for backwards compatibility but does nothing useful."
+echo "================================================================================"
+exit 1
+
+# Legacy code below (no longer used)
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_PATH="$ROOT_DIR/src/EMMA.PluginHost/EMMA.PluginHost.csproj"
 RID="${1:-}"
