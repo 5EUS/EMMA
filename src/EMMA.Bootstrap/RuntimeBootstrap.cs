@@ -13,9 +13,9 @@ public sealed record InMemoryRuntime(PagedMediaPipeline Pipeline, InMemoryMediaS
 /// <summary>
 /// Composition root for minimal runtime wiring.
 /// </summary>
+[Obsolete("Use EMMA.Native services")]
 public static class RuntimeBootstrap
 {
-    // TODO: Deprecate this in-memory bootstrap once the full runtime composition root exists.
     /// <summary>
     /// Creates an in-memory runtime with a seeded demo catalog.
     /// </summary>
