@@ -99,7 +99,7 @@ fn invoke_component(
     let mut failures = Vec::new();
 
     for wasi_args in arg_variants {
-        match invoke_component_once(&engine, &component, &linker, component_dir, &wasi_args) {
+        match invoke_component_once(&engine, &component, &linker, &component_path_abs, component_dir, &wasi_args) {
             Ok(stdout) => return Ok(stdout),
             Err(err) => {
                 failures.push(format!("args={:?}: {err:#}", wasi_args));
@@ -117,6 +117,7 @@ fn invoke_component_once(
     engine: &Engine,
     component: &Component,
     linker: &Linker<RunnerState>,
+    component_path: &Path,
     component_dir: &Path,
     wasi_args: &[String],
 ) -> Result<String> {
@@ -127,6 +128,19 @@ fn invoke_component_once(
     builder
         .preopened_dir(component_dir, "/", DirPerms::all(), FilePerms::all())
         .context("failed to preopen component directory")?;
+    
+    // Mount a writable temp directory for hostbridge files
+    // This is needed on macOS where the app bundle is read-only
+    let bridge_dir = get_bridge_dir(component_path)?;
+    if let Err(e) = std::fs::create_dir_all(&bridge_dir) {
+        eprintln!("Warning: failed to create bridge directory: {}", e);
+    } else {
+        // Only mount if we successfully created the directory
+        if let Err(e) = builder.preopened_dir(&bridge_dir, "/.hostbridge", DirPerms::all(), FilePerms::all()) {
+            eprintln!("Warning: failed to mount bridge directory: {}", e);
+        }
+    }
+    
     builder.env("PWD", "/");
     builder.env("MONO_PATH", "/");
     builder.args(wasi_args);
@@ -220,6 +234,23 @@ fn extract_json_payload(stdout: &str) -> Option<String> {
     }
 
     None
+}
+
+fn get_bridge_dir(component_path: &Path) -> Result<PathBuf> {
+    use sha2::{Sha256, Digest};
+    
+    // Hash the full component path to match C# implementation
+    let path_str = component_path.to_string_lossy();
+    let mut hasher = Sha256::new();
+    hasher.update(path_str.as_bytes());
+    let hash_bytes = hasher.finalize();
+    
+    // Convert to hex string and take first 16 characters (like C# does)
+    let hash_hex = format!("{:x}", hash_bytes);
+    let hash_short = &hash_hex[..16];
+    
+    let temp_dir = std::env::temp_dir();
+    Ok(temp_dir.join("emma-wasm-bridge").join(hash_short).join(".hostbridge"))
 }
 
 fn resolve_managed_entry_candidates(component_dir: &Path) -> Vec<String> {

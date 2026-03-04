@@ -344,14 +344,15 @@ public sealed class WasmPluginRuntimeHost(
         string payload,
         CancellationToken cancellationToken)
     {
-        var componentDir = Path.GetDirectoryName(componentPath);
-        if (string.IsNullOrWhiteSpace(componentDir))
-        {
-            throw new InvalidOperationException(
-                $"Unable to resolve component directory for '{componentPath}'.");
-        }
-
-        var bridgeDir = Path.Combine(componentDir, ".hostbridge");
+        // Use a writable temp directory instead of the component directory
+        // (which may be inside a read-only app bundle on macOS)
+        var componentHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(componentPath)))
+            .ToLowerInvariant()[..16];
+        
+        var tempRoot = Path.Combine(Path.GetTempPath(), "emma-wasm-bridge");
+        var bridgeDir = Path.Combine(tempRoot, componentHash, ".hostbridge");
         Directory.CreateDirectory(bridgeDir);
 
         var fileName = $"{operation}-{Guid.NewGuid():N}.json";
@@ -401,7 +402,7 @@ public sealed class WasmPluginRuntimeHost(
     {
         var client = new HttpClient
         {
-            BaseAddress = new Uri("https://api.mangadex.org")
+            BaseAddress = new Uri("https://api.mangadex.org") // TODO get from manifest
         };
 
         client.DefaultRequestHeaders.UserAgent.ParseAdd("EMMA-PluginHost/1.0");
