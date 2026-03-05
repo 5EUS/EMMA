@@ -32,7 +32,6 @@ public sealed class WasmPluginRuntimeHost(
     private const string SearchOperation = "search";
     private const string ChaptersOperation = "chapters";
     private const string PageOperation = "page";
-    private static readonly HttpClient HostHttpClient = CreateHostHttpClient();
 
     private readonly IPluginEntrypointResolver _entrypointResolver = entrypointResolver;
     private readonly IWasmComponentInvoker _invoker = invoker;
@@ -114,15 +113,15 @@ public sealed class WasmPluginRuntimeHost(
         var searchItems = DeserializeJson<IReadOnlyList<WasmSearchItem>>(searchJson);
         if (searchItems is null)
         {
-            var truncated = searchJson?.Length > 500 ? searchJson.Substring(0, 500) + "..." : searchJson;
+            var truncated = searchJson?.Length > 500 ? string.Concat(searchJson.AsSpan(0, 500), "...") : searchJson;
             throw new InvalidOperationException($"Failed to deserialize WASM search response. Raw response: {truncated}");
         }
-        
+
         if (searchItems.Count == 0)
         {
-            // Throw to make debugging easier - show what the WASM component actually returned
-            var truncated = searchJson?.Length > 500 ? searchJson.Substring(0, 500) + "..." : searchJson;
-            throw new InvalidOperationException($"WASM component returned 0 results. Query: '{query}'. WASM output: {truncated}");
+            var truncated = searchJson?.Length > 500 ? string.Concat(searchJson.AsSpan(0, 500), "...") : searchJson;
+            throw new InvalidOperationException(
+                $"WASM search returned no results for query '{query}'. Raw response: {truncated}");
         }
 
         return [.. searchItems.Select(item => new MediaSummary(
@@ -344,19 +343,165 @@ public sealed class WasmPluginRuntimeHost(
         }
 
         var resolvedUrl = ResolveUrlTemplate(bridgeOperation.UrlTemplate, operationArgs);
-        if (!Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var requestUri))
-        {
-            throw new InvalidOperationException(
-                $"WASM host bridge URL template resolved to invalid absolute URI: '{resolvedUrl}'.");
-        }
+        var requestUri = ResolveBridgeRequestUri(manifest, resolvedUrl);
+        var baseAddress = new Uri(requestUri.GetLeftPart(UriPartial.Authority));
+        var requestTarget = requestUri.PathAndQuery + requestUri.Fragment;
 
         EnsureHostIsAllowed(manifest, requestUri);
 
-        using var request = new HttpRequestMessage(method, requestUri);
-        using var response = await HostHttpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var client = CreateHostHttpClient(baseAddress);
+        for (var attempt = 1; attempt <= 3; attempt++) // TODO custom number of retries
+        {
+            using var request = new HttpRequestMessage(method, requestTarget);
+            try
+            {
+                using var response = await client.SendAsync(request, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    return await response.Content.ReadAsStringAsync(cancellationToken);
+                }
 
-        return await response.Content.ReadAsStringAsync(cancellationToken);
+                var body = await response.Content.ReadAsStringAsync(cancellationToken);
+                var statusCode = (int)response.StatusCode;
+                var transient = IsTransientStatusCode(statusCode);
+
+                if (transient && attempt < 3)
+                {
+                    var retryDelay = ResolveRetryDelay(response, attempt);
+                    _logger.LogWarning(
+                        "WASM host bridge transient HTTP failure {StatusCode} {ReasonPhrase} for {RequestUri}, retrying in {DelayMs}ms (attempt {Attempt}/3)",
+                        statusCode,
+                        response.ReasonPhrase,
+                        requestUri,
+                        (int)retryDelay.TotalMilliseconds,
+                        attempt);
+
+                    await Task.Delay(retryDelay, cancellationToken);
+                    continue;
+                }
+
+                var bodyPreview = BuildResponsePreview(body);
+                if (transient)
+                {
+                    throw new InvalidOperationException(
+                        $"WASM host bridge upstream is unavailable ({statusCode} {response.ReasonPhrase}) at '{requestUri}'. Try again later. Provider response: {bodyPreview}");
+                }
+
+                throw new InvalidOperationException(
+                    $"WASM host bridge HTTP request failed: {statusCode} {response.ReasonPhrase} at '{requestUri}'. Response: {bodyPreview}");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (HttpRequestException ex) when (attempt < 3)
+            {
+                var retryDelay = TimeSpan.FromMilliseconds(250 * attempt);
+                _logger.LogWarning(
+                    ex,
+                    "WASM host bridge HTTP transport failure for {RequestUri}, retrying in {DelayMs}ms (attempt {Attempt}/3)",
+                    requestUri,
+                    (int)retryDelay.TotalMilliseconds,
+                    attempt);
+
+                await Task.Delay(retryDelay, cancellationToken);
+            }
+            catch (HttpRequestException ex)
+            {
+                throw new InvalidOperationException(
+                    $"WASM host bridge HTTP transport error for '{requestUri}': {ex.Message}",
+                    ex);
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"WASM host bridge HTTP request failed for '{requestUri}' after retries.");
+    }
+
+    private static bool IsTransientStatusCode(int statusCode)
+    {
+        return statusCode is 429 or 502 or 503 or 504;
+    }
+
+    private static TimeSpan ResolveRetryDelay(HttpResponseMessage response, int attempt)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+        if (retryAfter?.Delta is { } delta && delta > TimeSpan.Zero)
+        {
+            return delta;
+        }
+
+        return TimeSpan.FromMilliseconds(300 * attempt);
+    }
+
+    private static string BuildResponsePreview(string body)
+    {
+        var normalized = body
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Trim();
+
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return "<empty>";
+        }
+
+        return normalized.Length > 180
+            ? normalized[..180] + "..."
+            : normalized;
+    }
+
+    private static Uri ResolveBridgeRequestUri(PluginManifest manifest, string resolvedUrl)
+    {
+        if (Uri.TryCreate(resolvedUrl, UriKind.Absolute, out var absolute))
+        {
+            return absolute;
+        }
+
+        if (!Uri.TryCreate(resolvedUrl, UriKind.Relative, out var relative))
+        {
+            throw new InvalidOperationException(
+                $"WASM host bridge URL template resolved to invalid URI: '{resolvedUrl}'.");
+        }
+
+        var baseAddress = ResolveBridgeBaseAddress(manifest);
+        return new Uri(baseAddress, relative);
+    }
+
+    private static Uri ResolveBridgeBaseAddress(PluginManifest manifest)
+    {
+        var operations = manifest.Runtime?.WasmHostBridge?.Http;
+        if (operations is not null)
+        {
+            foreach (var operation in operations.Values)
+            {
+                var template = operation?.UrlTemplate;
+                if (string.IsNullOrWhiteSpace(template))
+                {
+                    continue;
+                }
+
+                if (!Uri.TryCreate(template, UriKind.Absolute, out var absolute))
+                {
+                    continue;
+                }
+
+                return new Uri(absolute.GetLeftPart(UriPartial.Authority));
+            }
+        }
+
+        var firstDomain = manifest.Permissions?.Domains?
+            .FirstOrDefault(domain => !string.IsNullOrWhiteSpace(domain) && domain != "*")
+            ?.Trim();
+
+        if (!string.IsNullOrWhiteSpace(firstDomain)
+            && Uri.TryCreate($"https://{firstDomain}", UriKind.Absolute, out var inferred))
+        {
+            return inferred;
+        }
+
+        throw new InvalidOperationException(
+            "WASM host bridge URL template is relative, but no absolute base address could be resolved from runtime.wasmHostBridge.http or permissions.domains.");
     }
 
     private async Task<string> WriteBridgePayloadAsync(
@@ -419,11 +564,11 @@ public sealed class WasmPluginRuntimeHost(
         }
     }
 
-    private static HttpClient CreateHostHttpClient()
+    private static HttpClient CreateHostHttpClient(Uri baseAddress)
     {
         var client = new HttpClient
         {
-            BaseAddress = new Uri("https://api.mangadex.org") // TODO get from manifest
+            BaseAddress = baseAddress
         };
 
         client.DefaultRequestHeaders.UserAgent.ParseAdd("EMMA-PluginHost/1.0");
