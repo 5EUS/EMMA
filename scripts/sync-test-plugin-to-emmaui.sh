@@ -41,7 +41,7 @@ case "$RID" in
   linux-*)
     PLUGIN_ID="emma.plugin.test"
     MANIFEST_SOURCE="$ROOT_DIR/src/EMMA.TestPlugin/EMMA.TestPlugin.plugin.json"
-    PLUGIN_DIR_SOURCE="$PLUGIN_OUT_DIR/$PLUGIN_ID/linux"
+    PLUGIN_DIR_SOURCE="$PLUGIN_OUT_DIR/$PLUGIN_ID"
     WASM_COMPONENT_SOURCE="$ROOT_DIR/src/EMMA.TestPlugin/artifacts/wasm/plugin.wasm"
     WASM_RUNTIME_SOURCE_DIR="$ROOT_DIR/src/EMMA.TestPlugin/artifacts/wasm-publish"
     XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
