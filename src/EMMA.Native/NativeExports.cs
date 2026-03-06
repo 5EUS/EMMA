@@ -148,9 +148,42 @@ public static class NativeExports
             var manifestsDirectory = PtrToString(manifestsDirUtf8);
             var pluginsDirectory = PtrToString(pluginsDirUtf8);
 
+            var previousConfiguration = _pluginPathConfiguration;
+
             _pluginPathConfiguration = new PluginPathConfiguration(
                 NormalizeConfiguredPath(manifestsDirectory),
                 NormalizeConfiguredPath(pluginsDirectory));
+
+            if (_pluginHostInitialized)
+            {
+                lock (PluginHostInitLock)
+                {
+                    if (_pluginHostInitialized)
+                    {
+                        var pathsChanged = !SameConfiguredPath(previousConfiguration.ManifestsDirectory, _pluginPathConfiguration.ManifestsDirectory)
+                            || !SameConfiguredPath(previousConfiguration.PluginsDirectory, _pluginPathConfiguration.PluginsDirectory);
+
+                        if (pathsChanged)
+                        {
+                            ShutdownPluginHost();
+                            EnsurePluginHostInitialized();
+                            LogInfo("plugin-host", "Plugin host reconfigured with updated manifests/plugins paths.");
+                        }
+                        else
+                        {
+                            var rescanCode = PluginHostExports.RescanManaged();
+                            if (rescanCode != 0)
+                            {
+                                var error = PluginHostExports.GetLastErrorManaged()
+                                    ?? $"Plugin host rescan failed with code {rescanCode}";
+                                throw new InvalidOperationException(error);
+                            }
+
+                            LogInfo("plugin-host", "Plugin host rescanned with existing manifests/plugins paths.");
+                        }
+                    }
+                }
+            }
 
             return 1;
         }
@@ -866,6 +899,17 @@ public static class NativeExports
 
         AddIfNotEmpty(set, Environment.GetEnvironmentVariable("EMMA_APP_SUPPORT_DIR"));
 
+        if (OperatingSystem.IsLinux())
+        {
+            AddIfNotEmpty(set, Environment.GetEnvironmentVariable("XDG_DATA_HOME"));
+
+            var homeEnv = Environment.GetEnvironmentVariable("HOME");
+            if (!string.IsNullOrWhiteSpace(homeEnv))
+            {
+                AddIfNotEmpty(set, Path.Combine(homeEnv, ".local", "share"));
+            }
+        }
+
         var home = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
         if (!string.IsNullOrWhiteSpace(home))
         {
@@ -910,6 +954,15 @@ public static class NativeExports
         }
 
         return value.Trim();
+    }
+
+    private static bool SameConfiguredPath(string? left, string? right)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        return string.Equals(left, right, comparison);
     }
 
     private static void AppendJsonProperty(StringBuilder sb, string name, string value)

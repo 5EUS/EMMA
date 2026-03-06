@@ -68,7 +68,8 @@ public sealed class PluginHandshakeService(
     }
 
     /// <summary>
-    /// Reloads manifests and performs a handshake regardless of startup settings.
+    /// Reloads manifests and refreshes registry state.
+    /// When handshake-on-startup is enabled, this also performs startup and handshake.
     /// </summary>
     public async Task RescanAsync(CancellationToken cancellationToken)
     {
@@ -83,6 +84,30 @@ public sealed class PluginHandshakeService(
                 await _processManager.StopAsync(record.Manifest.Id, cancellationToken);
                 _registry.UpdateRuntime(record.Manifest, PluginRuntimeStatus.Stopped());
             }
+        }
+
+        foreach (var manifest in manifests)
+        {
+            var existing = snapshot.FirstOrDefault(record =>
+                string.Equals(record.Manifest.Id, manifest.Id, StringComparison.OrdinalIgnoreCase));
+
+            var resolved = manifest;
+            if (existing is not null
+                && string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(manifest.Endpoint)
+                && !string.IsNullOrWhiteSpace(existing.Manifest.Endpoint))
+            {
+                resolved = manifest with { Endpoint = existing.Manifest.Endpoint };
+            }
+
+            var updated = _endpointAllocator.EnsureEndpoint(resolved);
+            _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
+        }
+
+        if (!_options.HandshakeOnStartup)
+        {
+            _logger.LogInformation("Plugin handshake is disabled by configuration; rescan updated manifests without eager startup.");
+            return;
         }
 
         foreach (var manifest in manifests)
