@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RID="${1:-}"
 PLUGIN_OUT_DIR="${2:-}"
 EMMAUI_DIR="${3:-}"
+PLUGIN_MODE="${PLUGIN_MODE:-}"
 
 if [[ -z "$RID" ]]; then
   echo "Usage: $0 <rid> [plugin-output-dir] [emmaui-dir]"
@@ -40,7 +41,9 @@ case "$RID" in
   linux-*)
     PLUGIN_ID="emma.plugin.test"
     MANIFEST_SOURCE="$ROOT_DIR/src/EMMA.TestPlugin/EMMA.TestPlugin.plugin.json"
-    PLUGIN_DIR_SOURCE="$PLUGIN_OUT_DIR/$PLUGIN_ID/linux"
+    PLUGIN_DIR_SOURCE="$PLUGIN_OUT_DIR/$PLUGIN_ID"
+    WASM_COMPONENT_SOURCE="$ROOT_DIR/src/EMMA.TestPlugin/artifacts/wasm/plugin.wasm"
+    WASM_RUNTIME_SOURCE_DIR="$ROOT_DIR/src/EMMA.TestPlugin/artifacts/wasm-publish"
     XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
     LINUX_EMMA_ROOT="$XDG_DATA_HOME/com.example.emmaui/emmaui"
     ;;
@@ -78,10 +81,42 @@ if [[ "$RID" == osx-* ]]; then
 fi
 
 if [[ "$RID" == linux-* ]]; then
-  if [[ ! -d "$PLUGIN_DIR_SOURCE" ]]; then
-    echo "Test plugin Linux bundle not found: $PLUGIN_DIR_SOURCE"
-    echo "Run ./scripts/publish-test-plugin.sh $RID first."
+  if [[ -z "$PLUGIN_MODE" ]]; then
+    PLUGIN_MODE="linux"
+  fi
+
+  if [[ "$PLUGIN_MODE" == "auto" ]]; then
+    if [[ -f "$WASM_COMPONENT_SOURCE" ]]; then
+      PLUGIN_MODE="wasm"
+    else
+      PLUGIN_MODE="linux"
+    fi
+  fi
+
+  if [[ "$PLUGIN_MODE" != "wasm" && "$PLUGIN_MODE" != "linux" ]]; then
+    echo "Unsupported PLUGIN_MODE for linux sync: $PLUGIN_MODE"
+    echo "Use PLUGIN_MODE=auto|wasm|linux"
     exit 1
+  fi
+
+  if [[ "$PLUGIN_MODE" == "wasm" ]]; then
+    if [[ ! -f "$WASM_COMPONENT_SOURCE" ]]; then
+      echo "WASM component not found: $WASM_COMPONENT_SOURCE"
+      echo "Build it first with: TARGETS=\"wasm\" ./src/EMMA.TestPlugin/scripts/build-pack-plugin.sh"
+      exit 1
+    fi
+
+    if [[ ! -d "$WASM_RUNTIME_SOURCE_DIR" ]]; then
+      echo "WASM runtime payload directory not found: $WASM_RUNTIME_SOURCE_DIR"
+      echo "Build it first with: TARGETS=\"wasm\" ./src/EMMA.TestPlugin/scripts/build-pack-plugin.sh"
+      exit 1
+    fi
+  else
+    if [[ ! -d "$PLUGIN_DIR_SOURCE" ]]; then
+      echo "Test plugin Linux bundle not found: $PLUGIN_DIR_SOURCE"
+      echo "Run ./scripts/publish-test-plugin.sh $RID first."
+      exit 1
+    fi
   fi
 fi
 
@@ -89,9 +124,16 @@ echo "Syncing EMMA.TestPlugin seed bundle for RID '$RID'"
 if [[ "$RID" == osx-* ]]; then
   echo "  source app: $PLUGIN_APP_SOURCE"
 else
-  echo "  source dir: $PLUGIN_DIR_SOURCE"
+  if [[ "$PLUGIN_MODE" == "wasm" ]]; then
+    echo "  source wasm: $WASM_COMPONENT_SOURCE"
+  else
+    echo "  source dir: $PLUGIN_DIR_SOURCE"
+  fi
 fi
 echo "  source manifest: $MANIFEST_SOURCE"
+if [[ "$RID" == linux-* ]]; then
+  echo "  plugin mode: $PLUGIN_MODE"
+fi
 
 for dir in "${DEST_DIRS[@]}"; do
   if [[ "$RID" == linux-* ]]; then
@@ -104,9 +146,15 @@ for dir in "${DEST_DIRS[@]}"; do
     mkdir -p "$plugin_dest_root"
 
     cp "$MANIFEST_SOURCE" "$manifests_dir/$PLUGIN_ID.plugin.json"
-    cp -R "$PLUGIN_DIR_SOURCE"/. "$plugin_dest_root/"
+    if [[ "$PLUGIN_MODE" == "wasm" ]]; then
+      mkdir -p "$plugin_dest_root/wasm"
+      cp -R "$WASM_RUNTIME_SOURCE_DIR"/. "$plugin_dest_root/wasm/"
+      cp "$WASM_COMPONENT_SOURCE" "$plugin_dest_root/wasm/plugin.wasm"
+    else
+      cp -R "$PLUGIN_DIR_SOURCE"/. "$plugin_dest_root/"
+      find "$plugin_dest_root" -type f \( -name "EMMATestPlugin" -o -name "EMMA.TestPlugin" -o -name "*.so" \) -exec chmod +x {} \; || true
+    fi
 
-    find "$plugin_dest_root" -type f \( -name "EMMATestPlugin" -o -name "EMMA.TestPlugin" -o -name "*.so" \) -exec chmod +x {} \; || true
     echo "  -> $plugin_dest_root"
     continue
   fi

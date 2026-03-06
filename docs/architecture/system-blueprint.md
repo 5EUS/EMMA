@@ -65,9 +65,11 @@
 - Core runtime as pure .NET 10 libraries, all shared logic in AOT-safe code.
 - Plugin isolation via IPC, no dynamic in-process loading.
 - iOS strategy:
-  - Plugin processes cannot be spawned; use a remote plugin host model
-    (device-to-server gRPC) or bundled trusted adapters that call a
-    remote sandbox.
+  - Support both internal host and remote host modes.
+  - Internal host runs in-process (embedded) with AOT-safe contracts and
+    platform-compliant execution constraints.
+  - Remote host remains available (device-to-server gRPC) for centralized
+    policy, scaling, and independent plugin rollout.
   - AOT-friendly contracts: generated gRPC stubs with static bindings.
 - Desktop/server strategy:
   - OS-native sandbox tooling for isolation.
@@ -93,7 +95,8 @@
 - Core runtime as a library inside another app.
 - Plugin host can be:
   - Local process (desktop).
-  - Remote host (mobile/iOS).
+  - In-process internal host (including iOS).
+  - Remote host (all targets, including iOS).
 - Same ports/contract surface for consistent integration.
 
 ## Security Priorities (Phase 1 overview)
@@ -114,8 +117,9 @@
 
 - gRPC vs. REST IPC: gRPC preferred for performance, typed contracts, and
   streaming. REST is simpler but less efficient for streaming.
-- Local vs. remote plugin host: local is lower latency but not available on
-  iOS; remote is consistent and secure but needs connectivity.
+- Internal vs. remote plugin host: internal is lower latency and supports
+  offline operation; remote is consistent and secure for centralized
+  operations but needs connectivity.
 
 ## Observability and Recovery (brief)
 

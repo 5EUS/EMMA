@@ -103,6 +103,7 @@ public sealed class PluginProviderTests
         });
 
         builder.Services.AddGrpc();
+        builder.Services.AddScoped<ITestPluginRuntime, TestPluginRuntime>();
         builder.Services.AddHttpClient<MangadexClient>(client =>
             {
                 client.BaseAddress = new Uri("https://api.mangadex.org");

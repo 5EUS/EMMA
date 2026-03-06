@@ -5,12 +5,14 @@
     <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
     <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
     <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="..\EMMA.PluginHost.Library\EMMA.PluginHost.Library.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
 </Project>

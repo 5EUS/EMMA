@@ -9,6 +9,7 @@ public sealed class PluginResolutionService(
     IPluginSandboxManager sandboxManager,
     PluginProcessManager processManager,
     PluginHandshakeService handshakeService,
+    IWasmPluginRuntimeHost wasmRuntimeHost,
     Plugins.PluginEndpointAllocator endpointAllocator)
 {
     private readonly PluginRegistry _registry = registry;
@@ -16,6 +17,7 @@ public sealed class PluginResolutionService(
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginProcessManager _processManager = processManager;
     private readonly PluginHandshakeService _handshakeService = handshakeService;
+    private readonly IWasmPluginRuntimeHost _wasmRuntimeHost = wasmRuntimeHost;
     private readonly Plugins.PluginEndpointAllocator _endpointAllocator = endpointAllocator;
 
     public async Task<(PluginRecord? Record, Uri? Address, IResult? Error)> ResolveAsync(
@@ -127,6 +129,21 @@ public sealed class PluginResolutionService(
                 Results.Problem(
                     $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
                     statusCode: StatusCodes.Status503ServiceUnavailable));
+        }
+
+        if (_wasmRuntimeHost.IsWasmPlugin(record.Manifest))
+        {
+            if (!record.Status.Success)
+            {
+                return (
+                    record,
+                    null,
+                    Results.Problem(
+                        $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
+                        statusCode: StatusCodes.Status503ServiceUnavailable));
+            }
+
+            return (record, null, null);
         }
 
         if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))

@@ -32,6 +32,10 @@ public static class PluginHostEndpoints
                 manifest.Id,
                 manifest.Name,
                 manifest.Version,
+                Runtime = new
+                {
+                    manifest.Runtime?.MinHostVersion
+                },
                 manifest.Description,
                 manifest.Author,
                 manifest.MediaTypes,

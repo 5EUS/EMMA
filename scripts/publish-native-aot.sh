@@ -16,15 +16,19 @@ if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="$ROOT_DIR/artifacts/aot/EMMA.Native/$RID"
 fi
 
+# Use static libraries only for iOS (App Store requirement)
+# Use dynamic libraries for desktop/Linux/Android (easier deployment, code signing)
 NATIVE_LIB_TYPE="Shared"
-if [[ "$RID" == ios-* || "$RID" == iossimulator-* ]]; then
-  NATIVE_LIB_TYPE="Static"
-fi
+case "$RID" in
+  ios-*|iossimulator-*)
+    NATIVE_LIB_TYPE="Static"
+    ;;
+esac
 
 rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-echo "Publishing EMMA.Native NativeAOT for $RID..."
+echo "Publishing EMMA.Native NativeAOT (static library) for $RID..."
 
 dotnet publish "$PROJECT_PATH" \
   -c Release \
@@ -40,20 +44,44 @@ SOURCE_NAME=""
 
 case "$RID" in
   osx-*)
-    EXPECTED_NAME="libemma_native.dylib"
-    SOURCE_NAME="EMMA.Native.dylib"
+    if [[ "$NATIVE_LIB_TYPE" == "Static" ]]; then
+      EXPECTED_NAME="libemma_native.a"
+      SOURCE_NAME="EMMA.Native.a"
+    else
+      EXPECTED_NAME="libemma_native.dylib"
+      SOURCE_NAME="EMMA.Native.dylib"
+    fi
     ;;
   win-*)
-    EXPECTED_NAME="emma_native.dll"
-    SOURCE_NAME="EMMA.Native.dll"
+    if [[ "$NATIVE_LIB_TYPE" == "Static" ]]; then
+      EXPECTED_NAME="emma_native.lib"
+      SOURCE_NAME="EMMA.Native.lib"
+    else
+      EXPECTED_NAME="emma_native.dll"
+      SOURCE_NAME="EMMA.Native.dll"
+    fi
     ;;
-  linux-*|android-*)
-    EXPECTED_NAME="libemma_native.so"
-    SOURCE_NAME="EMMA.Native.so"
+  linux-*)
+    if [[ "$NATIVE_LIB_TYPE" == "Static" ]]; then
+      EXPECTED_NAME="libemma_native.a"
+      SOURCE_NAME="EMMA.Native.a"
+    else
+      EXPECTED_NAME="libemma_native.so"
+      SOURCE_NAME="EMMA.Native.so"
+    fi
+    ;;
+  android-*)
+    if [[ "$NATIVE_LIB_TYPE" == "Static" ]]; then
+      EXPECTED_NAME="libemma_native.a"
+      SOURCE_NAME="EMMA.Native.a"
+    else
+      EXPECTED_NAME="libemma_native.so"
+      SOURCE_NAME="EMMA.Native.so"
+    fi
     ;;
   ios-*|iossimulator-*)
     EXPECTED_NAME="libemma_native.a"
-    SOURCE_NAME="libEMMA.Native.a"
+    SOURCE_NAME="EMMA.Native.a"
     ;;
 esac
 
@@ -63,15 +91,10 @@ if [[ -n "$EXPECTED_NAME" && -n "$SOURCE_NAME" ]]; then
   fi
 fi
 
-if [[ "$RID" == linux-* || "$RID" == android-* ]]; then
-  if [[ ! -f "$OUTPUT_DIR/$EXPECTED_NAME" ]]; then
-    for candidate in "EMMA.Native.so" "libEMMA.Native.so" "emma_native.so"; do
-      if [[ -f "$OUTPUT_DIR/$candidate" ]]; then
-        cp "$OUTPUT_DIR/$candidate" "$OUTPUT_DIR/$EXPECTED_NAME"
-        break
-      fi
-    done
-  fi
+LIB_TYPE_DESC="dynamic"
+if [[ "$NATIVE_LIB_TYPE" == "Static" ]]; then
+  LIB_TYPE_DESC="static"
 fi
 
 echo "AOT publish succeeded. Output: $OUTPUT_DIR"
+echo "Native library ($LIB_TYPE_DESC, with embedded PluginHost): $OUTPUT_DIR/$EXPECTED_NAME"

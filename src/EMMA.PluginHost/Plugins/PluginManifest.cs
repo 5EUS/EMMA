@@ -16,7 +16,28 @@ public sealed record PluginManifest(
     PluginManifestPermissions? Permissions,
     PluginManifestSignature? Signature,
     string? Description,
-    string? Author);
+    string? Author,
+    PluginManifestRuntime? Runtime = null);
+
+/// <summary>
+/// Declares runtime routing metadata for a plugin.
+/// </summary>
+public sealed record PluginManifestRuntime(
+    string? MinHostVersion,
+    PluginManifestWasmHostBridge? WasmHostBridge = null);
+
+/// <summary>
+/// Optional host-side bridge configuration for WASM plugins.
+/// </summary>
+public sealed record PluginManifestWasmHostBridge(
+    IReadOnlyDictionary<string, PluginManifestWasmHttpOperation>? Http = null);
+
+/// <summary>
+/// Host-mediated HTTP operation descriptor for WASM operation payload bridging.
+/// </summary>
+public sealed record PluginManifestWasmHttpOperation(
+    string UrlTemplate,
+    string? Method = null);
 
 /// <summary>
 /// Declared plugin resource and capability hints.
@@ -44,11 +65,18 @@ public sealed record PluginManifestSignature(
 
 /// <summary>
 /// Shared JSON serializer defaults for manifest parsing.
+/// Uses source-generated context for NativeAOT compatibility.
 /// </summary>
 public static class PluginManifestDefaults
 {
-    public static readonly JsonSerializerOptions JsonOptions = new()
+    public static readonly JsonSerializerOptions JsonOptions = GetOptions();
+
+    private static JsonSerializerOptions GetOptions()
     {
-        PropertyNameCaseInsensitive = true
-    };
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+#pragma warning disable SYSLIB0049
+        options.AddContext<PluginManifestJsonContext>();
+#pragma warning restore SYSLIB0049
+        return options;
+    }
 }

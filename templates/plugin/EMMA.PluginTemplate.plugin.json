@@ -5,6 +5,9 @@
   "description": "Starter manifest for a gRPC plugin.",
   "author": "Your Name",
   "protocol": "grpc",
+  "runtime": {
+    "minHostVersion": "1.0.0"
+  },
   "mediaTypes": [
     "paged",
     "video"

@@ -4,6 +4,7 @@ using EMMA.PluginHost.Configuration;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
 using EMMA.PluginHost.Sandboxing;
+using EMMA.PluginHost.Services;
 using Grpc.Core;
 
 namespace EMMA.PluginHost.Plugins;
@@ -18,6 +19,7 @@ public sealed class PluginHandshakeService(
     PluginProcessManager processManager,
     PluginPermissionSanitizer permissionSanitizer,
     PluginEndpointAllocator endpointAllocator,
+    IWasmPluginRuntimeHost wasmRuntimeHost,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
@@ -27,6 +29,7 @@ public sealed class PluginHandshakeService(
     private readonly PluginProcessManager _processManager = processManager;
     private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
     private readonly PluginEndpointAllocator _endpointAllocator = endpointAllocator;
+    private readonly IWasmPluginRuntimeHost _wasmRuntimeHost = wasmRuntimeHost;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -65,7 +68,8 @@ public sealed class PluginHandshakeService(
     }
 
     /// <summary>
-    /// Reloads manifests and performs a handshake regardless of startup settings.
+    /// Reloads manifests and refreshes registry state.
+    /// When handshake-on-startup is enabled, this also performs startup and handshake.
     /// </summary>
     public async Task RescanAsync(CancellationToken cancellationToken)
     {
@@ -80,6 +84,30 @@ public sealed class PluginHandshakeService(
                 await _processManager.StopAsync(record.Manifest.Id, cancellationToken);
                 _registry.UpdateRuntime(record.Manifest, PluginRuntimeStatus.Stopped());
             }
+        }
+
+        foreach (var manifest in manifests)
+        {
+            var existing = snapshot.FirstOrDefault(record =>
+                string.Equals(record.Manifest.Id, manifest.Id, StringComparison.OrdinalIgnoreCase));
+
+            var resolved = manifest;
+            if (existing is not null
+                && string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(manifest.Endpoint)
+                && !string.IsNullOrWhiteSpace(existing.Manifest.Endpoint))
+            {
+                resolved = manifest with { Endpoint = existing.Manifest.Endpoint };
+            }
+
+            var updated = _endpointAllocator.EnsureEndpoint(resolved);
+            _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
+        }
+
+        if (!_options.HandshakeOnStartup)
+        {
+            _logger.LogInformation("Plugin handshake is disabled by configuration; rescan updated manifests without eager startup.");
+            return;
         }
 
         foreach (var manifest in manifests)
@@ -123,6 +151,23 @@ public sealed class PluginHandshakeService(
         if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
             return Failed("Missing protocol.");
+        }
+
+        if (_wasmRuntimeHost.IsWasmPlugin(manifest))
+        {
+            try
+            {
+                return await _wasmRuntimeHost.HandshakeAsync(manifest, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                if (_logger.IsEnabled(LogLevel.Warning))
+                {
+                    _logger.LogWarning(ex, "WASM component handshake failed for plugin {PluginId}", manifest.Id);
+                }
+
+                return Failed(ex.Message);
+            }
         }
 
         if (!string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))

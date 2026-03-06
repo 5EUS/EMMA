@@ -17,7 +17,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         await using var connection = _connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
-        var tagsJson = JsonSerializer.Serialize(media.Tags ?? Array.Empty<string>());
+        var tagsJson = JsonSerializer.Serialize(media.Tags ?? Array.Empty<string>(), StorageJsonContext.Default.IReadOnlyListString);
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -308,7 +308,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
     private static MediaMetadata ReadMedia(SqliteDataReader reader)
     {
         var tagsJson = reader.GetString(7);
-        var tags = JsonSerializer.Deserialize<IReadOnlyList<string>>(tagsJson)
+var tags = JsonSerializer.Deserialize(tagsJson, StorageJsonContext.Default.IReadOnlyListString)
             ?? Array.Empty<string>();
 
         return new MediaMetadata(

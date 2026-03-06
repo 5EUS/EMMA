@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EMMA.PluginHost\EMMA.PluginHost.csproj" />
+    <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
+    <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.provider.sqlite3" Version="2.1.10" />
+  </ItemGroup>
+
+</Project>

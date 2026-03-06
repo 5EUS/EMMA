@@ -1,16 +1,14 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Net;
-using System.Net.Http;
-using System.Net.Sockets;
 using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Globalization;
 using EMMA.Api;
 using EMMA.Application.Ports;
 using EMMA.Domain;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
+using EMMA.PluginHost.Library;
 
 namespace EMMA.Native;
 
@@ -22,32 +20,29 @@ public static class NativeExports
         public InMemoryMediaStore Store { get; } = store;
         public string? SelectedPluginId { get; set; }
     }
-    private sealed record PluginSummary(string Id, string Title);
+    private sealed record PluginSummary(string Id, string Title, string BuildType);
     private sealed record PluginPathConfiguration(string? ManifestsDirectory, string? PluginsDirectory);
-    private sealed record HostRuntimeConfiguration(string? ExecutablePath, string? BaseUrl, string? Mode);
 
     private static readonly ConcurrentDictionary<int, RuntimeState> States = new();
-    private static readonly HttpClient PluginHostClient = new();
-    private static readonly Lock PluginHostSync = new();
-    private static readonly string PluginHostModeInternal = "internal";
-    private static readonly string PluginHostModeExternal = "external";
-    private static readonly string PluginHostModeDisabled = "disabled";
+    private static readonly Lock PluginHostInitLock = new();
+    private static readonly Lock ErrorLock = new();
+    private static readonly NativeLogStore LogStore = new();
     private static int _nextHandle;
     private static PluginPathConfiguration _pluginPathConfiguration = new(null, null);
-    private static HostRuntimeConfiguration _hostRuntimeConfiguration = new(null, null, null);
-    private static Process? _managedPluginHostProcess;
+    private static bool _pluginHostInitialized = false;
 
-    [ThreadStatic]
+    // Don't use [ThreadStatic] - we need the error to be visible across threads for FFI
     private static string? _lastError;
 
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_start")]
     public static int RuntimeStart()
     {
         ClearLastError();
+        LogInfo("runtime", "RuntimeStart requested.");
 
         try
         {
-            EnsurePluginHostReady();
+            EnsurePluginHostInitialized();
 
             var store = new InMemoryMediaStore();
             IMediaSearchPort search = new InMemorySearchPort(store);
@@ -58,6 +53,7 @@ public static class NativeExports
 
             var handle = Interlocked.Increment(ref _nextHandle);
             States[handle] = new RuntimeState(runtime, store);
+            LogInfo("runtime", $"Runtime started. handle={handle}");
             return handle;
         }
         catch (Exception ex)
@@ -71,6 +67,7 @@ public static class NativeExports
     public static void RuntimeStop(int handle)
     {
         ClearLastError();
+        LogInfo("runtime", $"RuntimeStop requested. handle={handle}");
 
         try
         {
@@ -78,8 +75,11 @@ public static class NativeExports
 
             if (States.IsEmpty)
             {
-                StopManagedPluginHost();
+                // Optionally shutdown plugin host when all runtimes are stopped
+                ShutdownPluginHost();
             }
+
+            LogInfo("runtime", $"Runtime stopped. handle={handle}");
         }
         catch (Exception ex)
         {
@@ -148,9 +148,42 @@ public static class NativeExports
             var manifestsDirectory = PtrToString(manifestsDirUtf8);
             var pluginsDirectory = PtrToString(pluginsDirUtf8);
 
+            var previousConfiguration = _pluginPathConfiguration;
+
             _pluginPathConfiguration = new PluginPathConfiguration(
                 NormalizeConfiguredPath(manifestsDirectory),
                 NormalizeConfiguredPath(pluginsDirectory));
+
+            if (_pluginHostInitialized)
+            {
+                lock (PluginHostInitLock)
+                {
+                    if (_pluginHostInitialized)
+                    {
+                        var pathsChanged = !SameConfiguredPath(previousConfiguration.ManifestsDirectory, _pluginPathConfiguration.ManifestsDirectory)
+                            || !SameConfiguredPath(previousConfiguration.PluginsDirectory, _pluginPathConfiguration.PluginsDirectory);
+
+                        if (pathsChanged)
+                        {
+                            ShutdownPluginHost();
+                            EnsurePluginHostInitialized();
+                            LogInfo("plugin-host", "Plugin host reconfigured with updated manifests/plugins paths.");
+                        }
+                        else
+                        {
+                            var rescanCode = PluginHostExports.RescanManaged();
+                            if (rescanCode != 0)
+                            {
+                                var error = PluginHostExports.GetLastErrorManaged()
+                                    ?? $"Plugin host rescan failed with code {rescanCode}";
+                                throw new InvalidOperationException(error);
+                            }
+
+                            LogInfo("plugin-host", "Plugin host rescanned with existing manifests/plugins paths.");
+                        }
+                    }
+                }
+            }
 
             return 1;
         }
@@ -166,20 +199,9 @@ public static class NativeExports
     {
         ClearLastError();
 
-        try
-        {
-            _hostRuntimeConfiguration = new HostRuntimeConfiguration(
-                NormalizeConfiguredPath(PtrToString(executablePathUtf8)),
-                NormalizeConfiguredValue(PtrToString(baseUrlUtf8)),
-                NormalizeConfiguredValue(PtrToString(modeUtf8)));
-
-            return 1;
-        }
-        catch (Exception ex)
-        {
-            SetLastError(ex);
-            return 0;
-        }
+        // This method is deprecated - plugin host is now embedded in-process
+        // Configuration parameters are ignored
+        return 1;
     }
 
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_open_plugin")]
@@ -210,6 +232,7 @@ public static class NativeExports
             }
 
             state.SelectedPluginId = pluginId.Trim();
+            LogInfo("plugin", $"Opened plugin '{state.SelectedPluginId}' for handle={handle}");
 
             return 1;
         }
@@ -235,13 +258,12 @@ public static class NativeExports
 
             var query = PtrToString(queryUtf8) ?? string.Empty;
             var activePluginId = ResolveActivePluginId(state);
+            LogDebug("search", $"Search requested. handle={handle}, pluginId={activePluginId ?? "<none>"}, query='{query}'");
 
             IReadOnlyList<MediaSummary> results;
             if (!string.IsNullOrWhiteSpace(activePluginId))
             {
-                results = SearchViaPluginHost(activePluginId, query, CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
+                results = SearchViaEmbeddedPluginHost(activePluginId, query);
             }
             else
             {
@@ -252,6 +274,7 @@ public static class NativeExports
             }
 
             var json = BuildMediaJson(results);
+            LogDebug("search", $"Search completed. handle={handle}, count={results.Count}");
             return AllocUtf8(json);
         }
         catch (Exception ex)
@@ -264,12 +287,15 @@ public static class NativeExports
     [UnmanagedCallersOnly(EntryPoint = "emma_last_error")]
     public static IntPtr LastError()
     {
-        if (string.IsNullOrWhiteSpace(_lastError))
+        lock (ErrorLock)
         {
-            return IntPtr.Zero;
-        }
+            if (string.IsNullOrWhiteSpace(_lastError))
+            {
+                return IntPtr.Zero;
+            }
 
-        return AllocUtf8(_lastError);
+            return AllocUtf8(_lastError);
+        }
     }
 
     [UnmanagedCallersOnly(EntryPoint = "emma_string_free")]
@@ -283,19 +309,67 @@ public static class NativeExports
         Marshal.FreeCoTaskMem(value);
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_log_read_json")]
+    public static IntPtr LogReadJson(long afterSequence, int maxItems)
+    {
+        try
+        {
+            var entries = LogStore.ReadSince(afterSequence, maxItems);
+            return AllocUtf8(BuildLogsJson(entries));
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_log_latest_seq")]
+    public static long LogLatestSequence()
+    {
+        return LogStore.LatestSequence;
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_log_set_console_enabled")]
+    public static void LogSetConsoleEnabled(int enabled)
+    {
+        LogStore.SetConsoleEnabled(enabled != 0);
+        LogInfo("logging", $"Console logging {(enabled != 0 ? "enabled" : "disabled")}");
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_log_clear")]
+    public static void LogClear()
+    {
+        LogStore.Clear();
+        LogInfo("logging", "Log store cleared.");
+    }
+
     private static void ClearLastError()
     {
-        _lastError = null;
+        lock (ErrorLock)
+        {
+            _lastError = null;
+        }
     }
 
     private static void SetLastError(string message)
     {
-        _lastError = message;
+        lock (ErrorLock)
+        {
+            _lastError = message;
+        }
+
+        LogError("error", message);
     }
 
     private static void SetLastError(Exception ex)
     {
-        _lastError = ex.Message;
+        lock (ErrorLock)
+        {
+            _lastError = $"{ex.GetType().Name}: {ex.Message}";
+        }
+
+        LogError("exception", $"{ex.GetType().Name}: {ex.Message}");
     }
 
     private static IntPtr AllocUtf8(string value)
@@ -349,325 +423,194 @@ public static class NativeExports
         return selected;
     }
 
-    private static async Task<IReadOnlyList<MediaSummary>> SearchViaPluginHost(
-        string pluginId,
-        string query,
-        CancellationToken cancellationToken)
+    private static IReadOnlyList<MediaSummary> SearchViaEmbeddedPluginHost(string pluginId, string query)
     {
-        EnsurePluginHostReady();
-        var baseUri = GetPluginHostBaseUri();
+        EnsurePluginHostInitialized();
 
-        var builder = new UriBuilder(new Uri(baseUri, "/pipeline/paged/search"));
-        var escapedQuery = Uri.EscapeDataString(query ?? string.Empty);
-        var escapedPluginId = Uri.EscapeDataString(pluginId);
-        builder.Query = $"query={escapedQuery}&pluginId={escapedPluginId}";
-
-        const int maxAttempts = 3;
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        var json = PluginHostExports.SearchJsonManaged(pluginId, query);
+        if (json == null)
         {
-            using var response = await PluginHostClient.GetAsync(builder.Uri, cancellationToken);
-            if (response.IsSuccessStatusCode)
+            var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host search returned null";
+            throw new InvalidOperationException(error);
+        }
+
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var results = new List<MediaSummary>();
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            var id = GetMediaIdProperty(item);
+            if (string.IsNullOrWhiteSpace(id))
             {
-                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-
-                if (doc.RootElement.ValueKind != JsonValueKind.Array)
-                {
-                    return [];
-                }
-
-                var results = new List<MediaSummary>();
-                foreach (var item in doc.RootElement.EnumerateArray())
-                {
-                    var id = GetStringProperty(item, "id");
-                    if (string.IsNullOrWhiteSpace(id))
-                    {
-                        continue;
-                    }
-
-                    var source = GetStringProperty(item, "source") ?? string.Empty;
-                    var title = GetStringProperty(item, "title") ?? string.Empty;
-                    var mediaType = GetStringProperty(item, "mediaType");
-
-                    results.Add(new MediaSummary(
-                        MediaId.Create(id),
-                        source,
-                        title,
-                        string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
-                            ? MediaType.Video
-                            : MediaType.Paged));
-                }
-
-                return results;
-            }
-
-            if (attempt < maxAttempts
-                && (response.StatusCode == HttpStatusCode.InternalServerError
-                    || response.StatusCode == HttpStatusCode.BadGateway
-                    || response.StatusCode == HttpStatusCode.ServiceUnavailable
-                    || response.StatusCode == HttpStatusCode.GatewayTimeout))
-            {
-                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
-                EnsurePluginHostReady();
                 continue;
             }
 
-            var details = await response.Content.ReadAsStringAsync(cancellationToken);
-            if (!string.IsNullOrWhiteSpace(details))
-            {
-                throw new InvalidOperationException(details);
-            }
+            var source = GetStringProperty(item, "source")
+                ?? GetStringProperty(item, "sourceId")
+                ?? string.Empty;
+            var title = GetStringProperty(item, "title") ?? string.Empty;
+            var mediaType = GetStringProperty(item, "mediaType");
 
-            throw new InvalidOperationException(
-                $"Plugin host search failed with status {(int)response.StatusCode}.");
+            results.Add(new MediaSummary(
+                MediaId.Create(id),
+                source,
+                title,
+                string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
+                    ? MediaType.Video
+                    : MediaType.Paged));
         }
 
-        throw new InvalidOperationException("Plugin host search failed after retries.");
+        return results;
     }
 
-    private static void EnsurePluginHostReady()
+    private static string? GetMediaIdProperty(JsonElement element)
     {
-        var mode = GetPluginHostMode();
-        if (string.Equals(mode, PluginHostModeDisabled, StringComparison.OrdinalIgnoreCase))
+        var directId = GetStringProperty(element, "id")
+            ?? GetStringProperty(element, "mediaId");
+        if (!string.IsNullOrWhiteSpace(directId))
         {
-            return;
+            return directId;
         }
 
-        var baseUri = GetPluginHostBaseUri();
-
-        if (string.Equals(mode, PluginHostModeExternal, StringComparison.OrdinalIgnoreCase))
+        if (TryGetObjectProperty(element, "id", out var idObject))
         {
-            if (!IsPluginHostReachable(baseUri))
+            var nestedId = GetStringProperty(idObject, "value");
+            if (!string.IsNullOrWhiteSpace(nestedId))
             {
-                throw new InvalidOperationException(
-                    $"PluginHost external mode requires a running host at {baseUri}.");
-            }
-
-            return;
-        }
-
-        if (!string.Equals(mode, PluginHostModeInternal, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                $"Invalid EMMA_PLUGIN_HOST_MODE '{mode}'. Supported values: internal, external, disabled.");
-        }
-
-        if (IsPluginHostReachable(baseUri))
-        {
-            return;
-        }
-
-        lock (PluginHostSync)
-        {
-            if (IsPluginHostReachable(baseUri))
-            {
-                return;
-            }
-
-            if (_managedPluginHostProcess is not null && !_managedPluginHostProcess.HasExited)
-            {
-                if (WaitForPluginHost(baseUri, TimeSpan.FromSeconds(30)))
-                {
-                    return;
-                }
-            }
-
-            _managedPluginHostProcess = StartManagedPluginHostProcess(baseUri);
-
-            if (!WaitForPluginHost(baseUri, TimeSpan.FromSeconds(30)))
-            {
-                throw new InvalidOperationException(
-                    $"PluginHost did not become reachable at {baseUri}.");
+                return nestedId;
             }
         }
+
+        if (TryGetObjectProperty(element, "mediaId", out var mediaIdObject))
+        {
+            var nestedId = GetStringProperty(mediaIdObject, "value");
+            if (!string.IsNullOrWhiteSpace(nestedId))
+            {
+                return nestedId;
+            }
+        }
+
+        return null;
     }
 
-    private static void StopManagedPluginHost()
+    private static bool TryGetObjectProperty(JsonElement element, string propertyName, out JsonElement objectValue)
     {
-        lock (PluginHostSync)
+        if (element.TryGetProperty(propertyName, out var direct)
+            && direct.ValueKind == JsonValueKind.Object)
         {
-            if (_managedPluginHostProcess is null)
-            {
-                return;
-            }
-
-            try
-            {
-                if (!_managedPluginHostProcess.HasExited)
-                {
-                    _managedPluginHostProcess.Kill(entireProcessTree: true);
-                    _managedPluginHostProcess.WaitForExit(3000);
-                }
-            }
-            catch
-            {
-            }
-            finally
-            {
-                _managedPluginHostProcess.Dispose();
-                _managedPluginHostProcess = null;
-            }
-        }
-    }
-
-    private static Process StartManagedPluginHostProcess(Uri baseUri)
-    {
-        var startInfo = BuildPluginHostStartInfo(baseUri);
-
-        var process = new Process
-        {
-            StartInfo = startInfo,
-            EnableRaisingEvents = false
-        };
-
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start PluginHost process.");
+            objectValue = direct;
+            return true;
         }
 
-        return process;
-    }
-
-    private static ProcessStartInfo BuildPluginHostStartInfo(Uri baseUri)
-    {
-        var workingDirectory = Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_WORKING_DIR");
-        if (string.IsNullOrWhiteSpace(workingDirectory))
+        foreach (var candidate in element.EnumerateObject())
         {
-            workingDirectory = AppContext.BaseDirectory;
-        }
-
-        var urlsValue = $"http://{baseUri.Host}:{baseUri.Port}";
-        var manifestDirectory = ResolveManifestDirectory();
-        var sandboxDirectory = ResolvePluginSandboxDirectory();
-
-        var explicitExecutable = _hostRuntimeConfiguration.ExecutablePath
-            ?? Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_EXECUTABLE");
-        if (!string.IsNullOrWhiteSpace(explicitExecutable))
-        {
-            if (!Path.IsPathRooted(explicitExecutable))
+            if (!string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase)
+                || candidate.Value.ValueKind != JsonValueKind.Object)
             {
-                throw new InvalidOperationException(
-                    "EMMA_PLUGIN_HOST_EXECUTABLE must be an absolute path in internal mode.");
+                continue;
             }
 
-            if (!File.Exists(explicitExecutable))
-            {
-                throw new InvalidOperationException(
-                    $"PluginHost executable not found: {explicitExecutable}");
-            }
-
-            if (explicitExecutable.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-            {
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = Quote(explicitExecutable),
-                    WorkingDirectory = workingDirectory,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = false,
-                    RedirectStandardError = false
-                };
-
-                ApplyPluginHostEnvironment(startInfo, urlsValue, manifestDirectory, sandboxDirectory);
-                return startInfo;
-            }
-
-            var execInfo = new ProcessStartInfo
-            {
-                FileName = explicitExecutable,
-                WorkingDirectory = workingDirectory,
-                UseShellExecute = false,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false
-            };
-
-            ApplyPluginHostEnvironment(execInfo, urlsValue, manifestDirectory, sandboxDirectory);
-            return execInfo;
+            objectValue = candidate.Value;
+            return true;
         }
 
-        throw new InvalidOperationException(
-            "PluginHost internal mode requires EMMA_PLUGIN_HOST_EXECUTABLE to point to a published PluginHost binary.");
-    }
-
-    private static void ApplyPluginHostEnvironment(
-        ProcessStartInfo startInfo,
-        string urlsValue,
-        string? manifestDirectory,
-        string? sandboxDirectory)
-    {
-        startInfo.Environment["ASPNETCORE_URLS"] = urlsValue;
-
-        if (!string.IsNullOrWhiteSpace(manifestDirectory))
-        {
-            startInfo.Environment["PluginHost__ManifestDirectory"] = manifestDirectory;
-        }
-
-        if (!string.IsNullOrWhiteSpace(sandboxDirectory))
-        {
-            startInfo.Environment["PluginHost__SandboxRootDirectory"] = sandboxDirectory;
-        }
-
-        startInfo.Environment["PluginHost__HandshakeOnStartup"] = "false";
-    }
-
-    private static bool WaitForPluginHost(Uri baseUri, TimeSpan timeout)
-    {
-        var startedAt = DateTime.UtcNow;
-        while (DateTime.UtcNow - startedAt < timeout)
-        {
-            if (IsPluginHostReachable(baseUri))
-            {
-                return true;
-            }
-
-            Thread.Sleep(200);
-        }
-
+        objectValue = default;
         return false;
     }
 
-    private static bool IsPluginHostReachable(Uri baseUri)
+    private static void EnsurePluginHostInitialized()
     {
-        try
+        if (_pluginHostInitialized)
         {
-            using var tcp = new TcpClient();
-            var connectTask = tcp.ConnectAsync(baseUri.Host, baseUri.Port);
-            var completed = connectTask.Wait(TimeSpan.FromMilliseconds(300));
-            return completed && tcp.Connected;
+            return;
         }
-        catch
+
+        lock (PluginHostInitLock)
         {
-            return false;
+            if (_pluginHostInitialized)
+            {
+                return;
+            }
+
+            var manifestDirectory = ResolveManifestDirectory() ?? string.Empty;
+            var sandboxDirectory = ResolvePluginSandboxDirectory() ?? string.Empty;
+
+            var resultCode = PluginHostExports.InitializeManaged(manifestDirectory, sandboxDirectory);
+
+            if (resultCode != 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() 
+                    ?? $"Plugin host initialization failed with code {resultCode}";
+                throw new InvalidOperationException(error);
+            }
+
+            _pluginHostInitialized = true;
+            LogInfo("plugin-host", "Embedded plugin host initialized.");
         }
     }
 
-    private static Uri GetPluginHostBaseUri()
+    private static void ShutdownPluginHost()
     {
-        var baseUrl = _hostRuntimeConfiguration.BaseUrl
-            ?? Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_BASE_URL");
-        if (string.IsNullOrWhiteSpace(baseUrl))
+        lock (PluginHostInitLock)
         {
-            baseUrl = "http://127.0.0.1:5223";
-        }
+            if (!_pluginHostInitialized)
+            {
+                return;
+            }
 
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
-        {
-            throw new InvalidOperationException("Invalid EMMA_PLUGIN_HOST_BASE_URL value.");
+            PluginHostExports.ShutdownManaged();
+            _pluginHostInitialized = false;
+            LogInfo("plugin-host", "Embedded plugin host shutdown.");
         }
-
-        return baseUri;
     }
 
-    private static string GetPluginHostMode()
+    private static string BuildLogsJson(IReadOnlyList<NativeLogEntry> entries)
     {
-        var configured = _hostRuntimeConfiguration.Mode
-            ?? Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_MODE");
-        if (string.IsNullOrWhiteSpace(configured))
+        var sb = new StringBuilder();
+        sb.Append('[');
+
+        for (var i = 0; i < entries.Count; i++)
         {
-            return PluginHostModeInternal;
+            var item = entries[i];
+            if (i > 0)
+            {
+                sb.Append(',');
+            }
+
+            sb.Append('{');
+            AppendJsonNumberProperty(sb, "seq", item.Sequence);
+            sb.Append(',');
+            AppendJsonProperty(sb, "ts", item.TimestampUtc.ToString("O", CultureInfo.InvariantCulture));
+            sb.Append(',');
+            AppendJsonProperty(sb, "level", item.Level.ToString());
+            sb.Append(',');
+            AppendJsonProperty(sb, "category", item.Category);
+            sb.Append(',');
+            AppendJsonProperty(sb, "message", item.Message);
+            sb.Append('}');
         }
 
-        return configured.Trim().ToLowerInvariant();
+        sb.Append(']');
+        return sb.ToString();
+    }
+
+    private static void LogDebug(string category, string message)
+    {
+        LogStore.Write(NativeLogLevel.Debug, category, message);
+    }
+
+    private static void LogInfo(string category, string message)
+    {
+        LogStore.Write(NativeLogLevel.Information, category, message);
+    }
+
+    private static void LogError(string category, string message)
+    {
+        LogStore.Write(NativeLogLevel.Error, category, message);
     }
 
     private static string? ResolveManifestDirectory()
@@ -714,11 +657,6 @@ public static class NativeExports
         return null;
     }
 
-    private static string Quote(string value)
-    {
-        return '"' + value.Replace("\"", "\\\"") + '"';
-    }
-
     private static string BuildPluginsJson(IReadOnlyList<PluginSummary> plugins)
     {
         var sb = new StringBuilder();
@@ -736,6 +674,8 @@ public static class NativeExports
             AppendJsonProperty(sb, "id", plugin.Id);
             sb.Append(',');
             AppendJsonProperty(sb, "title", plugin.Title);
+            sb.Append(',');
+            AppendJsonProperty(sb, "buildType", plugin.BuildType);
             sb.Append('}');
         }
 
@@ -772,7 +712,8 @@ public static class NativeExports
                     continue;
                 }
 
-                byId[summary.Id] = summary;
+                var buildType = ResolvePluginBuildType(summary.Id);
+                byId[summary.Id] = summary with { BuildType = buildType };
             }
         }
 
@@ -801,7 +742,7 @@ public static class NativeExports
                     continue;
                 }
 
-                byId[id] = new PluginSummary(id, id);
+                byId[id] = new PluginSummary(id, id, ResolvePluginBuildType(id));
             }
         }
 
@@ -828,7 +769,7 @@ public static class NativeExports
                         ?? GetStringProperty(root, "title")
                         ?? id;
 
-            return new PluginSummary(id, title);
+            return new PluginSummary(id, title, "csharp");
         }
         catch
         {
@@ -836,16 +777,80 @@ public static class NativeExports
         }
     }
 
-    private static string? GetStringProperty(JsonElement element, string propertyName)
+    private static string ResolvePluginBuildType(string pluginId)
     {
-        if (!element.TryGetProperty(propertyName, out var property)
-            || property.ValueKind != JsonValueKind.String)
+        if (string.IsNullOrWhiteSpace(pluginId))
         {
-            return null;
+            return "csharp";
         }
 
-        var value = property.GetString();
-        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        foreach (var pluginsDirectory in GetPluginDirectories())
+        {
+            if (string.IsNullOrWhiteSpace(pluginsDirectory) || !Directory.Exists(pluginsDirectory))
+            {
+                continue;
+            }
+
+            var pluginRoot = Path.Combine(pluginsDirectory, pluginId);
+            if (!Directory.Exists(pluginRoot))
+            {
+                continue;
+            }
+
+            if (ContainsWasmArtifacts(pluginRoot))
+            {
+                return "wasm";
+            }
+        }
+
+        return "csharp";
+    }
+
+    private static bool ContainsWasmArtifacts(string pluginRoot)
+    {
+        static bool Exists(string path) => File.Exists(path);
+
+        if (Exists(Path.Combine(pluginRoot, "plugin.wasm"))
+            || Exists(Path.Combine(pluginRoot, "plugin.cwasm"))
+            || Exists(Path.Combine(pluginRoot, "wasm", "plugin.wasm"))
+            || Exists(Path.Combine(pluginRoot, "wasm", "plugin.cwasm")))
+        {
+            return true;
+        }
+
+        try
+        {
+            return Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.AllDirectories).Any()
+                || Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.AllDirectories).Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? GetStringProperty(JsonElement element, string propertyName)
+    {
+        if (element.TryGetProperty(propertyName, out var property)
+            && property.ValueKind == JsonValueKind.String)
+        {
+            var directValue = property.GetString();
+            return string.IsNullOrWhiteSpace(directValue) ? null : directValue.Trim();
+        }
+
+        foreach (var candidate in element.EnumerateObject())
+        {
+            if (!string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase)
+                || candidate.Value.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var matchedValue = candidate.Value.GetString();
+            return string.IsNullOrWhiteSpace(matchedValue) ? null : matchedValue.Trim();
+        }
+
+        return null;
     }
 
     private static IEnumerable<string> GetManifestDirectories()
@@ -894,6 +899,17 @@ public static class NativeExports
 
         AddIfNotEmpty(set, Environment.GetEnvironmentVariable("EMMA_APP_SUPPORT_DIR"));
 
+        if (OperatingSystem.IsLinux())
+        {
+            AddIfNotEmpty(set, Environment.GetEnvironmentVariable("XDG_DATA_HOME"));
+
+            var homeEnv = Environment.GetEnvironmentVariable("HOME");
+            if (!string.IsNullOrWhiteSpace(homeEnv))
+            {
+                AddIfNotEmpty(set, Path.Combine(homeEnv, ".local", "share"));
+            }
+        }
+
         var home = Environment.GetFolderPath(Environment.SpecialFolder.Personal);
         if (!string.IsNullOrWhiteSpace(home))
         {
@@ -940,11 +956,27 @@ public static class NativeExports
         return value.Trim();
     }
 
+    private static bool SameConfiguredPath(string? left, string? right)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        return string.Equals(left, right, comparison);
+    }
+
     private static void AppendJsonProperty(StringBuilder sb, string name, string value)
     {
         AppendJsonString(sb, name);
         sb.Append(':');
         AppendJsonString(sb, value);
+    }
+
+    private static void AppendJsonNumberProperty(StringBuilder sb, string name, long value)
+    {
+        AppendJsonString(sb, name);
+        sb.Append(':');
+        sb.Append(value.ToString(CultureInfo.InvariantCulture));
     }
 
     private static void AppendJsonString(StringBuilder sb, string value)

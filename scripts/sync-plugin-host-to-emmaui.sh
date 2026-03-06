@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "================================================================================"
+echo "WARNING: This script is DEPRECATED"
+echo "================================================================================"
+echo ""
+echo "EMMA.PluginHost is now embedded in EMMA.Native as a static library."
+echo "Use ./scripts/sync-native-aot-to-emmaui.sh instead."
+echo ""
+echo "The PluginHost functionality is provided by EMMA.PluginHost.Library,"
+echo "which is compiled into libemma_native.a (or emma_native.lib on Windows)."
+echo "There is no separate PluginHost binary to sync."
+echo ""
+echo "This script is kept for backwards compatibility but does nothing useful."
+echo "================================================================================"
+exit 1
+
+# Legacy code below (no longer used)
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RID="${1:-}"
 HOST_OUTPUT_DIR="${2:-}"
@@ -69,6 +86,10 @@ case "$RID" in
     ;;
   linux-*)
     DEST_DIRS+=("$EMMAUI_DIR/linux/runner")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/debug/bundle")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/debug/intermediates_do_not_run")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/release/bundle")
+    DEST_DIRS+=("$EMMAUI_DIR/build/linux/x64/release/intermediates_do_not_run")
     ;;
 esac
 

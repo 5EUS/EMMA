@@ -22,4 +22,5 @@ public sealed class PluginHostOptions
     public int PluginLogMaxLines { get; init; } = 200;
     public int PluginIdleTimeoutSeconds { get; init; } = 120;
     public int PluginIdleSweepSeconds { get; init; } = 30;
+    public int WasmOperationTimeoutSeconds { get; init; } = 15;
 }
