@@ -54,8 +54,7 @@ public static class PluginHostExports
                     return 0; // Already initialized
                 }
 
-                // Initialize SQLite native library for NativeAOT
-                SQLitePCL.Batteries_V2.Init();
+                InitializeSqliteForEmbeddedHost();
 
                 var services = new ServiceCollection();
 
@@ -201,6 +200,27 @@ public static class PluginHostExports
         {
             SetLastError(ex);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Reload plugin manifests and refresh runtime/handshake state without recreating the host.
+    /// Returns 0 on success, non-zero on failure.
+    /// </summary>
+    public static int RescanManaged()
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            _handshake!.RescanAsync(CancellationToken.None).GetAwaiter().GetResult();
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return -1;
         }
     }
 
@@ -388,6 +408,25 @@ public static class PluginHostExports
         {
             throw new InvalidOperationException("Plugin host not initialized. Call InitializeManaged first.");
         }
+    }
+
+    private static void InitializeSqliteForEmbeddedHost()
+    {
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                SQLitePCL.raw.SetProvider(new SQLitePCL.SQLite3Provider_sqlite3());
+                SQLitePCL.raw.FreezeProvider();
+                return;
+            }
+            catch
+            {
+                // Fall back to bundled provider if dynamic provider is unavailable.
+            }
+        }
+
+        SQLitePCL.Batteries_V2.Init();
     }
 
     private static string? PtrToString(IntPtr ptr)

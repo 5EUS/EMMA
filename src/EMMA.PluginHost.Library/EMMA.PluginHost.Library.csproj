@@ -13,4 +13,8 @@
     <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.provider.sqlite3" Version="2.1.10" />
+  </ItemGroup>
+
 </Project>
