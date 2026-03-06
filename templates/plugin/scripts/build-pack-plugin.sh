@@ -119,15 +119,14 @@ PLIST
     APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
     ENTRYPOINT_NAME="$APP_BUNDLE_NAME"
 
-    mkdir -p "$PLUGIN_OUT_DIR/linux"
-    cp -R "$PUBLISH_DIR"/. "$PLUGIN_OUT_DIR/linux/"
-    if [[ -f "$PLUGIN_OUT_DIR/linux/$APP_EXECUTABLE" && "$APP_EXECUTABLE" != "$ENTRYPOINT_NAME" ]]; then
-      cp "$PLUGIN_OUT_DIR/linux/$APP_EXECUTABLE" "$PLUGIN_OUT_DIR/linux/$ENTRYPOINT_NAME"
+    cp -R "$PUBLISH_DIR"/. "$PLUGIN_OUT_DIR/"
+    if [[ -f "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" && "$APP_EXECUTABLE" != "$ENTRYPOINT_NAME" ]]; then
+      cp "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME"
     fi
 
-    chmod +x "$PLUGIN_OUT_DIR/linux/$APP_EXECUTABLE" || true
-    chmod +x "$PLUGIN_OUT_DIR/linux/$ENTRYPOINT_NAME" || true
-    find "$PLUGIN_OUT_DIR/linux" -maxdepth 1 -type f -name "*.so" -exec chmod +x {} \; || true
+    chmod +x "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" || true
+    chmod +x "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME" || true
+    find "$PLUGIN_OUT_DIR" -maxdepth 1 -type f -name "*.so" -exec chmod +x {} \; || true
   elif [[ "$TARGET" == wasm* ]]; then
     if [[ ! -f "$WASM_MODULE_PATH" ]]; then
       echo "WASM component not found: $WASM_MODULE_PATH" >&2
