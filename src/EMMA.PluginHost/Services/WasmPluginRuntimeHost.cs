@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using EMMA.Domain;
 using EMMA.PluginHost.Plugins;
@@ -36,6 +37,11 @@ public sealed class WasmPluginRuntimeHost(
     private readonly IPluginEntrypointResolver _entrypointResolver = entrypointResolver;
     private readonly IWasmComponentInvoker _invoker = invoker;
     private readonly ILogger<WasmPluginRuntimeHost> _logger = logger;
+    private readonly ConcurrentDictionary<string, BridgePayloadCacheEntry> _bridgePayloadCache = new();
+
+    private static readonly TimeSpan BridgePayloadCacheTtl = TimeSpan.FromMinutes(2);
+
+    private readonly record struct BridgePayloadCacheEntry(string Payload, DateTimeOffset FetchedAtUtc);
 
     public bool IsWasmPlugin(PluginManifest manifest)
     {
@@ -182,8 +188,7 @@ public sealed class WasmPluginRuntimeHost(
         var page = DeserializeJson<WasmPageItem>(pageJson);
         if (page is null || !Uri.TryCreate(page.ContentUri, UriKind.Absolute, out var contentUri))
         {
-            throw new KeyNotFoundException(
-                $"WASM page {pageIndex} not found for chapter {chapterId} and media {mediaId.Value}.");
+            throw new KeyNotFoundException($"PAGE_NOT_FOUND:{chapterId}:{pageIndex}");
         }
 
         return new MediaPage(page.Id, page.Index, contentUri);
@@ -346,6 +351,17 @@ public sealed class WasmPluginRuntimeHost(
         var requestUri = ResolveBridgeRequestUri(manifest, resolvedUrl);
         var baseAddress = new Uri(requestUri.GetLeftPart(UriPartial.Authority));
         var requestTarget = requestUri.PathAndQuery + requestUri.Fragment;
+        var cacheKey = $"{method}:{requestUri}";
+
+        if (method == HttpMethod.Get)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (_bridgePayloadCache.TryGetValue(cacheKey, out var cached)
+                && now - cached.FetchedAtUtc <= BridgePayloadCacheTtl)
+            {
+                return cached.Payload;
+            }
+        }
 
         EnsureHostIsAllowed(manifest, requestUri);
 
@@ -358,7 +374,15 @@ public sealed class WasmPluginRuntimeHost(
                 using var response = await client.SendAsync(request, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
-                    return await response.Content.ReadAsStringAsync(cancellationToken);
+                    var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+                    if (method == HttpMethod.Get && !string.IsNullOrWhiteSpace(payload))
+                    {
+                        _bridgePayloadCache[cacheKey] = new BridgePayloadCacheEntry(
+                            payload,
+                            DateTimeOffset.UtcNow);
+                    }
+
+                    return payload;
                 }
 
                 var body = await response.Content.ReadAsStringAsync(cancellationToken);

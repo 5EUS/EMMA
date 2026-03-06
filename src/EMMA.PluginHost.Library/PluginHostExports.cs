@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -14,6 +15,7 @@ using Grpc.Net.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using EMMA.Domain;
 
 namespace EMMA.PluginHost.Library;
 
@@ -31,6 +33,8 @@ public static class PluginHostExports
     private static bool _initialized = false;
     private static readonly object _initLock = new();
     private static readonly object _errorLock = new();
+    private static readonly ConcurrentDictionary<string, GrpcChannel> _grpcChannelCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, MediaPage> _pageCache = new(StringComparer.Ordinal);
 
     // Don't use [ThreadStatic] - we need the error to be visible across threads for FFI
     private static string? _lastError;
@@ -170,6 +174,12 @@ public static class PluginHostExports
             _handshake = null;
             _pluginResolution = null;
             _wasmRuntime = null;
+            foreach (var pair in _grpcChannelCache)
+            {
+                pair.Value.Dispose();
+            }
+            _grpcChannelCache.Clear();
+            _pageCache.Clear();
             _initialized = false;
         }
     }
@@ -304,7 +314,7 @@ public static class PluginHostExports
                     return null;
                 }
 
-                using var channel = GrpcChannel.ForAddress(address);
+                var channel = GetOrCreateChannel(address);
 
                 var correlationId = Guid.NewGuid().ToString("n");
                 var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
@@ -333,6 +343,149 @@ public static class PluginHostExports
             }
 
             return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? GetChaptersJsonManaged(string pluginId, string mediaId)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return null;
+            }
+
+            if (!TryResolvePlugin(pluginId, out var record, out var address))
+            {
+                return null;
+            }
+
+            IReadOnlyList<MediaChapter> chapters;
+            if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+            {
+                chapters = _wasmRuntime.GetChaptersAsync(record, MediaId.Create(mediaId), CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            else
+            {
+                if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+                {
+                    SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+                    return null;
+                }
+
+                if (address is null)
+                {
+                    SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+                    return null;
+                }
+
+                var channel = GetOrCreateChannel(address);
+                var client = new PluginContracts.PageProvider.PageProviderClient(channel);
+                var correlationId = Guid.NewGuid().ToString("n");
+                var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+                var response = client.GetChaptersAsync(new PluginContracts.ChaptersRequest
+                {
+                    MediaId = mediaId,
+                    Context = new PluginContracts.RequestContext
+                    {
+                        CorrelationId = correlationId,
+                        DeadlineUtc = deadlineUtc.ToString("O")
+                    }
+                }, cancellationToken: CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                chapters = response.Chapters
+                    .Select(chapter => new MediaChapter(
+                        chapter.Id ?? string.Empty,
+                        chapter.Number,
+                        chapter.Title ?? string.Empty))
+                    .ToList();
+            }
+
+            return JsonSerializer.Serialize(chapters, PluginHostExportsJsonContext.Default.IReadOnlyListMediaChapter);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? GetPageJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+            {
+                SetLastError("Media ID and chapter ID are required");
+                return null;
+            }
+
+            if (pageIndex < 0)
+            {
+                SetLastError("Page index must be >= 0");
+                return null;
+            }
+
+            var page = GetPageManagedInternal(pluginId, mediaId, chapterId, pageIndex);
+            if (page is null)
+            {
+                return null;
+            }
+
+            return JsonSerializer.Serialize(page, PluginHostExportsJsonContext.Default.MediaPage);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? GetPageAssetJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
+    {
+        ClearLastError();
+
+        try
+        {
+            var page = GetPageManagedInternal(pluginId, mediaId, chapterId, pageIndex);
+            if (page is null)
+            {
+                return null;
+            }
+
+            EnsureInitialized();
+            var cache = _serviceProvider!.GetService<IPageAssetCachePort>();
+            var fetcher = _serviceProvider!.GetService<IPageAssetFetcherPort>();
+            if (fetcher is null)
+            {
+                SetLastError("Page asset fetcher is not configured.");
+                return null;
+            }
+
+            var cacheKey = $"page-asset:{page.ContentUri}";
+            var cached = cache?.GetAsync(cacheKey, CancellationToken.None).GetAwaiter().GetResult();
+            var asset = cached ?? fetcher.FetchAsync(page.ContentUri, CancellationToken.None).GetAwaiter().GetResult();
+
+            if (cache is not null && cached is null)
+            {
+                cache.SetAsync(cacheKey, asset, CancellationToken.None).GetAwaiter().GetResult();
+            }
+
+            return JsonSerializer.Serialize(asset, PluginHostExportsJsonContext.Default.MediaPageAsset);
         }
         catch (Exception ex)
         {
@@ -408,6 +561,163 @@ public static class PluginHostExports
         {
             throw new InvalidOperationException("Plugin host not initialized. Call InitializeManaged first.");
         }
+    }
+
+    private static MediaPage? GetPageManagedInternal(string pluginId, string mediaId, string chapterId, int pageIndex)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+        {
+            SetLastError("Media ID and chapter ID are required");
+            return null;
+        }
+
+        if (pageIndex < 0)
+        {
+            SetLastError("Page index must be >= 0");
+            return null;
+        }
+
+        if (!TryResolvePlugin(pluginId, out var record, out var address))
+        {
+            return null;
+        }
+
+        var pageCacheKey = BuildPageCacheKey(record!.Manifest.Id, mediaId, chapterId, pageIndex);
+        if (_pageCache.TryGetValue(pageCacheKey, out var cachedPage))
+        {
+            return cachedPage;
+        }
+
+        if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+        {
+            try
+            {
+                var wasmPage = _wasmRuntime.GetPageAsync(record, MediaId.Create(mediaId), chapterId, pageIndex, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                _pageCache[pageCacheKey] = wasmPage;
+                return wasmPage;
+            }
+            catch (KeyNotFoundException ex) when (ex.Message.StartsWith("PAGE_NOT_FOUND:", StringComparison.Ordinal))
+            {
+                SetLastError(ex.Message);
+                return null;
+            }
+        }
+
+        if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        {
+            SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+            return null;
+        }
+
+        if (address is null)
+        {
+            SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+            return null;
+        }
+
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.PageProvider.PageProviderClient(channel);
+        var correlationId = Guid.NewGuid().ToString("n");
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        var response = client.GetPageAsync(new PluginContracts.PageRequest
+        {
+            MediaId = mediaId,
+            ChapterId = chapterId,
+            Index = pageIndex,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        }, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        var page = response.Page;
+        if (page is null || string.IsNullOrWhiteSpace(page.ContentUri))
+        {
+            SetLastError($"PAGE_NOT_FOUND:{chapterId}:{pageIndex}");
+            return null;
+        }
+
+        if (!Uri.TryCreate(page.ContentUri, UriKind.Absolute, out var contentUri))
+        {
+            SetLastError("Plugin returned an invalid page content URI.");
+            return null;
+        }
+
+        var resolvedPage = new MediaPage(page.Id ?? string.Empty, page.Index, contentUri);
+        _pageCache[pageCacheKey] = resolvedPage;
+        return resolvedPage;
+    }
+
+    private static string BuildPageCacheKey(string pluginId, string mediaId, string chapterId, int pageIndex)
+    {
+        return $"{pluginId}\u001f{mediaId}\u001f{chapterId}\u001f{pageIndex}";
+    }
+
+    private static GrpcChannel GetOrCreateChannel(Uri address)
+    {
+        return _grpcChannelCache.GetOrAdd(address.ToString(), _ => GrpcChannel.ForAddress(address));
+    }
+
+    private static bool TryResolvePlugin(string pluginId, out PluginRecord? record, out Uri? address)
+    {
+        record = null;
+        address = null;
+
+        EnsureInitialized();
+
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            SetLastError("Plugin ID is required");
+            return false;
+        }
+
+        var resolution = _pluginResolution!
+            .ResolveAsync(pluginId, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        record = resolution.Record;
+        if (record == null)
+        {
+            var snapshotRecord = _registry!
+                .GetSnapshot()
+                .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+            if (snapshotRecord is not null)
+            {
+                SetLastError(
+                    $"Plugin '{pluginId}' resolution failed before record binding. " +
+                    $"runtimeState={snapshotRecord.Runtime.State}, " +
+                    $"runtimeCode={snapshotRecord.Runtime.LastErrorCode ?? "none"}, " +
+                    $"runtimeMessage={snapshotRecord.Runtime.LastErrorMessage ?? "none"}, " +
+                    $"handshakeSuccess={snapshotRecord.Status.Success}, " +
+                    $"handshakeMessage={snapshotRecord.Status.Message}");
+                return false;
+            }
+
+            SetLastError($"Plugin '{pluginId}' not found");
+            return false;
+        }
+
+        if (resolution.Error is not null)
+        {
+            SetLastError(
+                $"Plugin resolution failed for '{pluginId}'. " +
+                $"runtimeState={record.Runtime.State}, " +
+                $"runtimeCode={record.Runtime.LastErrorCode ?? "none"}, " +
+                $"runtimeMessage={record.Runtime.LastErrorMessage ?? "none"}, " +
+                $"handshakeSuccess={record.Status.Success}, " +
+                $"handshakeMessage={record.Status.Message}");
+            return false;
+        }
+
+        address = resolution.Address;
+        return true;
     }
 
     private static void InitializeSqliteForEmbeddedHost()

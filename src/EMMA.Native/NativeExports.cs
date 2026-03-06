@@ -284,6 +284,176 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_chapters_json")]
+    public static IntPtr RuntimeGetChaptersJson(int handle, IntPtr mediaIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return IntPtr.Zero;
+            }
+
+            IReadOnlyList<MediaChapter> chapters;
+            var activePluginId = ResolveActivePluginId(state);
+            if (!string.IsNullOrWhiteSpace(activePluginId))
+            {
+                var json = PluginHostExports.GetChaptersJsonManaged(activePluginId, mediaIdValue);
+                if (json == null)
+                {
+                    var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host chapters call returned null";
+                    throw new InvalidOperationException(error);
+                }
+
+                return AllocUtf8(json);
+            }
+
+            chapters = state.Runtime.Pipeline
+                .GetChaptersAsync(MediaId.Create(mediaIdValue), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return AllocUtf8(BuildChaptersJson(chapters));
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_page_json")]
+    public static IntPtr RuntimeGetPageJson(int handle, IntPtr mediaIdUtf8, IntPtr chapterIdUtf8, int pageIndex)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            var chapterId = PtrToString(chapterIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue) || string.IsNullOrWhiteSpace(chapterId))
+            {
+                SetLastError("mediaId and chapterId are required.");
+                return IntPtr.Zero;
+            }
+
+            if (pageIndex < 0)
+            {
+                SetLastError("pageIndex must be >= 0.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            if (!string.IsNullOrWhiteSpace(activePluginId))
+            {
+                var json = PluginHostExports.GetPageJsonManaged(activePluginId, mediaIdValue, chapterId, pageIndex);
+                if (json == null)
+                {
+                    var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host page call returned null";
+                    if (IsExpectedPageProbeMiss(error))
+                    {
+                        SetLastErrorSilently(error);
+                    }
+                    else
+                    {
+                        SetLastError(error);
+                    }
+                    return IntPtr.Zero;
+                }
+
+                return AllocUtf8(json);
+            }
+
+            var page = state.Runtime.Pipeline
+                .GetPageAsync(MediaId.Create(mediaIdValue), chapterId, pageIndex, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return AllocUtf8(BuildPageJson(page));
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_page_asset_json")]
+    public static IntPtr RuntimeGetPageAssetJson(int handle, IntPtr mediaIdUtf8, IntPtr chapterIdUtf8, int pageIndex)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            var chapterId = PtrToString(chapterIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue) || string.IsNullOrWhiteSpace(chapterId))
+            {
+                SetLastError("mediaId and chapterId are required.");
+                return IntPtr.Zero;
+            }
+
+            if (pageIndex < 0)
+            {
+                SetLastError("pageIndex must be >= 0.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            if (!string.IsNullOrWhiteSpace(activePluginId))
+            {
+                var json = PluginHostExports.GetPageAssetJsonManaged(activePluginId, mediaIdValue, chapterId, pageIndex);
+                if (json == null)
+                {
+                    var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host page asset call returned null";
+                    SetLastError(error);
+                    return IntPtr.Zero;
+                }
+
+                return AllocUtf8(json);
+            }
+
+            var page = state.Runtime.Pipeline
+                .GetPageAsync(MediaId.Create(mediaIdValue), chapterId, pageIndex, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var asset = state.Runtime.Pipeline
+                .GetPageAssetAsync(page, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return AllocUtf8(BuildPageAssetJson(asset));
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_last_error")]
     public static IntPtr LastError()
     {
@@ -372,6 +542,25 @@ public static class NativeExports
         LogError("exception", $"{ex.GetType().Name}: {ex.Message}");
     }
 
+    private static void SetLastErrorSilently(string message)
+    {
+        lock (ErrorLock)
+        {
+            _lastError = message;
+        }
+    }
+
+    private static bool IsExpectedPageProbeMiss(string error)
+    {
+        if (string.IsNullOrWhiteSpace(error))
+        {
+            return false;
+        }
+
+        return error.StartsWith("PAGE_NOT_FOUND:", StringComparison.Ordinal)
+            || string.Equals(error, "Plugin returned an invalid page content URI.", StringComparison.Ordinal);
+    }
+
     private static IntPtr AllocUtf8(string value)
     {
         return Marshal.StringToCoTaskMemUTF8(value);
@@ -407,6 +596,58 @@ public static class NativeExports
         }
 
         sb.Append(']');
+        return sb.ToString();
+    }
+
+    private static string BuildChaptersJson(IReadOnlyList<MediaChapter> chapters)
+    {
+        var sb = new StringBuilder();
+        sb.Append('[');
+
+        for (var i = 0; i < chapters.Count; i++)
+        {
+            var item = chapters[i];
+            if (i > 0)
+            {
+                sb.Append(',');
+            }
+
+            sb.Append('{');
+            AppendJsonProperty(sb, "id", item.ChapterId ?? string.Empty);
+            sb.Append(',');
+            AppendJsonNumberProperty(sb, "number", item.Number);
+            sb.Append(',');
+            AppendJsonProperty(sb, "title", item.Title ?? string.Empty);
+            sb.Append('}');
+        }
+
+        sb.Append(']');
+        return sb.ToString();
+    }
+
+    private static string BuildPageJson(MediaPage page)
+    {
+        var sb = new StringBuilder();
+        sb.Append('{');
+        AppendJsonProperty(sb, "id", page.PageId ?? string.Empty);
+        sb.Append(',');
+        AppendJsonNumberProperty(sb, "index", page.Index);
+        sb.Append(',');
+        AppendJsonProperty(sb, "contentUri", page.ContentUri.ToString());
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    private static string BuildPageAssetJson(MediaPageAsset asset)
+    {
+        var sb = new StringBuilder();
+        sb.Append('{');
+        AppendJsonProperty(sb, "contentType", asset.ContentType ?? "application/octet-stream");
+        sb.Append(',');
+        AppendJsonProperty(sb, "payload", Convert.ToBase64String(asset.Payload ?? Array.Empty<byte>()));
+        sb.Append(',');
+        AppendJsonProperty(sb, "fetchedAtUtc", asset.FetchedAtUtc.ToString("O", CultureInfo.InvariantCulture));
+        sb.Append('}');
         return sb.ToString();
     }
 

@@ -99,7 +99,15 @@ fn invoke_component(
     let mut failures = Vec::new();
 
     for wasi_args in arg_variants {
-        match invoke_component_once(&engine, &component, &linker, &component_path_abs, component_dir, &wasi_args) {
+        match invoke_component_once(
+            &engine,
+            &component,
+            &linker,
+            component_path,
+            &component_path_abs,
+            component_dir,
+            &wasi_args,
+        ) {
             Ok(stdout) => return Ok(stdout),
             Err(err) => {
                 failures.push(format!("args={:?}: {err:#}", wasi_args));
@@ -117,7 +125,8 @@ fn invoke_component_once(
     engine: &Engine,
     component: &Component,
     linker: &Linker<RunnerState>,
-    component_path: &Path,
+    component_path_raw: &str,
+    _component_path: &Path,
     component_dir: &Path,
     wasi_args: &[String],
 ) -> Result<String> {
@@ -131,7 +140,7 @@ fn invoke_component_once(
     
     // Mount a writable temp directory for hostbridge files
     // This is needed on macOS where the app bundle is read-only
-    let bridge_dir = get_bridge_dir(component_path)?;
+    let bridge_dir = get_bridge_dir(component_path_raw)?;
     if let Err(e) = std::fs::create_dir_all(&bridge_dir) {
         eprintln!("Warning: failed to create bridge directory: {}", e);
     } else {
@@ -228,7 +237,14 @@ fn extract_json_payload(stdout: &str) -> Option<String> {
             continue;
         }
 
-        if trimmed.starts_with('{') || trimmed.starts_with('[') || trimmed.starts_with('"') {
+        if trimmed.starts_with('{')
+            || trimmed.starts_with('[')
+            || trimmed.starts_with('"')
+            || trimmed == "null"
+            || trimmed == "true"
+            || trimmed == "false"
+            || trimmed.chars().next().map(|ch| ch.is_ascii_digit() || ch == '-').unwrap_or(false)
+        {
             return Some(trimmed.to_string());
         }
     }
@@ -236,13 +252,12 @@ fn extract_json_payload(stdout: &str) -> Option<String> {
     None
 }
 
-fn get_bridge_dir(component_path: &Path) -> Result<PathBuf> {
+fn get_bridge_dir(component_path: &str) -> Result<PathBuf> {
     use sha2::{Sha256, Digest};
     
     // Hash the full component path to match C# implementation
-    let path_str = component_path.to_string_lossy();
     let mut hasher = Sha256::new();
-    hasher.update(path_str.as_bytes());
+    hasher.update(component_path.as_bytes());
     let hash_bytes = hasher.finalize();
     
     // Convert to hex string and take first 16 characters (like C# does)
