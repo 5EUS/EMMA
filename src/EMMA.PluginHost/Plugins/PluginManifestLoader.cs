@@ -32,7 +32,13 @@ public sealed class PluginManifestLoader(
         }
 
         var manifests = new List<PluginManifest>();
-        foreach (var path in Directory.EnumerateFiles(directory, "*.plugin.json", SearchOption.TopDirectoryOnly))
+        var paths = Directory.EnumerateFiles(directory, "*.plugin.json", SearchOption.TopDirectoryOnly)
+            .Concat(Directory.EnumerateFiles(directory, "*.json", SearchOption.TopDirectoryOnly))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
         {
             try
             {
@@ -57,6 +63,11 @@ public sealed class PluginManifestLoader(
                     {
                         _logger.LogWarning("Plugin manifest missing id: {Path}", path);
                     }
+                    continue;
+                }
+
+                if (!seenIds.Add(manifest.Id))
+                {
                     continue;
                 }
 
