@@ -97,6 +97,7 @@ public static class PluginHostExports
                 services.AddSingleton<StorageInitializer>();
                 services.AddSingleton(PageAssetCacheOptions.Default);
                 services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
+                services.AddSingleton<ILibraryPort, SqliteLibraryPort>();
                 services.AddSingleton<IPageAssetCachePort>(sp =>
                     new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
                 services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
@@ -135,6 +136,7 @@ public static class PluginHostExports
                 // Initialize storage
                 var storageInit = _serviceProvider.GetRequiredService<StorageInitializer>();
                 storageInit.InitializeAsync(CancellationToken.None).GetAwaiter().GetResult();
+                EnsureDefaultLibraryExistsManaged();
 
                 // Resolve services
                 _registry = _serviceProvider.GetRequiredService<PluginRegistry>();
@@ -505,6 +507,323 @@ public static class PluginHostExports
         }
     }
 
+    public static string? ListCatalogMediaJsonManaged(int limit = 500)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            var catalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
+            var items = catalog.ListMediaAsync(Math.Max(1, limit), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var results = items
+                .Select(item => new EMMA.Domain.MediaSummary(
+                    item.Id,
+                    item.SourceId,
+                    item.Title,
+                    item.MediaType))
+                .ToList();
+
+            return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? ListLibraryMediaJsonManaged(string userId = "Library")
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            var normalizedUserId = ToLibraryStorageKey(userId);
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            var catalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
+            var entries = library.GetLibraryAsync(normalizedUserId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var results = new List<EMMA.Domain.MediaSummary>(entries.Count);
+            foreach (var entry in entries)
+            {
+                var metadata = catalog.GetMediaAsync(entry.MediaId, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                if (metadata is null)
+                {
+                    results.Add(new EMMA.Domain.MediaSummary(
+                        entry.MediaId,
+                        entry.SourceId,
+                        entry.MediaId.Value,
+                        EMMA.Domain.MediaType.Paged));
+                    continue;
+                }
+
+                results.Add(new EMMA.Domain.MediaSummary(
+                    metadata.Id,
+                    metadata.SourceId,
+                    metadata.Title,
+                    metadata.MediaType));
+            }
+
+            return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? ListLibrariesJsonManaged()
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            var keys = library.ListLibrariesAsync(CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var names = keys
+                .Select(FromLibraryStorageKey)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            return JsonSerializer.Serialize(names, PluginHostExportsJsonContext.Default.IReadOnlyListString);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static int CreateLibraryManaged(string libraryName)
+    {
+        ClearLastError();
+
+        try
+        {
+            var normalizedName = NormalizeLibraryDisplayName(libraryName);
+
+            EnsureInitialized();
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            library.CreateLibraryAsync(
+                ToLibraryStorageKey(normalizedName),
+                normalizedName,
+                CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    public static int ResetDatabaseManaged()
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            var storageOptions = _serviceProvider!.GetRequiredService<StorageOptions>();
+            var dbPath = storageOptions.DatabasePath;
+
+            if (File.Exists(dbPath))
+            {
+                File.Delete(dbPath);
+            }
+
+            var walPath = dbPath + "-wal";
+            if (File.Exists(walPath))
+            {
+                File.Delete(walPath);
+            }
+
+            var shmPath = dbPath + "-shm";
+            if (File.Exists(shmPath))
+            {
+                File.Delete(shmPath);
+            }
+
+            var storageInit = _serviceProvider!.GetRequiredService<StorageInitializer>();
+            storageInit.InitializeAsync(CancellationToken.None).GetAwaiter().GetResult();
+            EnsureDefaultLibraryExistsManaged();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    public static bool IsMediaInLibraryManaged(string mediaId, string userId = "*")
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return false;
+            }
+
+            EnsureInitialized();
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            if (string.IsNullOrWhiteSpace(userId) || string.Equals(userId, "*", StringComparison.Ordinal))
+            {
+                var keys = library.ListLibrariesAsync(CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                foreach (var key in keys)
+                {
+                    var entriesForLibrary = library.GetLibraryAsync(key, CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
+
+                    if (entriesForLibrary.Any(entry => string.Equals(entry.MediaId.Value, mediaId, StringComparison.Ordinal)))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            var normalizedUserId = ToLibraryStorageKey(userId);
+            var entries = library.GetLibraryAsync(normalizedUserId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return entries.Any(entry => string.Equals(entry.MediaId.Value, mediaId, StringComparison.Ordinal));
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return false;
+        }
+    }
+
+    public static int AddMediaToLibraryManaged(
+        string mediaId,
+        string sourceId,
+        string title,
+        string mediaType,
+        string userId = "Library")
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return 0;
+            }
+
+            EnsureInitialized();
+
+            var parsedMediaType = string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
+                ? MediaType.Video
+                : MediaType.Paged;
+            var now = DateTimeOffset.UtcNow;
+            var normalizedUserId = ToLibraryStorageKey(userId);
+
+            var mediaCatalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
+            mediaCatalog.UpsertMediaAsync(
+                new MediaMetadata(
+                    MediaId.Create(mediaId),
+                    sourceId ?? string.Empty,
+                    title ?? string.Empty,
+                    parsedMediaType,
+                    null,
+                    null,
+                    null,
+                    [],
+                    now,
+                    now),
+                CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            var entryId = $"{normalizedUserId}:{mediaId}";
+
+            library.UpsertAsync(
+                new LibraryEntry(
+                    entryId,
+                    MediaId.Create(mediaId),
+                    normalizedUserId,
+                    now,
+                    sourceId ?? string.Empty),
+                CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    public static int RemoveMediaFromLibraryManaged(string mediaId, string userId = "Library")
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return 0;
+            }
+
+            EnsureInitialized();
+
+            var normalizedUserId = ToLibraryStorageKey(userId);
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            library.RemoveAsync(normalizedUserId, MediaId.Create(mediaId), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     // ==================== FFI Boundary (UnmanagedCallersOnly) ====================
 
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_initialize")]
@@ -561,6 +880,65 @@ public static class PluginHostExports
         {
             throw new InvalidOperationException("Plugin host not initialized. Call InitializeManaged first.");
         }
+    }
+
+    private static string ToLibraryStorageKey(string? libraryName)
+    {
+        var normalizedLibrary = NormalizeLibraryDisplayName(libraryName);
+        return $"library::{normalizedLibrary}";
+    }
+
+    private static string NormalizeLibraryDisplayName(string? libraryName)
+    {
+        if (string.IsNullOrWhiteSpace(libraryName))
+        {
+            return "Library";
+        }
+
+        var normalized = libraryName.Trim();
+        return string.Equals(normalized, "default", StringComparison.OrdinalIgnoreCase)
+            ? "Library"
+            : normalized;
+    }
+
+    private static string FromLibraryStorageKey(string storageKey)
+    {
+        const string prefix = "library::";
+        if (storageKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var name = storageKey[prefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(name)
+                || string.Equals(name, "default", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Library";
+            }
+
+            return name;
+        }
+
+        if (string.IsNullOrWhiteSpace(storageKey)
+            || string.Equals(storageKey, "default", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(storageKey, "library::default", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Library";
+        }
+
+        return storageKey;
+    }
+
+    private static void EnsureDefaultLibraryExistsManaged()
+    {
+        var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+        var canonicalDefault = ToLibraryStorageKey("Library");
+        library.NormalizeLegacyDefaultLibraryAsync(canonicalDefault, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        library.CreateLibraryAsync(
+                canonicalDefault,
+                "Library",
+                CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
     }
 
     private static MediaPage? GetPageManagedInternal(string pluginId, string mediaId, string chapterId, int pageIndex)

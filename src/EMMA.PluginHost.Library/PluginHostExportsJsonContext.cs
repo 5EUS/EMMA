@@ -22,6 +22,8 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(MediaPageAsset))]
 [JsonSerializable(typeof(PluginSummaryResponse))]
 [JsonSerializable(typeof(List<PluginSummaryResponse>))]
+[JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(List<string>))]
 public partial class PluginHostExportsJsonContext : JsonSerializerContext
 {
 }

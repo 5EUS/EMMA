@@ -121,6 +121,196 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_catalog_media_json")]
+    public static IntPtr RuntimeListCatalogMediaJson(int handle)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ListCatalogMediaJsonManaged();
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list catalog media.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_library_media_json")]
+    public static IntPtr RuntimeListLibraryMediaJson(int handle)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ListLibraryMediaJsonManaged("Library");
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list library media.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_libraries_json")]
+    public static IntPtr RuntimeListLibrariesJson(int handle)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ListLibrariesJsonManaged();
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list libraries.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_create_library")]
+    public static int RuntimeCreateLibrary(int handle, IntPtr libraryNameUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+
+            EnsurePluginHostInitialized();
+            var created = PluginHostExports.CreateLibraryManaged(libraryName);
+            if (created == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to create library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_reset_database")]
+    public static int RuntimeResetDatabase(int handle)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            EnsurePluginHostInitialized();
+            var reset = PluginHostExports.ResetDatabaseManaged();
+            if (reset == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to reset database.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_library_media_for_library_json")]
+    public static IntPtr RuntimeListLibraryMediaForLibraryJson(int handle, IntPtr libraryNameUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ListLibraryMediaJsonManaged(libraryName);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list library media.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_plugins_json")]
     public static IntPtr RuntimeListPluginsJson()
     {
@@ -451,6 +641,236 @@ public static class NativeExports
         {
             SetLastError(ex);
             return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_is_media_in_library")]
+    public static int RuntimeIsMediaInLibrary(int handle, IntPtr mediaIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            EnsurePluginHostInitialized();
+            var isInLibrary = PluginHostExports.IsMediaInLibraryManaged(mediaIdValue, "*");
+            if (!isInLibrary)
+            {
+                var error = PluginHostExports.GetLastErrorManaged();
+                if (!string.IsNullOrWhiteSpace(error))
+                {
+                    SetLastError(error);
+                    return 0;
+                }
+            }
+
+            return isInLibrary ? 1 : 0;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library")]
+    public static int RuntimeAddMediaToLibrary(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                "Library");
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_remove_media_from_library")]
+    public static int RuntimeRemoveMediaFromLibrary(int handle, IntPtr mediaIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            EnsurePluginHostInitialized();
+            var removed = PluginHostExports.RemoveMediaFromLibraryManaged(mediaIdValue, "Library");
+            if (removed == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to remove media from library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library_for_library")]
+    public static int RuntimeAddMediaToLibraryForLibrary(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr libraryNameUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                libraryName);
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_remove_media_from_library_for_library")]
+    public static int RuntimeRemoveMediaFromLibraryForLibrary(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr libraryNameUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+
+            EnsurePluginHostInitialized();
+            var removed = PluginHostExports.RemoveMediaFromLibraryManaged(mediaIdValue, libraryName);
+            if (removed == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to remove media from library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
         }
     }
 
