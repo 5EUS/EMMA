@@ -340,7 +340,9 @@ public static class PluginHostExports
                         result.Title ?? string.Empty,
                         string.Equals(result.MediaType, "video", StringComparison.OrdinalIgnoreCase)
                             ? EMMA.Domain.MediaType.Video
-                            : EMMA.Domain.MediaType.Paged))
+                            : EMMA.Domain.MediaType.Paged,
+                        string.IsNullOrWhiteSpace(result.ThumbnailUrl) ? null : result.ThumbnailUrl,
+                        string.IsNullOrWhiteSpace(result.Description) ? null : result.Description))
                     .ToList();
             }
 
@@ -525,7 +527,9 @@ public static class PluginHostExports
                     item.Id,
                     item.SourceId,
                     item.Title,
-                    item.MediaType))
+                    item.MediaType,
+                    null,
+                    item.Synopsis))
                 .ToList();
 
             return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
@@ -573,7 +577,9 @@ public static class PluginHostExports
                     metadata.Id,
                     metadata.SourceId,
                     metadata.Title,
-                    metadata.MediaType));
+                    metadata.MediaType,
+                    null,
+                    metadata.Synopsis));
             }
 
             return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
@@ -735,7 +741,8 @@ public static class PluginHostExports
         string sourceId,
         string title,
         string mediaType,
-        string userId = "Library")
+        string userId = "Library",
+        string? description = null)
     {
         ClearLastError();
 
@@ -763,7 +770,7 @@ public static class PluginHostExports
                     title ?? string.Empty,
                     parsedMediaType,
                     null,
-                    null,
+                    string.IsNullOrWhiteSpace(description) ? null : description,
                     null,
                     [],
                     now,

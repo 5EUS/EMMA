@@ -64,8 +64,14 @@ internal sealed class PluginSearchPort(
         var source = result.Source ?? string.Empty;
         var title = result.Title ?? string.Empty;
         var mediaType = ParseMediaType(result.MediaType);
+        var thumbnailUrl = string.IsNullOrWhiteSpace(result.ThumbnailUrl)
+            ? null
+            : result.ThumbnailUrl;
+        var description = string.IsNullOrWhiteSpace(result.Description)
+            ? null
+            : result.Description;
 
-        return new MediaSummary(mediaId, source, title, mediaType);
+        return new MediaSummary(mediaId, source, title, mediaType, thumbnailUrl, description);
     }
 
     private static MediaType ParseMediaType(string? value)

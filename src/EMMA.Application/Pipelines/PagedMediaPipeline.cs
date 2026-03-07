@@ -230,7 +230,7 @@ public sealed class PagedMediaPipeline(
                 item.Title,
                 item.MediaType,
                 null,
-                null,
+                item.Description,
                 null,
                 [],
                 now,

@@ -24,4 +24,6 @@ message MediaSummary {
   string source = 2;
   string title = 3;
   string media_type = 4;
+  string thumbnail_url = 5;
+  string description = 6;
 }

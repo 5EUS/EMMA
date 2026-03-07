@@ -136,7 +136,9 @@ public sealed class WasmPluginRuntimeHost(
             item.Title,
             string.Equals(item.MediaType, "video", StringComparison.OrdinalIgnoreCase)
                 ? MediaType.Video
-                : MediaType.Paged))];
+                : MediaType.Paged,
+            string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+            string.IsNullOrWhiteSpace(item.Description) ? null : item.Description))];
     }
 
     public async Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(

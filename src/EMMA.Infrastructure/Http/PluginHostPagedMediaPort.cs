@@ -35,7 +35,9 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
             MediaId.Create(item.Id ?? string.Empty),
             item.Source ?? string.Empty,
             item.Title ?? string.Empty,
-            ParseMediaType(item.MediaType)))];
+            ParseMediaType(item.MediaType),
+            string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+            string.IsNullOrWhiteSpace(item.Description) ? null : item.Description))];
     }
 
     public async Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(MediaId mediaId, CancellationToken cancellationToken)
@@ -164,6 +166,12 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
 
         [JsonPropertyName("mediaType")]
         public string? MediaType { get; init; }
+
+        [JsonPropertyName("thumbnailUrl")]
+        public string? ThumbnailUrl { get; init; }
+
+        [JsonPropertyName("description")]
+        public string? Description { get; init; }
     }
 
     private sealed record ChapterDto

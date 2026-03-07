@@ -17,7 +17,14 @@ public sealed record PluginManifest(
     PluginManifestSignature? Signature,
     string? Description,
     string? Author,
-    PluginManifestRuntime? Runtime = null);
+    PluginManifestRuntime? Runtime = null,
+    PluginManifestThumbnail? Thumbnail = null);
+
+public sealed record PluginManifestThumbnail(
+    double? AspectRatio,
+    string? Fit,
+    int? Width,
+    int? Height);
 
 /// <summary>
 /// Declares runtime routing metadata for a plugin.

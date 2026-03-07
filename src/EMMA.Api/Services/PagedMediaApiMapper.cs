@@ -12,7 +12,8 @@ internal static class PagedMediaApiMapper
             Id = summary.Id.Value,
             Source = summary.SourceId,
             Title = summary.Title,
-            MediaType = MapMediaType(summary.MediaType)
+            MediaType = MapMediaType(summary.MediaType),
+            ThumbnailUrl = summary.ThumbnailUrl ?? string.Empty
         };
     }
 

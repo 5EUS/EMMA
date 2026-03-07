@@ -15,6 +15,7 @@ namespace EMMA.PluginHost.Plugins;
 [JsonSerializable(typeof(PluginManifestRuntime))]
 [JsonSerializable(typeof(PluginManifestWasmHostBridge))]
 [JsonSerializable(typeof(PluginManifestWasmHttpOperation))]
+[JsonSerializable(typeof(PluginManifestThumbnail))]
 [JsonSerializable(typeof(PluginManifestCapabilities))]
 [JsonSerializable(typeof(PluginManifestPermissions))]
 [JsonSerializable(typeof(PluginManifestSignature))]

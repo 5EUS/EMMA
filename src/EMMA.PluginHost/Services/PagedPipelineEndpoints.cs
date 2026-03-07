@@ -117,7 +117,9 @@ public static class PagedPipelineEndpoints
                 Id = result.Id.ToString(),
                 Source = result.SourceId,
                 result.Title,
-                MediaType = result.MediaType.ToString().ToLowerInvariant()
+                MediaType = result.MediaType.ToString().ToLowerInvariant(),
+                ThumbnailUrl = result.ThumbnailUrl,
+                Description = result.Description
             }));
         });
 

@@ -20,7 +20,14 @@ public static class NativeExports
         public InMemoryMediaStore Store { get; } = store;
         public string? SelectedPluginId { get; set; }
     }
-    private sealed record PluginSummary(string Id, string Title, string BuildType);
+    private sealed record PluginSummary(
+        string Id,
+        string Title,
+        string BuildType,
+        double? ThumbnailAspectRatio = null,
+        string? ThumbnailFit = null,
+        int? ThumbnailWidth = null,
+        int? ThumbnailHeight = null);
     private sealed record PluginPathConfiguration(string? ManifestsDirectory, string? PluginsDirectory);
 
     private static readonly ConcurrentDictionary<int, RuntimeState> States = new();
@@ -738,6 +745,62 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library_v2")]
+    public static int RuntimeAddMediaToLibraryV2(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr descriptionUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var description = PtrToString(descriptionUtf8);
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                "Library",
+                description);
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_remove_media_from_library")]
     public static int RuntimeRemoveMediaFromLibrary(int handle, IntPtr mediaIdUtf8)
     {
@@ -814,6 +877,64 @@ public static class NativeExports
                 title,
                 mediaType,
                 libraryName);
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library_for_library_v2")]
+    public static int RuntimeAddMediaToLibraryForLibraryV2(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr libraryNameUtf8,
+        IntPtr descriptionUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+            var description = PtrToString(descriptionUtf8);
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                libraryName,
+                description);
 
             if (added == 0)
             {
@@ -1012,6 +1133,16 @@ public static class NativeExports
             AppendJsonProperty(sb, "title", item.Title);
             sb.Append(',');
             AppendJsonProperty(sb, "mediaType", item.MediaType.ToString().ToLowerInvariant());
+            if (!string.IsNullOrWhiteSpace(item.ThumbnailUrl))
+            {
+                sb.Append(',');
+                AppendJsonProperty(sb, "thumbnailUrl", item.ThumbnailUrl!);
+            }
+            if (!string.IsNullOrWhiteSpace(item.Description))
+            {
+                sb.Append(',');
+                AppendJsonProperty(sb, "description", item.Description!);
+            }
             sb.Append('}');
         }
 
@@ -1122,7 +1253,10 @@ public static class NativeExports
                 title,
                 string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
                     ? MediaType.Video
-                    : MediaType.Paged));
+                    : MediaType.Paged,
+                GetStringProperty(item, "thumbnailUrl")
+                    ?? GetStringProperty(item, "thumbnail_url"),
+                GetStringProperty(item, "description")));
         }
 
         return results;
@@ -1337,6 +1471,29 @@ public static class NativeExports
             AppendJsonProperty(sb, "title", plugin.Title);
             sb.Append(',');
             AppendJsonProperty(sb, "buildType", plugin.BuildType);
+            if (plugin.ThumbnailAspectRatio is { } aspectRatio && aspectRatio > 0)
+            {
+                sb.Append(',');
+                AppendJsonDoubleProperty(sb, "thumbnailAspectRatio", aspectRatio);
+            }
+
+            if (!string.IsNullOrWhiteSpace(plugin.ThumbnailFit))
+            {
+                sb.Append(',');
+                AppendJsonProperty(sb, "thumbnailFit", plugin.ThumbnailFit!);
+            }
+
+            if (plugin.ThumbnailWidth is { } width && width > 0)
+            {
+                sb.Append(',');
+                AppendJsonNumberProperty(sb, "thumbnailWidth", width);
+            }
+
+            if (plugin.ThumbnailHeight is { } height && height > 0)
+            {
+                sb.Append(',');
+                AppendJsonNumberProperty(sb, "thumbnailHeight", height);
+            }
             sb.Append('}');
         }
 
@@ -1430,7 +1587,29 @@ public static class NativeExports
                         ?? GetStringProperty(root, "title")
                         ?? id;
 
-            return new PluginSummary(id, title, "csharp");
+            double? thumbnailAspectRatio = null;
+            string? thumbnailFit = null;
+            int? thumbnailWidth = null;
+            int? thumbnailHeight = null;
+
+            if (TryGetObjectProperty(root, "thumbnail", out var thumbnail))
+            {
+                thumbnailAspectRatio = GetDoubleProperty(thumbnail, "aspectRatio");
+                thumbnailFit = GetStringProperty(thumbnail, "fit");
+                thumbnailWidth = GetInt32Property(thumbnail, "width");
+                thumbnailHeight = GetInt32Property(thumbnail, "height");
+
+                if ((thumbnailAspectRatio is null || thumbnailAspectRatio <= 0)
+                    && thumbnailWidth is { } width
+                    && thumbnailHeight is { } height
+                    && width > 0
+                    && height > 0)
+                {
+                    thumbnailAspectRatio = (double)width / height;
+                }
+            }
+
+            return new PluginSummary(id, title, "csharp", thumbnailAspectRatio, thumbnailFit, thumbnailWidth, thumbnailHeight);
         }
         catch
         {
@@ -1509,6 +1688,48 @@ public static class NativeExports
 
             var matchedValue = candidate.Value.GetString();
             return string.IsNullOrWhiteSpace(matchedValue) ? null : matchedValue.Trim();
+        }
+
+        return null;
+    }
+
+    private static int? GetInt32Property(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var numeric))
+        {
+            return numeric;
+        }
+
+        if (property.ValueKind == JsonValueKind.String
+            && int.TryParse(property.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private static double? GetDoubleProperty(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out var numeric))
+        {
+            return numeric;
+        }
+
+        if (property.ValueKind == JsonValueKind.String
+            && double.TryParse(property.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
         }
 
         return null;
@@ -1638,6 +1859,13 @@ public static class NativeExports
         AppendJsonString(sb, name);
         sb.Append(':');
         sb.Append(value.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static void AppendJsonDoubleProperty(StringBuilder sb, string name, double value)
+    {
+        AppendJsonString(sb, name);
+        sb.Append(':');
+        sb.Append(value.ToString("0.###", CultureInfo.InvariantCulture));
     }
 
     private static void AppendJsonString(StringBuilder sb, string value)

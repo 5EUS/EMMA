@@ -29,7 +29,7 @@ public partial class WasmResponseJsonContext : JsonSerializerContext
 /// <summary>
 /// Search result item returned from WASM component.
 /// </summary>
-public sealed record WasmSearchItem(string Id, string? Source, string Title, string? MediaType);
+public sealed record WasmSearchItem(string Id, string? Source, string Title, string? MediaType, string? ThumbnailUrl = null, string? Description = null);
 
 /// <summary>
 /// Health/handshake response from WASM component.
