@@ -369,6 +369,24 @@ public static class PluginHostExports
                 return null;
             }
 
+            EnsureInitialized();
+            var catalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
+            var mediaKey = MediaId.Create(mediaId);
+            var cachedRecords = catalog.GetChaptersAsync(mediaKey, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            if (cachedRecords.Count > 0)
+            {
+                var cachedChapters = cachedRecords
+                    .Select(chapter => new MediaChapter(
+                        chapter.ChapterId,
+                        chapter.Number,
+                        chapter.Title))
+                    .ToList();
+                return JsonSerializer.Serialize(cachedChapters, PluginHostExportsJsonContext.Default.IReadOnlyListMediaChapter);
+            }
+
             if (!TryResolvePlugin(pluginId, out var record, out var address))
             {
                 return null;
@@ -417,6 +435,22 @@ public static class PluginHostExports
                         chapter.Number,
                         chapter.Title ?? string.Empty))
                     .ToList();
+            }
+
+            if (chapters.Count > 0)
+            {
+                var chapterRecords = chapters
+                    .Select(chapter => new MediaChapterRecord(
+                        chapter.ChapterId,
+                        mediaKey,
+                        chapter.Number,
+                        chapter.Title,
+                        null))
+                    .ToList();
+
+                catalog.UpsertChaptersAsync(mediaKey, chapterRecords, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
             }
 
             return JsonSerializer.Serialize(chapters, PluginHostExportsJsonContext.Default.IReadOnlyListMediaChapter);
