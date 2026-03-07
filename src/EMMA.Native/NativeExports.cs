@@ -32,9 +32,12 @@ public static class NativeExports
 
     private static readonly ConcurrentDictionary<int, RuntimeState> States = new();
     private static readonly Lock PluginHostInitLock = new();
+    private static readonly Lock RuntimeLifecycleLock = new();
     private static readonly Lock ErrorLock = new();
     private static readonly NativeLogStore LogStore = new();
     private static int _nextHandle;
+    private static int? _sharedRuntimeHandle;
+    private static int _runtimeReferenceCount;
     private static PluginPathConfiguration _pluginPathConfiguration = new(null, null);
     private static bool _pluginHostInitialized = false;
 
@@ -51,17 +54,30 @@ public static class NativeExports
         {
             EnsurePluginHostInitialized();
 
-            var store = new InMemoryMediaStore();
-            IMediaSearchPort search = new InMemorySearchPort(store);
-            IPageProviderPort pages = new InMemoryPageProvider(store);
-            IPolicyEvaluator policy = new HostPolicyEvaluator();
+            lock (RuntimeLifecycleLock)
+            {
+                if (_sharedRuntimeHandle is { } existingHandle
+                    && States.ContainsKey(existingHandle))
+                {
+                    _runtimeReferenceCount++;
+                    LogDebug("runtime", $"Runtime reused. handle={existingHandle}, refCount={_runtimeReferenceCount}");
+                    return existingHandle;
+                }
 
-            var runtime = EmbeddedRuntimeFactory.Create(search, pages, policy);
+                var store = new InMemoryMediaStore();
+                IMediaSearchPort search = new InMemorySearchPort(store);
+                IPageProviderPort pages = new InMemoryPageProvider(store);
+                IPolicyEvaluator policy = new HostPolicyEvaluator();
 
-            var handle = Interlocked.Increment(ref _nextHandle);
-            States[handle] = new RuntimeState(runtime, store);
-            LogInfo("runtime", $"Runtime started. handle={handle}");
-            return handle;
+                var runtime = EmbeddedRuntimeFactory.Create(search, pages, policy);
+
+                var handle = Interlocked.Increment(ref _nextHandle);
+                States[handle] = new RuntimeState(runtime, store);
+                _sharedRuntimeHandle = handle;
+                _runtimeReferenceCount = 1;
+                LogInfo("runtime", $"Runtime started. handle={handle}");
+                return handle;
+            }
         }
         catch (Exception ex)
         {
@@ -78,9 +94,38 @@ public static class NativeExports
 
         try
         {
-            States.TryRemove(handle, out _);
+            var shouldShutdownPluginHost = false;
 
-            if (States.IsEmpty)
+            lock (RuntimeLifecycleLock)
+            {
+                if (!States.ContainsKey(handle))
+                {
+                    LogDebug("runtime", $"RuntimeStop ignored for missing handle={handle}");
+                    return;
+                }
+
+                if (_sharedRuntimeHandle == handle)
+                {
+                    if (_runtimeReferenceCount > 0)
+                    {
+                        _runtimeReferenceCount--;
+                    }
+
+                    if (_runtimeReferenceCount > 0)
+                    {
+                        LogDebug("runtime", $"Runtime kept alive. handle={handle}, refCount={_runtimeReferenceCount}");
+                        return;
+                    }
+
+                    _sharedRuntimeHandle = null;
+                    _runtimeReferenceCount = 0;
+                }
+
+                States.TryRemove(handle, out _);
+                shouldShutdownPluginHost = States.IsEmpty;
+            }
+
+            if (shouldShutdownPluginHost)
             {
                 // Optionally shutdown plugin host when all runtimes are stopped
                 ShutdownPluginHost();
@@ -368,15 +413,7 @@ public static class NativeExports
                         }
                         else
                         {
-                            var rescanCode = PluginHostExports.RescanManaged();
-                            if (rescanCode != 0)
-                            {
-                                var error = PluginHostExports.GetLastErrorManaged()
-                                    ?? $"Plugin host rescan failed with code {rescanCode}";
-                                throw new InvalidOperationException(error);
-                            }
-
-                            LogInfo("plugin-host", "Plugin host rescanned with existing manifests/plugins paths.");
+                            LogDebug("plugin-host", "Configure paths called with unchanged values; skipping rescan.");
                         }
                     }
                 }
