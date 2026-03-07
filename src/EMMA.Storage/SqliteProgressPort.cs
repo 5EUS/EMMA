@@ -8,6 +8,53 @@ public sealed class SqliteProgressPort(StorageOptions options) : IProgressPort
 {
     private readonly SqliteConnectionFactory _connectionFactory = new(options);
 
+    private static async Task EnsureMediaExistsAsync(
+        Microsoft.Data.Sqlite.SqliteConnection connection,
+        MediaId mediaId,
+        string pluginId,
+        string mediaType,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+        var safePluginId = pluginId ?? string.Empty;
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT OR IGNORE INTO media (
+                id,
+                source_id,
+                title,
+                media_type,
+                rating,
+                synopsis,
+                language,
+                tags,
+                created_at,
+                updated_at
+            ) VALUES (
+                $id,
+                $sourceId,
+                $title,
+                $mediaType,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+                $createdAt,
+                $updatedAt
+            );
+            """;
+
+        command.Parameters.AddWithValue("$id", mediaId.Value);
+        command.Parameters.AddWithValue("$sourceId", safePluginId);
+        command.Parameters.AddWithValue("$title", mediaId.Value);
+        command.Parameters.AddWithValue("$mediaType", mediaType);
+        command.Parameters.AddWithValue("$createdAt", now);
+        command.Parameters.AddWithValue("$updatedAt", now);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<PagedMediaProgress?> GetPagedProgressAsync(
         MediaId mediaId,
         string pluginId,
@@ -65,6 +112,7 @@ public sealed class SqliteProgressPort(StorageOptions options) : IProgressPort
     {
         await using var connection = _connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
+        await EnsureMediaExistsAsync(connection, mediaId, pluginId, "paged", cancellationToken);
 
         var now = DateTimeOffset.UtcNow;
         var safePluginId = pluginId ?? string.Empty;
@@ -165,6 +213,7 @@ public sealed class SqliteProgressPort(StorageOptions options) : IProgressPort
     {
         await using var connection = _connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
+        await EnsureMediaExistsAsync(connection, mediaId, pluginId, "video", cancellationToken);
 
         var now = DateTimeOffset.UtcNow;
         var safePluginId = pluginId ?? string.Empty;
