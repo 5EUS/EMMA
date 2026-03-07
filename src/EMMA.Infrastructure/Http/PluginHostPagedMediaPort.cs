@@ -93,6 +93,46 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
         return new MediaPage(result.Id ?? string.Empty, result.Index, contentUri);
     }
 
+    public async Task<MediaPagesResult> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        var url = BuildUrl("/pipeline/paged/pages", new Dictionary<string, string?>
+        {
+            ["mediaId"] = mediaId.Value,
+            ["chapterId"] = chapterId,
+            ["startIndex"] = startIndex.ToString(),
+            ["count"] = count.ToString()
+        });
+
+        var response = await _client.GetAsync(url, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        var result = JsonSerializer.Deserialize(
+            payload,
+            typeof(PagesResultDto),
+            PluginHostPagedMediaPortJsonContext.Default) as PagesResultDto
+            ?? new PagesResultDto();
+
+        var pages = (result.Pages ?? [])
+            .Select(item =>
+            {
+                if (!Uri.TryCreate(item.ContentUri, UriKind.Absolute, out var contentUri))
+                {
+                    throw new InvalidOperationException("Plugin host returned an invalid page URI.");
+                }
+
+                return new MediaPage(item.Id ?? string.Empty, item.Index, contentUri);
+            })
+            .ToList();
+
+        return new MediaPagesResult(pages, result.ReachedEnd);
+    }
+
     public async Task<MediaPageAsset> GetPageAssetAsync(
         MediaId mediaId,
         string chapterId,
@@ -198,9 +238,19 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
         public string? ContentUri { get; init; }
     }
 
+    private sealed record PagesResultDto
+    {
+        [JsonPropertyName("pages")]
+        public List<PageDto>? Pages { get; init; }
+
+        [JsonPropertyName("reachedEnd")]
+        public bool ReachedEnd { get; init; }
+    }
+
     [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
     [JsonSerializable(typeof(List<SearchResultDto>))]
     [JsonSerializable(typeof(List<ChapterDto>))]
     [JsonSerializable(typeof(PageDto))]
+    [JsonSerializable(typeof(PagesResultDto))]
     private sealed partial class PluginHostPagedMediaPortJsonContext : JsonSerializerContext;
 }

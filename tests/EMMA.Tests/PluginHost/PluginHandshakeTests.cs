@@ -279,5 +279,10 @@ public sealed class PluginHandshakeTests
         {
             throw new NotSupportedException();
         }
+
+        public Task<MediaPagesResult> GetPagesAsync(PluginRecord record, MediaId mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
     }
 }

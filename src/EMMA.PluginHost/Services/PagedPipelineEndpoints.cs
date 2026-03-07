@@ -254,6 +254,87 @@ public static class PagedPipelineEndpoints
             });
         });
 
+        app.MapGet("/pipeline/paged/pages", async (
+            string? mediaId,
+            string? chapterId,
+            int? startIndex,
+            int? count,
+            string? pluginId,
+            PluginResolutionService pluginResolution,
+            IWasmPluginRuntimeHost wasmRuntimeHost,
+            PluginProcessManager processManager,
+            IOptions<PluginHostOptions> options,
+            IMediaCatalogPort catalog,
+            IPageAssetCachePort pageAssetCache,
+            IPageAssetFetcherPort pageAssetFetcher,
+            ILoggerFactory loggerFactory,
+            CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+            {
+                return Results.BadRequest(new { message = "mediaId and chapterId are required." });
+            }
+
+            var safeStartIndex = Math.Max(0, startIndex ?? 0);
+            var safeCount = Math.Max(1, count ?? 1);
+
+            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
+            if (error is not null || record is null)
+            {
+                return error ?? Results.Problem("Plugin resolution failed.");
+            }
+
+            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
+            if (!isWasm && address is null)
+            {
+                return Results.Problem("Plugin resolution failed.");
+            }
+
+            using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
+
+            MediaPagesResult pages;
+            if (isWasm)
+            {
+                pages = await wasmRuntimeHost.GetPagesAsync(
+                    record,
+                    MediaId.Create(mediaId),
+                    chapterId,
+                    safeStartIndex,
+                    safeCount,
+                    cancellationToken);
+            }
+            else
+            {
+                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+                var pipeline = CreatePipeline(
+                    record,
+                    address!,
+                    options,
+                    catalog,
+                    pageAssetCache,
+                    pageAssetFetcher,
+                    loggerFactory,
+                    correlationId);
+                pages = await pipeline.GetPagesAsync(
+                    MediaId.Create(mediaId),
+                    chapterId,
+                    safeStartIndex,
+                    safeCount,
+                    cancellationToken);
+            }
+
+            return Results.Ok(new
+            {
+                Pages = pages.Pages.Select(page => new
+                {
+                    Id = page.PageId,
+                    page.Index,
+                    ContentUri = page.ContentUri.ToString()
+                }),
+                pages.ReachedEnd
+            });
+        });
+
         app.MapGet("/pipeline/paged/page-asset", async (
             string? mediaId,
             string? chapterId,

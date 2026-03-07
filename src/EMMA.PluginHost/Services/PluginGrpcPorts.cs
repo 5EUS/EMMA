@@ -176,6 +176,54 @@ internal sealed class PluginPageProviderPort(
         return page;
     }
 
+    public async Task<MediaPagesResult> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        var (cts, deadlineUtc) = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        using var ctsScope = cts;
+        using var lease = await PluginGrpcHelpers.AcquireLeaseAsync(
+            _endpoint.Record.Manifest.Id,
+            _options.Value,
+            cts.Token);
+
+        using var httpClient = PluginGrpcHelpers.CreateHttpClient(_endpoint.Address);
+        using var channel = GrpcChannel.ForAddress(_endpoint.Address, new GrpcChannelOptions
+        {
+            HttpClient = httpClient
+        });
+
+        var client = new PluginContracts.PageProvider.PageProviderClient(channel);
+        var response = await client.GetPagesAsync(new PluginContracts.PagesRequest
+        {
+            MediaId = mediaId.Value,
+            ChapterId = chapterId,
+            StartIndex = startIndex,
+            Count = count,
+            Context = PluginGrpcHelpers.CreateRequestContext(_endpoint.CorrelationId, deadlineUtc)
+        }, headers: PluginGrpcHelpers.CreateHeaders(_endpoint.CorrelationId), cancellationToken: cts.Token);
+
+        var pages = response.Pages
+            .Select(MapPage)
+            .ToList();
+
+        _logger.LogInformation(
+            "Pipeline pages {CorrelationId} pluginId={PluginId} mediaId={MediaId} chapterId={ChapterId} startIndex={StartIndex} count={Count} resultCount={ResultCount} reachedEnd={ReachedEnd}",
+            _endpoint.CorrelationId,
+            _endpoint.Record.Manifest.Id,
+            mediaId.Value,
+            chapterId,
+            startIndex,
+            count,
+            pages.Count,
+            response.ReachedEnd);
+
+        return new MediaPagesResult(pages, response.ReachedEnd);
+    }
+
     private static MediaChapter MapChapter(PluginContracts.MediaChapter chapter)
     {
         var chapterId = chapter.Id ?? string.Empty;

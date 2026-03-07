@@ -82,6 +82,22 @@ public class PagedMediaPipelineTests
             () => pipeline.GetPageAsync(MediaId.Create("demo"), "ch-1", 0, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task GetPagesAsync_ReturnsBatch()
+    {
+        var pipeline = new PagedMediaPipeline(
+            new CountingSearchPort(),
+            new StubPageProviderPort(),
+            new AllowPolicyEvaluator(),
+            new StubCachePort());
+
+        var pages = await pipeline.GetPagesAsync(MediaId.Create("demo"), "ch-1", 5, 3, CancellationToken.None);
+
+        Assert.Equal(3, pages.Pages.Count);
+        Assert.True(pages.ReachedEnd);
+        Assert.Equal(5, pages.Pages[0].Index);
+    }
+
     private sealed class StubCachePort : ICachePort
     {
         private readonly Dictionary<string, object> _values = [];
@@ -127,6 +143,19 @@ public class PagedMediaPipelineTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(new MediaPage("page-1", pageIndex, new Uri("https://example.invalid/page-1.jpg")));
+        }
+
+        public Task<MediaPagesResult> GetPagesAsync(
+            MediaId mediaId,
+            string chapterId,
+            int startIndex,
+            int count,
+            CancellationToken cancellationToken)
+        {
+            var pages = Enumerable.Range(startIndex, Math.Max(0, count))
+                .Select(index => new MediaPage($"page-{index}", index, new Uri($"https://example.invalid/page-{index}.jpg")))
+                .ToList();
+            return Task.FromResult(new MediaPagesResult(pages, true));
         }
     }
 

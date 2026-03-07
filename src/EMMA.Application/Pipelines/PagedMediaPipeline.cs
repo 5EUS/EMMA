@@ -103,6 +103,26 @@ public sealed class PagedMediaPipeline(
     }
 
     /// <summary>
+    /// Gets a batch of pages for a given media and chapter.
+    /// </summary>
+    public async Task<MediaPagesResult> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        EnsureNetworkAllowed("page");
+        var result = await _pages.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
+        foreach (var page in result.Pages)
+        {
+            await PersistPageAsync(mediaId, chapterId, page, cancellationToken);
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Fetches page assets using the configured cache and fetcher ports.
     /// </summary>
     /// <param name="page"></param>

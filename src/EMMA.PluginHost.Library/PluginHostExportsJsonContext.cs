@@ -19,6 +19,7 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(IReadOnlyList<MediaChapter>))]
 [JsonSerializable(typeof(List<MediaChapter>))]
 [JsonSerializable(typeof(MediaPage))]
+[JsonSerializable(typeof(MediaPagesResult))]
 [JsonSerializable(typeof(MediaPageAsset))]
 [JsonSerializable(typeof(PluginSummaryResponse))]
 [JsonSerializable(typeof(List<PluginSummaryResponse>))]

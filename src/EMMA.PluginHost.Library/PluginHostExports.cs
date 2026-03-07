@@ -461,6 +461,40 @@ public static class PluginHostExports
         }
     }
 
+    public static string? GetPagesJsonManaged(string pluginId, string mediaId, string chapterId, int startIndex, int count)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+            {
+                SetLastError("Media ID and chapter ID are required");
+                return null;
+            }
+
+            if (startIndex < 0)
+            {
+                SetLastError("startIndex must be >= 0");
+                return null;
+            }
+
+            if (count <= 0)
+            {
+                SetLastError("count must be > 0");
+                return null;
+            }
+
+            var pages = GetPagesManagedInternal(pluginId, mediaId, chapterId, startIndex, count);
+            return JsonSerializer.Serialize(pages, PluginHostExportsJsonContext.Default.MediaPagesResult);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
     public static string? GetPageAssetJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
         ClearLastError();
@@ -1208,6 +1242,104 @@ public static class PluginHostExports
         var resolvedPage = new MediaPage(page.Id ?? string.Empty, page.Index, contentUri);
         _pageCache[pageCacheKey] = resolvedPage;
         return resolvedPage;
+    }
+
+    private static MediaPagesResult GetPagesManagedInternal(string pluginId, string mediaId, string chapterId, int startIndex, int count)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+        {
+            SetLastError("Media ID and chapter ID are required");
+            return new MediaPagesResult([], true);
+        }
+
+        if (startIndex < 0)
+        {
+            SetLastError("startIndex must be >= 0");
+            return new MediaPagesResult([], true);
+        }
+
+        if (count <= 0)
+        {
+            SetLastError("count must be > 0");
+            return new MediaPagesResult([], true);
+        }
+
+        if (!TryResolvePlugin(pluginId, out var record, out var address))
+        {
+            return new MediaPagesResult([], true);
+        }
+
+        if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+        {
+            var wasmPages = _wasmRuntime.GetPagesAsync(
+                    record,
+                    MediaId.Create(mediaId),
+                    chapterId,
+                    startIndex,
+                    count,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            foreach (var page in wasmPages.Pages)
+            {
+                _pageCache[BuildPageCacheKey(record.Manifest.Id, mediaId, chapterId, page.Index)] = page;
+            }
+
+            return wasmPages;
+        }
+
+        if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        {
+            SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+            return new MediaPagesResult([], true);
+        }
+
+        if (address is null)
+        {
+            SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+            return new MediaPagesResult([], true);
+        }
+
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.PageProvider.PageProviderClient(channel);
+        var correlationId = Guid.NewGuid().ToString("n");
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        var response = client.GetPagesAsync(new PluginContracts.PagesRequest
+        {
+            MediaId = mediaId,
+            ChapterId = chapterId,
+            StartIndex = startIndex,
+            Count = count,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        }, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        var pages = new List<MediaPage>(response.Pages.Count);
+        foreach (var item in response.Pages)
+        {
+            if (item is null || string.IsNullOrWhiteSpace(item.ContentUri))
+            {
+                continue;
+            }
+
+            if (!Uri.TryCreate(item.ContentUri, UriKind.Absolute, out var contentUri))
+            {
+                SetLastError("Plugin returned an invalid page content URI.");
+                return new MediaPagesResult([], true);
+            }
+
+            var page = new MediaPage(item.Id ?? string.Empty, item.Index, contentUri);
+            pages.Add(page);
+            _pageCache[BuildPageCacheKey(record.Manifest.Id, mediaId, chapterId, page.Index)] = page;
+        }
+
+        return new MediaPagesResult(pages, response.ReachedEnd);
     }
 
     private static string BuildPageCacheKey(string pluginId, string mediaId, string chapterId, int pageIndex)

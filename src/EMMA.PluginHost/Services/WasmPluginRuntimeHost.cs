@@ -12,6 +12,7 @@ public interface IWasmPluginRuntimeHost
     Task<IReadOnlyList<MediaSummary>> SearchAsync(PluginRecord record, string query, CancellationToken cancellationToken);
     Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken);
     Task<MediaPage> GetPageAsync(PluginRecord record, MediaId mediaId, string chapterId, int pageIndex, CancellationToken cancellationToken);
+    Task<MediaPagesResult> GetPagesAsync(PluginRecord record, MediaId mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken);
 }
 
 public interface IWasmComponentInvoker
@@ -194,6 +195,47 @@ public sealed class WasmPluginRuntimeHost(
         }
 
         return new MediaPage(page.Id, page.Index, contentUri);
+    }
+
+    public async Task<MediaPagesResult> GetPagesAsync(
+        PluginRecord record,
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        if (startIndex < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(startIndex));
+        }
+
+        if (count <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        var pages = new List<MediaPage>(count);
+        var reachedEnd = false;
+
+        for (var offset = 0; offset < count; offset++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pageIndex = startIndex + offset;
+
+            try
+            {
+                var page = await GetPageAsync(record, mediaId, chapterId, pageIndex, cancellationToken);
+                pages.Add(page);
+            }
+            catch (KeyNotFoundException ex) when (ex.Message.StartsWith("PAGE_NOT_FOUND:", StringComparison.Ordinal))
+            {
+                reachedEnd = true;
+                break;
+            }
+        }
+
+        return new MediaPagesResult(pages, reachedEnd);
     }
 
     private string ResolveComponentPath(PluginManifest manifest)

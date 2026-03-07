@@ -100,6 +100,11 @@ public sealed class WasmPluginRuntimeHostTests
 
         var page = await host.GetPageAsync(record, MediaId.Create("demo-1"), "ch-1", 0, CancellationToken.None);
         Assert.Equal("p-1", page.PageId);
+
+        var pages = await host.GetPagesAsync(record, MediaId.Create("demo-1"), "ch-1", 0, 3, CancellationToken.None);
+        Assert.Equal(3, pages.Pages.Count);
+        Assert.False(pages.ReachedEnd);
+        Assert.Equal(2, pages.Pages[2].Index);
     }
 
     private static Task WriteWasmComponentHeaderAsync(string wasmPath)
@@ -115,13 +120,17 @@ public sealed class WasmPluginRuntimeHostTests
             IReadOnlyList<string> operationArgs,
             CancellationToken cancellationToken)
         {
+            var pageIndex = operationArgs.Count >= 3 && int.TryParse(operationArgs[2], out var parsedPageIndex)
+                ? parsedPageIndex
+                : 0;
+
             return Task.FromResult(operation switch
             {
                 "handshake" => "{\"version\":\"0.1.0\",\"message\":\"ok\"}",
                 "capabilities" => "[\"health\",\"search\",\"paged\"]",
                 "search" => "[{\"id\":\"demo-1\",\"source\":\"demo\",\"title\":\"Demo Manga\",\"mediaType\":\"paged\"}]",
                 "chapters" => "[{\"id\":\"ch-1\",\"number\":1,\"title\":\"Chapter 1\"}]",
-                "page" => "{\"id\":\"p-1\",\"index\":0,\"contentUri\":\"https://example.com/p1.jpg\"}",
+                "page" => $"{{\"id\":\"p-{pageIndex + 1}\",\"index\":{pageIndex},\"contentUri\":\"https://example.com/p{pageIndex + 1}.jpg\"}}",
                 _ => throw new InvalidOperationException($"Unknown operation '{operation}'.")
             });
         }
