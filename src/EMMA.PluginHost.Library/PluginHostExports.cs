@@ -25,6 +25,7 @@ namespace EMMA.PluginHost.Library;
 /// </summary>
 public static class PluginHostExports
 {
+    private const string DefaultProgressUserId = "local";
     private static ServiceProvider? _serviceProvider;
     private static PluginRegistry? _registry;
     private static PluginHandshakeService? _handshake;
@@ -98,6 +99,7 @@ public static class PluginHostExports
                 services.AddSingleton(PageAssetCacheOptions.Default);
                 services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
                 services.AddSingleton<ILibraryPort, SqliteLibraryPort>();
+                services.AddSingleton<IProgressPort, SqliteProgressPort>();
                 services.AddSingleton<IPageAssetCachePort>(sp =>
                     new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
                 services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
@@ -819,6 +821,176 @@ public static class PluginHostExports
             var normalizedUserId = ToLibraryStorageKey(userId);
             var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
             library.RemoveAsync(normalizedUserId, MediaId.Create(mediaId), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    public static string? GetMediaProgressJsonManaged(
+        string mediaId,
+        string pluginId,
+        string mediaType,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return null;
+            }
+
+            EnsureInitialized();
+            var progress = _serviceProvider!.GetRequiredService<IProgressPort>();
+            var mediaIdValue = MediaId.Create(mediaId);
+            var normalizedPluginId = pluginId ?? string.Empty;
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            if (string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase))
+            {
+                var video = progress.GetVideoProgressAsync(
+                    mediaIdValue,
+                    normalizedPluginId,
+                    normalizedUserId,
+                    CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                if (video is null)
+                {
+                    return "null";
+                }
+
+                var payload = new MediaProgressResponse(
+                    "video",
+                    null,
+                    null,
+                    video.PositionSeconds,
+                    video.Completed,
+                    video.LastViewedAtUtc.ToString("O"));
+                return JsonSerializer.Serialize(payload, PluginHostExportsJsonContext.Default.MediaProgressResponse);
+            }
+
+            var paged = progress.GetPagedProgressAsync(
+                mediaIdValue,
+                normalizedPluginId,
+                normalizedUserId,
+                CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            if (paged is null)
+            {
+                return "null";
+            }
+
+            var pagedPayload = new MediaProgressResponse(
+                "paged",
+                paged.ChapterId,
+                paged.PageIndex,
+                null,
+                paged.Completed,
+                paged.LastViewedAtUtc.ToString("O"));
+            return JsonSerializer.Serialize(pagedPayload, PluginHostExportsJsonContext.Default.MediaProgressResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static int SetPagedProgressManaged(
+        string mediaId,
+        string pluginId,
+        string chapterId,
+        int pageIndex,
+        bool completed,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return 0;
+            }
+
+            if (string.IsNullOrWhiteSpace(chapterId))
+            {
+                SetLastError("Chapter ID is required");
+                return 0;
+            }
+
+            EnsureInitialized();
+            var progress = _serviceProvider!.GetRequiredService<IProgressPort>();
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            progress.SetPagedProgressAsync(
+                MediaId.Create(mediaId),
+                pluginId ?? string.Empty,
+                chapterId,
+                Math.Max(0, pageIndex),
+                completed,
+                normalizedUserId,
+                CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    public static int SetVideoProgressManaged(
+        string mediaId,
+        string pluginId,
+        double positionSeconds,
+        bool completed,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return 0;
+            }
+
+            EnsureInitialized();
+            var progress = _serviceProvider!.GetRequiredService<IProgressPort>();
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            progress.SetVideoProgressAsync(
+                MediaId.Create(mediaId),
+                pluginId ?? string.Empty,
+                Math.Max(0, positionSeconds),
+                completed,
+                normalizedUserId,
+                CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
 

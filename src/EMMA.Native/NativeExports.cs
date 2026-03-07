@@ -995,6 +995,154 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_media_progress_json")]
+    public static IntPtr RuntimeGetMediaProgressJson(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr pluginIdUtf8,
+        IntPtr mediaTypeUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaId = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("mediaId is required.");
+                return IntPtr.Zero;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.GetMediaProgressJsonManaged(mediaId, pluginId, mediaType);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to get media progress.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_set_paged_progress")]
+    public static int RuntimeSetPagedProgress(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr pluginIdUtf8,
+        IntPtr chapterIdUtf8,
+        int pageIndex,
+        int completed)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaId = PtrToString(mediaIdUtf8);
+            var chapterId = PtrToString(chapterIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+            {
+                SetLastError("mediaId and chapterId are required.");
+                return 0;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+
+            EnsurePluginHostInitialized();
+            var result = PluginHostExports.SetPagedProgressManaged(
+                mediaId,
+                pluginId,
+                chapterId,
+                Math.Max(0, pageIndex),
+                completed != 0);
+
+            if (result == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to set paged progress.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_set_video_progress")]
+    public static int RuntimeSetVideoProgress(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr pluginIdUtf8,
+        double positionSeconds,
+        int completed)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaId = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+
+            EnsurePluginHostInitialized();
+            var result = PluginHostExports.SetVideoProgressManaged(
+                mediaId,
+                pluginId,
+                Math.Max(0, positionSeconds),
+                completed != 0);
+
+            if (result == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to set video progress.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_last_error")]
     public static IntPtr LastError()
     {
