@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_CRATE_DIR="$ROOT_DIR/src/EMMA.WasmRuntime.Native"
 RID="${1:-}"
 OUTPUT_DIR="${2:-}"
+CARGO_PROFILE="${WASM_RUNTIME_CARGO_PROFILE:-release}"
 
 if [[ -z "$RID" ]]; then
   echo "Usage: $0 <rid> [output-dir]"
@@ -55,10 +56,10 @@ echo "Building emma_wasm_runtime for $RID ($TARGET_TRIPLE)..."
 
 cargo build \
   --manifest-path "$RUNTIME_CRATE_DIR/Cargo.toml" \
-  --release \
+  --profile "$CARGO_PROFILE" \
   --target "$TARGET_TRIPLE"
 
-SOURCE_LIB="$RUNTIME_CRATE_DIR/target/$TARGET_TRIPLE/release/$LIB_FILE"
+SOURCE_LIB="$RUNTIME_CRATE_DIR/target/$TARGET_TRIPLE/$CARGO_PROFILE/$LIB_FILE"
 if [[ ! -f "$SOURCE_LIB" ]]; then
   echo "Expected native runtime library not found: $SOURCE_LIB"
   exit 1
@@ -69,3 +70,4 @@ mkdir -p "$OUTPUT_DIR"
 cp "$SOURCE_LIB" "$OUTPUT_DIR/"
 
 echo "Native runtime build succeeded: $OUTPUT_DIR/$LIB_FILE"
+echo "Cargo profile used: $CARGO_PROFILE"

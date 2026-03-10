@@ -21,3 +21,10 @@ wasmtime = { version = "34.0.2", default-features = false, features = ["componen
 
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 wasmtime = { version = "34.0.2", features = ["component-model"] }
+
+[profile.release-size]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
