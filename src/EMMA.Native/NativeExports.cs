@@ -488,6 +488,8 @@ public static class NativeExports
         var resultCountForLog = 0;
         long pluginHostCallMs = 0;
         long pluginHostParseMapMs = 0;
+        string? pluginHostTimingSnapshot = null;
+        string pluginHostCorrelationId = "<none>";
         long pipelineSearchMs = 0;
         long buildJsonMs = 0;
         var success = false;
@@ -513,6 +515,8 @@ public static class NativeExports
                 results = hostResult.Results;
                 pluginHostCallMs = hostResult.HostCallMs;
                 pluginHostParseMapMs = hostResult.ParseMapMs;
+                pluginHostTimingSnapshot = hostResult.HostTimingSnapshot;
+                pluginHostCorrelationId = hostResult.CorrelationId;
             }
             else
             {
@@ -547,7 +551,7 @@ public static class NativeExports
                 stopwatch.ElapsedMilliseconds,
                 $"handle={handle}, pluginId={pluginIdForLog}, queryLength={queryLengthForLog}, count={resultCountForLog}, success={success}");
 
-            var phaseMessage = $"search phases (handle={handle}, pluginId={pluginIdForLog}, hostCallMs={pluginHostCallMs}, hostParseMapMs={pluginHostParseMapMs}, pipelineSearchMs={pipelineSearchMs}, buildJsonMs={buildJsonMs}, totalMs={stopwatch.ElapsedMilliseconds}, success={success})";
+            var phaseMessage = $"search phases (handle={handle}, pluginId={pluginIdForLog}, hostCorrelationId={pluginHostCorrelationId}, hostCallMs={pluginHostCallMs}, hostParseMapMs={pluginHostParseMapMs}, pipelineSearchMs={pipelineSearchMs}, buildJsonMs={buildJsonMs}, totalMs={stopwatch.ElapsedMilliseconds}, success={success})";
             if (stopwatch.ElapsedMilliseconds >= 500)
             {
                 LogInfo("timing", phaseMessage);
@@ -555,6 +559,11 @@ public static class NativeExports
             else
             {
                 LogDebug("timing", phaseMessage);
+            }
+
+            if (!string.IsNullOrWhiteSpace(pluginHostTimingSnapshot))
+            {
+                LogInfo("timing", $"search host detail (handle={handle}, pluginId={pluginIdForLog}) {pluginHostTimingSnapshot}");
             }
         }
     }
@@ -1609,20 +1618,29 @@ public static class NativeExports
     private readonly record struct SearchHostPhaseResult(
         IReadOnlyList<MediaSummary> Results,
         long HostCallMs,
-        long ParseMapMs);
+        long ParseMapMs,
+        string? HostTimingSnapshot,
+        string CorrelationId);
 
     private static SearchHostPhaseResult SearchViaEmbeddedPluginHostTimed(string pluginId, string query)
     {
         EnsurePluginHostInitialized();
+        var correlationId = Guid.NewGuid().ToString("n");
 
         var hostCallStopwatch = Stopwatch.StartNew();
-        var results = PluginHostExports.SearchMediaManaged(pluginId, query);
+        var results = PluginHostExports.SearchMediaManaged(pluginId, query, correlationId);
         hostCallStopwatch.Stop();
 
         var nativeWasmTiming = PluginHostExports.TakeLastWasmNativeTimingManaged();
         if (!string.IsNullOrWhiteSpace(nativeWasmTiming))
         {
             LogInfo("temp-timing-remove", nativeWasmTiming!);
+        }
+
+        var hostTimingSnapshot = PluginHostExports.TakeLastSearchTimingManaged();
+        if (!string.IsNullOrWhiteSpace(hostTimingSnapshot))
+        {
+            LogInfo("timing", hostTimingSnapshot!);
         }
 
         if (results == null)
@@ -1632,7 +1650,7 @@ public static class NativeExports
         }
 
         // Typed fast-path: results are already normalized domain objects from PluginHostExports.
-        return new SearchHostPhaseResult(results, hostCallStopwatch.ElapsedMilliseconds, 0);
+        return new SearchHostPhaseResult(results, hostCallStopwatch.ElapsedMilliseconds, 0, hostTimingSnapshot, correlationId);
     }
 
     private static string? GetMediaIdProperty(JsonElement element)

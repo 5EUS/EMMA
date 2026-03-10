@@ -39,9 +39,11 @@ public static class PluginHostExports
     private static readonly object _errorLock = new();
     private static readonly ConcurrentDictionary<string, GrpcChannel> _grpcChannelCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, MediaPage> _pageCache = new(StringComparer.Ordinal);
+    private static readonly object _searchTimingLock = new();
 
     // Don't use [ThreadStatic] - we need the error to be visible across threads for FFI
     private static string? _lastError;
+    private static string? _lastSearchTiming;
 
     // ==================== Managed API (callable from C#) ====================
 
@@ -319,11 +321,32 @@ public static class PluginHostExports
     /// </summary>
     public static IReadOnlyList<EMMA.Domain.MediaSummary>? SearchMediaManaged(string pluginId, string query)
     {
+        return SearchMediaManaged(pluginId, query, null);
+    }
+
+    public static IReadOnlyList<EMMA.Domain.MediaSummary>? SearchMediaManaged(string pluginId, string query, string? correlationId)
+    {
         ClearLastError();
+        var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+            ? Guid.NewGuid().ToString("n")
+            : correlationId!;
+        var ensureInitMs = 0L;
+        var snapshotLookupMs = 0L;
+        var fastPathMs = 0L;
+        var resolveMs = 0L;
+        var runtimeSearchMs = 0L;
+        var grpcSearchMs = 0L;
+        var grpcMapMs = 0L;
+        var path = "unknown";
+        var success = false;
 
         try
         {
+            var ensureInitStopwatch = System.Diagnostics.Stopwatch.StartNew();
             EnsureInitialized();
+            ensureInitStopwatch.Stop();
+            ensureInitMs = ensureInitStopwatch.ElapsedMilliseconds;
 
             if (string.IsNullOrWhiteSpace(pluginId))
             {
@@ -331,25 +354,36 @@ public static class PluginHostExports
                 return null;
             }
 
+            var snapshotLookupStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var snapshotRecord = _registry!
                 .GetSnapshot()
                 .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+            snapshotLookupStopwatch.Stop();
+            snapshotLookupMs = snapshotLookupStopwatch.ElapsedMilliseconds;
 
             if (snapshotRecord is not null
                 && _wasmRuntime!.IsWasmPlugin(snapshotRecord.Manifest)
                 && snapshotRecord.Runtime.State is PluginRuntimeState.Running or PluginRuntimeState.External
                 && (snapshotRecord.Runtime.State == PluginRuntimeState.External || snapshotRecord.Status.Success))
             {
+                var fastPathStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var fastResults = _wasmRuntime.SearchAsync(snapshotRecord, query ?? string.Empty, CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
+                fastPathStopwatch.Stop();
+                fastPathMs = fastPathStopwatch.ElapsedMilliseconds;
+                path = "fast-wasm";
+                success = true;
                 return fastResults;
             }
 
+            var resolveStopwatch = System.Diagnostics.Stopwatch.StartNew();
             var resolution = _pluginResolution!
                 .ResolveAsync(pluginId, CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+            resolveStopwatch.Stop();
+            resolveMs = resolveStopwatch.ElapsedMilliseconds;
 
             var record = resolution.Record;
             if (record == null)
@@ -385,9 +419,13 @@ public static class PluginHostExports
             IReadOnlyList<EMMA.Domain.MediaSummary> results;
             if (_wasmRuntime!.IsWasmPlugin(record.Manifest))
             {
+                var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 results = _wasmRuntime.SearchAsync(record, query ?? string.Empty, CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
+                runtimeSearchStopwatch.Stop();
+                runtimeSearchMs = runtimeSearchStopwatch.ElapsedMilliseconds;
+                path = "resolved-wasm";
             }
             else
             {
@@ -406,21 +444,24 @@ public static class PluginHostExports
 
                 var channel = GetOrCreateChannel(address);
 
-                var correlationId = Guid.NewGuid().ToString("n");
                 var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
                 var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+                var grpcCallStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var response = client.SearchAsync(new PluginContracts.SearchRequest
                 {
                     Query = query ?? string.Empty,
                     Context = new PluginContracts.RequestContext
                     {
-                        CorrelationId = correlationId,
+                        CorrelationId = resolvedCorrelationId,
                         DeadlineUtc = deadlineUtc.ToString("O")
                     }
                 }, cancellationToken: CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
+                grpcCallStopwatch.Stop();
+                grpcSearchMs = grpcCallStopwatch.ElapsedMilliseconds;
 
+                var grpcMapStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 results = response.Results
                     .Select(result => new EMMA.Domain.MediaSummary(
                         EMMA.Domain.MediaId.Create(result.Id),
@@ -432,8 +473,12 @@ public static class PluginHostExports
                         string.IsNullOrWhiteSpace(result.ThumbnailUrl) ? null : result.ThumbnailUrl,
                         string.IsNullOrWhiteSpace(result.Description) ? null : result.Description))
                     .ToList();
+                grpcMapStopwatch.Stop();
+                grpcMapMs = grpcMapStopwatch.ElapsedMilliseconds;
+                path = "grpc";
             }
 
+            success = true;
             return results;
         }
         catch (Exception ex)
@@ -441,11 +486,34 @@ public static class PluginHostExports
             SetLastError(ex);
             return null;
         }
+        finally
+        {
+            totalStopwatch.Stop();
+            SetLastSearchTiming($"[search-timing] correlationId={resolvedCorrelationId} pluginId={pluginId} queryLength={(query ?? string.Empty).Length} path={path} ensureInitMs={ensureInitMs} snapshotLookupMs={snapshotLookupMs} fastPathMs={fastPathMs} resolveMs={resolveMs} runtimeSearchMs={runtimeSearchMs} grpcSearchMs={grpcSearchMs} grpcMapMs={grpcMapMs} totalMs={totalStopwatch.ElapsedMilliseconds} success={success}");
+        }
     }
 
     public static string? TakeLastWasmNativeTimingManaged()
     {
         return NativeInProcessWasmComponentInvoker.TakeLastNativeTimingSnapshot();
+    }
+
+    public static string? TakeLastSearchTimingManaged()
+    {
+        lock (_searchTimingLock)
+        {
+            var value = _lastSearchTiming;
+            _lastSearchTiming = null;
+            return value;
+        }
+    }
+
+    private static void SetLastSearchTiming(string value)
+    {
+        lock (_searchTimingLock)
+        {
+            _lastSearchTiming = value;
+        }
     }
 
     public static string? GetChaptersJsonManaged(string pluginId, string mediaId)

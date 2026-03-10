@@ -52,13 +52,22 @@ public sealed class PluginResolutionService(
             }
 
             var updated = ResolveEndpointIfNeeded(manifest);
-            await _sandboxManager.PrepareAsync(updated, cancellationToken);
-            var runtime = await _processManager.EnsureStartedAsync(
-                updated,
-                _registry.GetRuntime(updated),
-                cancellationToken);
-            _registry.UpdateRuntime(updated, runtime);
-            await _handshakeService.HandshakeSingleAsync(updated, cancellationToken);
+            if (_wasmRuntimeHost.IsWasmPlugin(updated))
+            {
+                _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
+                _registry.UpdateRuntime(updated, PluginRuntimeStatus.External());
+                await _handshakeService.HandshakeSingleAsync(updated, cancellationToken);
+            }
+            else
+            {
+                await _sandboxManager.PrepareAsync(updated, cancellationToken);
+                var runtime = await _processManager.EnsureStartedAsync(
+                    updated,
+                    _registry.GetRuntime(updated),
+                    cancellationToken);
+                _registry.UpdateRuntime(updated, runtime);
+                await _handshakeService.HandshakeSingleAsync(updated, cancellationToken);
+            }
 
             snapshot = _registry.GetSnapshot();
             record = snapshot.FirstOrDefault(item =>
@@ -71,31 +80,44 @@ public sealed class PluginResolutionService(
         }
 
         var runtimeState = record.Runtime.State;
-        var staleRunningState = runtimeState == PluginRuntimeState.Running
+        var isWasm = _wasmRuntimeHost.IsWasmPlugin(record.Manifest);
+
+        var staleRunningState = !isWasm
+            && runtimeState == PluginRuntimeState.Running
             && !_processManager.IsProcessRunning(record.Manifest.Id);
+
         var shouldEnsureRuntime = runtimeState is PluginRuntimeState.Unknown
             or PluginRuntimeState.Starting
             or PluginRuntimeState.Stopped
             or PluginRuntimeState.Crashed
             or PluginRuntimeState.Timeout
             || staleRunningState;
+
         var shouldRehandshake = !record.Status.Success
             && runtimeState is PluginRuntimeState.Running or PluginRuntimeState.External;
 
         if (shouldEnsureRuntime || shouldRehandshake)
         {
             var updated = ResolveEndpointIfNeeded(record.Manifest);
-            await _sandboxManager.PrepareAsync(updated, cancellationToken);
-
-            var runtime = await _processManager.EnsureStartedAsync(
-                updated,
-                _registry.GetRuntime(updated),
-                cancellationToken);
-            _registry.UpdateRuntime(updated, runtime);
-
-            if (runtime.State is PluginRuntimeState.Running or PluginRuntimeState.External)
+            if (isWasm)
             {
+                _registry.UpdateRuntime(updated, PluginRuntimeStatus.External());
                 await _handshakeService.HandshakeSingleAsync(updated, cancellationToken);
+            }
+            else
+            {
+                await _sandboxManager.PrepareAsync(updated, cancellationToken);
+
+                var runtime = await _processManager.EnsureStartedAsync(
+                    updated,
+                    _registry.GetRuntime(updated),
+                    cancellationToken);
+                _registry.UpdateRuntime(updated, runtime);
+
+                if (runtime.State is PluginRuntimeState.Running or PluginRuntimeState.External)
+                {
+                    await _handshakeService.HandshakeSingleAsync(updated, cancellationToken);
+                }
             }
 
             snapshot = _registry.GetSnapshot();
@@ -111,6 +133,21 @@ public sealed class PluginResolutionService(
         if (string.IsNullOrWhiteSpace(record.Manifest.Protocol))
         {
             return (record, null, new PluginResolutionError("Plugin manifest protocol is missing.", 500));
+        }
+
+        if (isWasm)
+        {
+            if (!record.Status.Success)
+            {
+                return (
+                    record,
+                    null,
+                    new PluginResolutionError(
+                        $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
+                        503));
+            }
+
+            return (record, null, null);
         }
 
         if (record.Runtime.State is not (PluginRuntimeState.Running or PluginRuntimeState.External))
@@ -131,23 +168,6 @@ public sealed class PluginResolutionService(
                 new PluginResolutionError(
                     $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
                     503));
-        }
-
-        if (_wasmRuntimeHost.IsWasmPlugin(record.Manifest))
-        {
-            if (!record.Status.Success)
-            {
-                return (
-                    record,
-                    null,
-                    new PluginResolutionError(
-                        $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
-                        503));
-            }
-
-            await _wasmRuntimeHost.WarmupAsync(record.Manifest, cancellationToken);
-
-            return (record, null, null);
         }
 
         if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))

@@ -467,6 +467,7 @@ fn invoke_component(
         response_tx,
     };
 
+    let send_start = Instant::now();
     if worker.sender.send(request).is_err() {
         invalidate_worker(&cache_key);
 
@@ -479,26 +480,32 @@ fn invoke_component(
             response_tx: retry_tx,
         };
 
+        let retry_send_start = Instant::now();
         retry_worker
             .sender
             .send(retry_request)
             .map_err(|_| anyhow!("WASM worker channel send failed after retry"))?;
+        let send_ms = retry_send_start.elapsed().as_millis();
 
         return recv_worker_response(
             &retry_cache_key,
             operation,
             timeout_ms,
             worker_acquire_ms,
+            send_ms,
             total_start,
             retry_rx,
         );
     }
+
+    let send_ms = send_start.elapsed().as_millis();
 
     recv_worker_response(
         &cache_key,
         operation,
         timeout_ms,
         worker_acquire_ms,
+        send_ms,
         total_start,
         response_rx,
     )
@@ -509,9 +516,11 @@ fn recv_worker_response(
     operation: &str,
     timeout_ms: u32,
     worker_acquire_ms: u128,
+    send_ms: u128,
     total_start: Instant,
     response_rx: mpsc::Receiver<Result<InvokeAttemptOutput>>,
 ) -> Result<String> {
+    let wait_start = Instant::now();
     let response = if timeout_ms == 0 {
         response_rx
             .recv()
@@ -531,11 +540,12 @@ fn recv_worker_response(
             }
         }
     };
+    let wait_ms = wait_start.elapsed().as_millis();
 
     match response {
         Ok(output) => {
             set_last_timing(format!(
-                "[TEMP_TIMING_REMOVE] wasmInvoke op={operation} workerAcquireMs={worker_acquire_ms} totalMs={} detail={}",
+                "[TEMP_TIMING_REMOVE] wasmInvoke op={operation} workerAcquireMs={worker_acquire_ms} sendMs={send_ms} waitMs={wait_ms} totalMs={} detail={}",
                 total_start.elapsed().as_millis(),
                 output.timing
             ));
@@ -544,7 +554,7 @@ fn recv_worker_response(
         }
         Err(err) => {
             set_last_timing(format!(
-                "[TEMP_TIMING_REMOVE] wasmInvoke op={operation} failed workerAcquireMs={worker_acquire_ms} totalMs={} err={:#}",
+                "[TEMP_TIMING_REMOVE] wasmInvoke op={operation} failed workerAcquireMs={worker_acquire_ms} sendMs={send_ms} waitMs={wait_ms} totalMs={} err={:#}",
                 total_start.elapsed().as_millis(),
                 err
             ));
@@ -564,6 +574,7 @@ fn invoke_component_once_inner(
     let wasi_setup_start = Instant::now();
     let state = build_runner_state(context, wasi_args, Some(stdout_pipe.clone()), Some(stderr_pipe.clone()))?;
     let wasi_setup_ms = wasi_setup_start.elapsed().as_millis();
+    let wasi_setup_us = wasi_setup_start.elapsed().as_micros();
 
     let runtime = get_async_runtime()?;
     let mut instantiate_ms = 0u128;
@@ -642,7 +653,7 @@ fn invoke_component_once_inner(
             inner_start.elapsed().as_millis(),
             inner_start.elapsed().as_micros(),
             wasi_setup_ms,
-            wasi_setup_start.elapsed().as_micros(),
+            wasi_setup_us,
             instantiate_ms,
             instantiate_us,
             run_ms,
