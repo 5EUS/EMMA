@@ -23,4 +23,7 @@ public sealed class PluginHostOptions
     public int PluginIdleTimeoutSeconds { get; init; } = 120;
     public int PluginIdleSweepSeconds { get; init; } = 30;
     public int WasmOperationTimeoutSeconds { get; init; } = 15;
+    public bool WasmDirectHttp { get; init; } = false;
+    public bool WasmBridgeInMemoryPayload { get; init; } = false;
+    public int WasmBridgeInMemoryPayloadMaxBytes { get; init; } = 262_144;
 }

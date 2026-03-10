@@ -24,6 +24,7 @@ public sealed class WasmPluginRuntimeHostTests
         var host = new WasmPluginRuntimeHost(
             resolver,
             new FakeWasmComponentInvoker(),
+            options,
             NullLogger<WasmPluginRuntimeHost>.Instance);
 
         var pluginRoot = Path.Combine(sandboxRoot, "demo");
@@ -67,6 +68,7 @@ public sealed class WasmPluginRuntimeHostTests
         var host = new WasmPluginRuntimeHost(
             resolver,
             new FakeWasmComponentInvoker(),
+            options,
             NullLogger<WasmPluginRuntimeHost>.Instance);
 
         var pluginRoot = Path.Combine(sandboxRoot, "demo");

@@ -1,11 +1,29 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.IO;
+using System.Collections.Concurrent;
 
 namespace EMMA.PluginHost.Services;
 
-public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
+public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker, IDisposable
 {
     private const int NativeSuccess = 0;
+    private const uint DefaultTimeoutMs = 30_000u;
+    private const uint SearchTimeoutMs = 30_000u;
+    private static readonly object LastTimingLock = new();
+    private static string? _lastNativeTimingSnapshot;
+    private readonly ConcurrentDictionary<string, ulong> _pluginHandles = new(StringComparer.OrdinalIgnoreCase);
+    private bool _disposed;
+
+    public static string? TakeLastNativeTimingSnapshot()
+    {
+        lock (LastTimingLock)
+        {
+            var value = _lastNativeTimingSnapshot;
+            _lastNativeTimingSnapshot = null;
+            return value;
+        }
+    }
 
     public Task<string> InvokeAsync(
         string componentPath,
@@ -26,18 +44,28 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
         }
 
         var argsJson = JsonSerializer.Serialize(operationArgs ?? [], WasmComponentInvokerJsonContext.Default.IReadOnlyListString);
-        var timeoutMs = 30_000u;
+        var timeoutMs = DefaultTimeoutMs;
+        if (string.Equals(operation, "search", StringComparison.OrdinalIgnoreCase))
+        {
+            timeoutMs = SearchTimeoutMs;
+        }
 
-        var componentPtr = Marshal.StringToCoTaskMemUTF8(componentPath);
         var operationPtr = Marshal.StringToCoTaskMemUTF8(operation);
         var argsPtr = Marshal.StringToCoTaskMemUTF8(argsJson);
 
         try
         {
+            var handle = GetOrCreatePluginHandle(componentPath);
+
+            if (handle == 0)
+            {
+                return Task.FromResult(InvokeLegacy(componentPath, operationPtr, argsPtr, timeoutMs));
+            }
+
             IntPtr outJson;
             IntPtr outError;
-            var result = NativeBindings.Invoke(
-                componentPtr,
+            var result = NativeBindings.PluginInvoke(
+                handle,
                 operationPtr,
                 argsPtr,
                 timeoutMs,
@@ -46,9 +74,33 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
 
             try
             {
+                var timingPtr = NativeBindings.TakeLastTiming();
+                try
+                {
+                    var timing = PtrToUtf8String(timingPtr);
+                    if (!string.IsNullOrWhiteSpace(timing))
+                    {
+                        lock (LastTimingLock)
+                        {
+                            _lastNativeTimingSnapshot = timing;
+                        }
+                    }
+                }
+                finally
+                {
+                    NativeBindings.FreeString(timingPtr);
+                }
+
                 if (result != NativeSuccess)
                 {
                     var nativeError = PtrToUtf8String(outError);
+                    if (!string.IsNullOrWhiteSpace(nativeError)
+                        && nativeError.Contains("unknown plugin handle", StringComparison.OrdinalIgnoreCase)
+                        && _pluginHandles.TryRemove(componentPath, out _))
+                    {
+                        return InvokeAsync(componentPath, operation, operationArgs ?? [], cancellationToken);
+                    }
+
                     throw new InvalidOperationException(
                         string.IsNullOrWhiteSpace(nativeError)
                             ? $"Native WASM runtime invocation failed (code {result})."
@@ -77,10 +129,93 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
         }
         finally
         {
-            Marshal.FreeCoTaskMem(componentPtr);
             Marshal.FreeCoTaskMem(operationPtr);
             Marshal.FreeCoTaskMem(argsPtr);
         }
+    }
+
+    private ulong GetOrCreatePluginHandle(string componentPath)
+    {
+        ThrowIfDisposed();
+
+        if (_pluginHandles.TryGetValue(componentPath, out var existing) && existing != 0)
+        {
+            return existing;
+        }
+
+        ulong handle;
+        try
+        {
+            handle = NativeBindings.OpenPlugin(componentPath);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            handle = 0;
+        }
+
+        _pluginHandles[componentPath] = handle;
+        return handle;
+    }
+
+    private static string InvokeLegacy(string componentPath, IntPtr operationPtr, IntPtr argsPtr, uint timeoutMs)
+    {
+        var componentPtr = Marshal.StringToCoTaskMemUTF8(componentPath);
+        try
+        {
+            IntPtr outJson;
+            IntPtr outError;
+            var result = NativeBindings.Invoke(componentPtr, operationPtr, argsPtr, timeoutMs, out outJson, out outError);
+            try
+            {
+                if (result != NativeSuccess)
+                {
+                    var nativeError = PtrToUtf8String(outError);
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(nativeError)
+                            ? $"Native WASM runtime invocation failed (code {result})."
+                            : nativeError);
+                }
+
+                return PtrToUtf8String(outJson)
+                    ?? throw new InvalidOperationException("Native WASM runtime returned empty output.");
+            }
+            finally
+            {
+                NativeBindings.FreeString(outJson);
+                NativeBindings.FreeString(outError);
+            }
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(componentPtr);
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(NativeInProcessWasmComponentInvoker));
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        foreach (var (_, handle) in _pluginHandles)
+        {
+            if (handle != 0)
+            {
+                NativeBindings.ClosePlugin(handle);
+            }
+        }
+
+        _pluginHandles.Clear();
     }
 
     private static string? PtrToUtf8String(IntPtr ptr)
@@ -97,6 +232,40 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
     {
         private const string ExternalLibraryName = "emma_wasm_runtime";
         private const string InternalLibraryName = "__Internal";
+
+        private delegate int InvokeDelegate(
+            IntPtr componentPath,
+            IntPtr operation,
+            IntPtr operationArgsJson,
+            uint timeoutMs,
+            out IntPtr outJson,
+            out IntPtr outError);
+
+        private delegate int OpenPluginDelegate(
+            IntPtr componentPath,
+            out ulong outHandle,
+            out IntPtr outError);
+
+        private delegate int PluginInvokeDelegate(
+            ulong handle,
+            IntPtr operation,
+            IntPtr operationArgsJson,
+            uint timeoutMs,
+            out IntPtr outJson,
+            out IntPtr outError);
+
+        private delegate void PluginCloseDelegate(ulong handle);
+
+        private delegate void FreeStringDelegate(IntPtr value);
+        private delegate IntPtr TakeLastTimingDelegate();
+
+        private static readonly object FallbackLock = new();
+        private static InvokeDelegate? _fallbackInvoke;
+        private static OpenPluginDelegate? _fallbackOpen;
+        private static PluginInvokeDelegate? _fallbackPluginInvoke;
+        private static PluginCloseDelegate? _fallbackPluginClose;
+        private static FreeStringDelegate? _fallbackFreeString;
+        private static TakeLastTimingDelegate? _fallbackTakeLastTiming;
 
         [DllImport(ExternalLibraryName, EntryPoint = "emma_wasm_component_invoke", CallingConvention = CallingConvention.Cdecl)]
         private static extern int InvokeExternal(
@@ -116,11 +285,53 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
             out IntPtr outJson,
             out IntPtr outError);
 
+        [DllImport(ExternalLibraryName, EntryPoint = "emma_wasm_plugin_open", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int OpenPluginExternal(
+            IntPtr componentPath,
+            out ulong outHandle,
+            out IntPtr outError);
+
+        [DllImport(InternalLibraryName, EntryPoint = "emma_wasm_plugin_open", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int OpenPluginInternal(
+            IntPtr componentPath,
+            out ulong outHandle,
+            out IntPtr outError);
+
+        [DllImport(ExternalLibraryName, EntryPoint = "emma_wasm_plugin_invoke", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int PluginInvokeExternal(
+            ulong handle,
+            IntPtr operation,
+            IntPtr operationArgsJson,
+            uint timeoutMs,
+            out IntPtr outJson,
+            out IntPtr outError);
+
+        [DllImport(InternalLibraryName, EntryPoint = "emma_wasm_plugin_invoke", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int PluginInvokeInternal(
+            ulong handle,
+            IntPtr operation,
+            IntPtr operationArgsJson,
+            uint timeoutMs,
+            out IntPtr outJson,
+            out IntPtr outError);
+
+        [DllImport(ExternalLibraryName, EntryPoint = "emma_wasm_plugin_close", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void PluginCloseExternal(ulong handle);
+
+        [DllImport(InternalLibraryName, EntryPoint = "emma_wasm_plugin_close", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void PluginCloseInternal(ulong handle);
+
         [DllImport(ExternalLibraryName, EntryPoint = "emma_wasm_runtime_free_string", CallingConvention = CallingConvention.Cdecl)]
         private static extern void FreeStringExternal(IntPtr value);
 
         [DllImport(InternalLibraryName, EntryPoint = "emma_wasm_runtime_free_string", CallingConvention = CallingConvention.Cdecl)]
         private static extern void FreeStringInternal(IntPtr value);
+
+        [DllImport(ExternalLibraryName, EntryPoint = "emma_wasm_runtime_take_last_timing", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr TakeLastTimingExternal();
+
+        [DllImport(InternalLibraryName, EntryPoint = "emma_wasm_runtime_take_last_timing", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr TakeLastTimingInternal();
 
         public static int Invoke(
             IntPtr componentPath,
@@ -132,10 +343,153 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
         {
             if (UseInternalLibrary())
             {
-                return InvokeInternal(componentPath, operation, operationArgsJson, timeoutMs, out outJson, out outError);
+                try
+                {
+                    return InvokeInternal(componentPath, operation, operationArgsJson, timeoutMs, out outJson, out outError);
+                }
+                catch (DllNotFoundException)
+                {
+                }
+                catch (EntryPointNotFoundException)
+                {
+                }
+
+                if (TryResolveFallback(out var invoke, out _, out _, out _, out _, out _))
+                {
+                    return invoke(componentPath, operation, operationArgsJson, timeoutMs, out outJson, out outError);
+                }
+
+                throw new DllNotFoundException("WASM runtime symbols are unavailable via __Internal and fallback module resolution.");
             }
 
             return InvokeExternal(componentPath, operation, operationArgsJson, timeoutMs, out outJson, out outError);
+        }
+
+        public static ulong OpenPlugin(string componentPath)
+        {
+            var pathPtr = Marshal.StringToCoTaskMemUTF8(componentPath);
+            try
+            {
+                ulong handle;
+                IntPtr outError;
+                var result = UseInternalLibrary()
+                    ? TryOpenInternal(pathPtr, out handle, out outError)
+                    : OpenPluginExternal(pathPtr, out handle, out outError);
+
+                try
+                {
+                    if (result == NativeSuccess)
+                    {
+                        return handle;
+                    }
+
+                    var nativeError = Marshal.PtrToStringUTF8(outError);
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(nativeError)
+                            ? $"Native WASM runtime plugin open failed (code {result})."
+                            : nativeError);
+                }
+                finally
+                {
+                    FreeString(outError);
+                }
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(pathPtr);
+            }
+        }
+
+        private static int TryOpenInternal(IntPtr componentPath, out ulong outHandle, out IntPtr outError)
+        {
+            try
+            {
+                return OpenPluginInternal(componentPath, out outHandle, out outError);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                outHandle = 0;
+                outError = IntPtr.Zero;
+                throw new PlatformNotSupportedException("Native runtime does not expose plugin lifecycle API.");
+            }
+            catch (DllNotFoundException)
+            {
+                if (TryResolveFallback(out _, out _, out _, out var open, out _, out _)
+                    && open is not null)
+                {
+                    return open(componentPath, out outHandle, out outError);
+                }
+
+                outHandle = 0;
+                outError = IntPtr.Zero;
+                throw;
+            }
+        }
+
+        public static int PluginInvoke(
+            ulong handle,
+            IntPtr operation,
+            IntPtr operationArgsJson,
+            uint timeoutMs,
+            out IntPtr outJson,
+            out IntPtr outError)
+        {
+            if (UseInternalLibrary())
+            {
+                try
+                {
+                    return PluginInvokeInternal(handle, operation, operationArgsJson, timeoutMs, out outJson, out outError);
+                }
+                catch (EntryPointNotFoundException)
+                {
+                    throw new PlatformNotSupportedException("Native runtime does not expose plugin lifecycle API.");
+                }
+                catch (DllNotFoundException)
+                {
+                    if (TryResolveFallback(out _, out _, out _, out _, out var pluginInvoke, out _)
+                        && pluginInvoke is not null)
+                    {
+                        return pluginInvoke(handle, operation, operationArgsJson, timeoutMs, out outJson, out outError);
+                    }
+
+                    throw;
+                }
+            }
+
+            return PluginInvokeExternal(handle, operation, operationArgsJson, timeoutMs, out outJson, out outError);
+        }
+
+        public static void ClosePlugin(ulong handle)
+        {
+            if (handle == 0)
+            {
+                return;
+            }
+
+            if (UseInternalLibrary())
+            {
+                try
+                {
+                    PluginCloseInternal(handle);
+                    return;
+                }
+                catch (DllNotFoundException)
+                {
+                }
+                catch (EntryPointNotFoundException)
+                {
+                }
+
+                if (TryResolveFallback(out _, out _, out _, out _, out _, out var close)
+                    && close is not null)
+                {
+                    close(handle);
+                }
+
+                return;
+            }
+
+            PluginCloseExternal(handle);
         }
 
         public static void FreeString(IntPtr value)
@@ -147,11 +501,159 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker
 
             if (UseInternalLibrary())
             {
-                FreeStringInternal(value);
-                return;
+                try
+                {
+                    FreeStringInternal(value);
+                    return;
+                }
+                catch (DllNotFoundException)
+                {
+                }
+                catch (EntryPointNotFoundException)
+                {
+                }
+
+                if (TryResolveFallback(out _, out var freeString, out _, out _, out _, out _))
+                {
+                    freeString(value);
+                    return;
+                }
+
+                throw new DllNotFoundException("WASM runtime free-string symbol is unavailable via __Internal and fallback module resolution.");
             }
 
             FreeStringExternal(value);
+        }
+
+        public static IntPtr TakeLastTiming()
+        {
+            if (UseInternalLibrary())
+            {
+                try
+                {
+                    return TakeLastTimingInternal();
+                }
+                catch (DllNotFoundException)
+                {
+                }
+                catch (EntryPointNotFoundException)
+                {
+                }
+
+                if (TryResolveFallback(out _, out _, out var takeLastTiming, out _, out _, out _)
+                    && takeLastTiming is not null)
+                {
+                    return takeLastTiming();
+                }
+
+                return IntPtr.Zero;
+            }
+
+            try
+            {
+                return TakeLastTimingExternal();
+            }
+            catch (DllNotFoundException)
+            {
+                return IntPtr.Zero;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                return IntPtr.Zero;
+            }
+        }
+
+        private static bool TryResolveFallback(
+            out InvokeDelegate invoke,
+            out FreeStringDelegate freeString,
+            out TakeLastTimingDelegate? takeLastTiming,
+            out OpenPluginDelegate? open,
+            out PluginInvokeDelegate? pluginInvoke,
+            out PluginCloseDelegate? pluginClose)
+        {
+            lock (FallbackLock)
+            {
+                if (_fallbackInvoke is not null && _fallbackFreeString is not null)
+                {
+                    invoke = _fallbackInvoke;
+                    freeString = _fallbackFreeString;
+                    takeLastTiming = _fallbackTakeLastTiming;
+                    open = _fallbackOpen;
+                    pluginInvoke = _fallbackPluginInvoke;
+                    pluginClose = _fallbackPluginClose;
+                    return true;
+                }
+
+                var baseDir = AppContext.BaseDirectory;
+                var candidates = new[]
+                {
+                    Path.Combine(baseDir, "Runner.debug.dylib"),
+                    Path.Combine(baseDir, "Runner"),
+                    Path.Combine(baseDir, "Frameworks", "App.framework", "App")
+                };
+
+                foreach (var candidate in candidates)
+                {
+                    if (!File.Exists(candidate))
+                    {
+                        continue;
+                    }
+
+                    if (!NativeLibrary.TryLoad(candidate, out var handle))
+                    {
+                        continue;
+                    }
+
+                    if (!NativeLibrary.TryGetExport(handle, "emma_wasm_component_invoke", out var invokePtr))
+                    {
+                        continue;
+                    }
+
+                    if (!NativeLibrary.TryGetExport(handle, "emma_wasm_runtime_free_string", out var freePtr))
+                    {
+                        continue;
+                    }
+
+                    TakeLastTimingDelegate? fallbackTakeLastTiming = null;
+                    if (NativeLibrary.TryGetExport(handle, "emma_wasm_runtime_take_last_timing", out var timingPtr))
+                    {
+                        fallbackTakeLastTiming = Marshal.GetDelegateForFunctionPointer<TakeLastTimingDelegate>(timingPtr);
+                    }
+
+                    _fallbackInvoke = Marshal.GetDelegateForFunctionPointer<InvokeDelegate>(invokePtr);
+                    _fallbackFreeString = Marshal.GetDelegateForFunctionPointer<FreeStringDelegate>(freePtr);
+                    _fallbackTakeLastTiming = fallbackTakeLastTiming;
+
+                    if (NativeLibrary.TryGetExport(handle, "emma_wasm_plugin_open", out var openPtr))
+                    {
+                        _fallbackOpen = Marshal.GetDelegateForFunctionPointer<OpenPluginDelegate>(openPtr);
+                    }
+                    if (NativeLibrary.TryGetExport(handle, "emma_wasm_plugin_invoke", out var pluginInvokePtr))
+                    {
+                        _fallbackPluginInvoke = Marshal.GetDelegateForFunctionPointer<PluginInvokeDelegate>(pluginInvokePtr);
+                    }
+                    if (NativeLibrary.TryGetExport(handle, "emma_wasm_plugin_close", out var pluginClosePtr))
+                    {
+                        _fallbackPluginClose = Marshal.GetDelegateForFunctionPointer<PluginCloseDelegate>(pluginClosePtr);
+                    }
+
+                    invoke = _fallbackInvoke;
+                    freeString = _fallbackFreeString;
+                    takeLastTiming = _fallbackTakeLastTiming;
+                    open = _fallbackOpen;
+                    pluginInvoke = _fallbackPluginInvoke;
+                    pluginClose = _fallbackPluginClose;
+                    return true;
+                }
+
+                invoke = null!;
+                freeString = null!;
+                takeLastTiming = null;
+                open = null;
+                pluginInvoke = null;
+                pluginClose = null;
+                return false;
+            }
         }
 
         private static bool UseInternalLibrary()

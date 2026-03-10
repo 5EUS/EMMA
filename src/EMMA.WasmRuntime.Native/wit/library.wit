@@ -1,0 +1,66 @@
+package touring:library;
+
+world library {
+  export fetchmedialist: func(kind: media-type, query: string) -> list<media>;
+  export fetchunits: func(mediaid: string) -> list<unit>;
+  export fetchassets: func(unitid: string) -> list<asset>;
+  export getcapabilities: func() -> provider-capabilities;
+
+  variant media-type {
+    anime,
+    manga,
+    other(string),
+  }
+
+  record media {
+    id: string,
+    mediatype: media-type,
+    title: string,
+    description: option<string>,
+    url: option<string>,
+    cover-url: option<string>,
+  }
+
+  variant unit-kind {
+    chapter,
+    episode,
+    section,
+    other(string),
+  }
+
+  record unit {
+    id: string,
+    title: string,
+    number-text: option<string>,
+    number: option<f32>,
+    lang: option<string>,
+    group: option<string>,
+    url: option<string>,
+    published-at: option<string>,
+    kind: unit-kind,
+  }
+
+  variant asset-kind {
+    page,
+    image,
+    audio,
+    video,
+    subtitle,
+    file,
+    other(string),
+  }
+
+  record asset {
+    url: string,
+    mime: option<string>,
+    width: option<u32>,
+    height: option<u32>,
+    kind: asset-kind,
+  }
+
+  record provider-capabilities {
+    media-types: list<media-type>,
+    unit-kinds: list<unit-kind>,
+    asset-kinds: list<asset-kind>,
+  }
+}

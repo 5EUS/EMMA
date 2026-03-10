@@ -82,6 +82,54 @@ Behavior:
 - RID→target mapping is built in for: `linux-x64`, `osx-arm64`, `osx-x64`, `win-x64`, `ios-arm64`, `iossimulator-arm64`, `iossimulator-x64`.
 - Writes runtime artifact to `artifacts/wasm-runtime-native/<rid>` by default.
 
+### `build-ios-native-framework.sh`
+
+Usage:
+
+```bash
+./scripts/build-ios-native-framework.sh [output-dir]
+```
+
+Behavior:
+
+- Builds iOS WASM runtime static artifacts for both `ios-arm64` and `iossimulator-arm64` using `build-wasm-runtime-native.sh`.
+- Simulator compilation can be disabled with `BUILD_SIMULATOR=0` (device-only XCFramework output).
+- Resolves native `EmmaNative` artifact from one of:
+  - `EXISTING_NATIVE_XCFRAMEWORK` (preferred), or
+  - prebuilt static libs (`NATIVE_DEVICE_LIB`, `NATIVE_SIM_LIB`), or
+  - optional `BUILD_NATIVE_IOS_LIBS=1` attempt via `publish-native-aot.sh`.
+- Does not implicitly reuse prior `artifacts/ios-native-framework/EmmaNative.xcframework`; native input must be explicit or freshly produced from static libs.
+- Notes on `BUILD_NATIVE_IOS_LIBS=1`:
+  - Current repo/toolchain may fail with `NETSDK1203` for iOS NativeAOT publish.
+  - In that case use prebuilt native iOS artifacts from your Mono iOS AOT lane.
+- Produces XCFramework outputs:
+  - `artifacts/ios-native-framework/EmmaNative.xcframework`
+  - `artifacts/ios-native-framework/EmmaWasmRuntime.xcframework`
+- This is the iOS XCFramework lane.
+
+### `publish-and-sync-ios-runtime.sh`
+
+Usage:
+
+```bash
+./scripts/publish-and-sync-ios-runtime.sh [emmaui-dir] [ios-framework-dir]
+```
+
+Recommended:
+```bash
+BUILD_SIMULATOR=0 BUILD_NATIVE_IOS_LIBS=1 RUN_POD_INSTALL=1 publish-and-sync-ios-runtime.sh /Users/zeus/Git/emmaui
+```
+
+Behavior:
+
+- Runs the full iOS lane end-to-end:
+  - builds XCFrameworks via `build-ios-native-framework.sh`
+  - syncs local pod + runs pod install via `sync-ios-native-framework-to-emmaui.sh`
+- Enforces native input preflight before build starts. Provide one of:
+  - `EXISTING_NATIVE_XCFRAMEWORK=/abs/path/EmmaNative.xcframework`
+  - `NATIVE_DEVICE_LIB=/abs/path/libemma_native.a` (optionally `NATIVE_SIM_LIB`)
+  - `BUILD_NATIVE_IOS_LIBS=1` (attempts in-repo NativeAOT publish)
+
 ### `publish-test-plugin.sh`
 
 Usage:
@@ -109,10 +157,29 @@ Behavior:
 - Copies native library artifact into target app platform directories.
 - Destination mapping:
   - macOS: `emmaui/macos/Runner/Frameworks`
-  - iOS/iOS simulator: `emmaui/ios/Runner/Frameworks`
   - Android: `emmaui/android/app/src/main/jniLibs/<abi>`
   - Linux: `emmaui/linux/runner`
   - Windows: `emmaui/build/windows/<arch>/runner/{Debug,Profile,Release}`
+
+Notes:
+
+- iOS should use `sync-ios-native-framework-to-emmaui.sh` with XCFrameworks/local pod integration instead of direct `.a` copy.
+
+### `sync-ios-native-framework-to-emmaui.sh`
+
+Usage:
+
+```bash
+./scripts/sync-ios-native-framework-to-emmaui.sh [emmaui-dir] [ios-framework-dir]
+```
+
+Behavior:
+
+- Copies iOS XCFramework outputs into `emmaui/ios/EMMANativeRuntime/Frameworks`.
+- Generates local podspec: `emmaui/ios/EMMANativeRuntime/EMMANativeRuntime.podspec`.
+- Ensures `Podfile` references the local pod:
+  - `pod 'EMMANativeRuntime', :path => './EMMANativeRuntime'`
+- Runs `pod install` by default (`RUN_POD_INSTALL=0` to skip).
 
 ### `sync-plugin-host-to-emmaui.sh`
 
@@ -157,6 +224,9 @@ Usage:
 Behavior:
 
 - For `osx-*` and `linux-*`: runs publish+sync for Native, PluginHost, and TestPlugin.
+- For `ios-*` and `iossimulator-*`: runs the single iOS lane script `publish-and-sync-ios-runtime.sh`.
+  - Defaults `BUILD_SIMULATOR=0` for `ios-*`.
+  - Defaults `BUILD_SIMULATOR=1` for `iossimulator-*`.
 - For other RIDs: runs Native + PluginHost only, skips TestPlugin by design.
 
 ### `run-plugin-host-with-test-plugin.sh`
@@ -302,18 +372,23 @@ Behavior:
 
 ## iOS bring-up script path (current)
 
-For fast device validation of native core + host plumbing:
+For fast device/simulator validation of native core + host plumbing:
 
-1) Publish AOT native lib for iOS/simulator:
+1) Build iOS XCFrameworks (device + simulator):
 
 ```bash
-./scripts/publish-native-aot.sh ios-arm64
-./scripts/sync-native-aot-to-emmaui.sh ios-arm64
+./scripts/build-ios-native-framework.sh
 ```
 
-2) PluginHost/TestPlugin scripts are currently desktop-centric; iOS plugin runtime execution should use the internal WASM lane in host/runtime integration.
+2) Sync into `emmaui` iOS local pod and install pods:
 
-3) Keep signing/integrity checks in dev mode explicit while Phase 3 hardening is in progress.
+```bash
+./scripts/sync-ios-native-framework-to-emmaui.sh
+```
+
+3) PluginHost/TestPlugin scripts are desktop-centric; iOS plugin runtime execution uses the internal WASM lane.
+
+4) Keep signing/integrity checks in dev mode explicit while Phase 3 hardening is in progress.
 
 ## Known constraints
 

@@ -19,9 +19,16 @@ fi
 # Use static libraries only for iOS (App Store requirement)
 # Use dynamic libraries for desktop/Linux/Android (easier deployment, code signing)
 NATIVE_LIB_TYPE="Shared"
+TARGET_FRAMEWORK="net10.0"
+PUBLISH_AOT_USING_RUNTIME_PACK="false"
+EMMA_IOS_AOT_BUILD="false"
+VALIDATE_XCODE_VERSION="${VALIDATE_XCODE_VERSION:-false}"
+IOS_NATIVE_LIB_TYPE="${IOS_NATIVE_LIB_TYPE:-Shared}"
 case "$RID" in
   ios-*|iossimulator-*)
-    NATIVE_LIB_TYPE="Static"
+    NATIVE_LIB_TYPE="$IOS_NATIVE_LIB_TYPE"
+    PUBLISH_AOT_USING_RUNTIME_PACK="true"
+    EMMA_IOS_AOT_BUILD="true"
     ;;
 esac
 
@@ -31,12 +38,16 @@ mkdir -p "$OUTPUT_DIR"
 echo "Publishing EMMA.Native NativeAOT (static library) for $RID..."
 
 dotnet publish "$PROJECT_PATH" \
+  -f "$TARGET_FRAMEWORK" \
   -c Release \
   -r "$RID" \
   -p:PublishAot=true \
+  -p:PublishAotUsingRuntimePack="$PUBLISH_AOT_USING_RUNTIME_PACK" \
   -p:SelfContained=true \
   -p:NativeLib="$NATIVE_LIB_TYPE" \
   -p:NativeLibName=emma_native \
+  -p:EMMAIosAotBuild="$EMMA_IOS_AOT_BUILD" \
+  -p:ValidateXcodeVersion="$VALIDATE_XCODE_VERSION" \
   -o "$OUTPUT_DIR"
 
 EXPECTED_NAME=""
@@ -80,8 +91,13 @@ case "$RID" in
     fi
     ;;
   ios-*|iossimulator-*)
-    EXPECTED_NAME="libemma_native.a"
-    SOURCE_NAME="EMMA.Native.a"
+    if [[ "$NATIVE_LIB_TYPE" == "Static" ]]; then
+      EXPECTED_NAME="libemma_native.a"
+      SOURCE_NAME="EMMA.Native.a"
+    else
+      EXPECTED_NAME="libemma_native.dylib"
+      SOURCE_NAME="EMMA.Native.dylib"
+    fi
     ;;
 esac
 

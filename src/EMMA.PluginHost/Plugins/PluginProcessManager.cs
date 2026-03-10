@@ -151,6 +151,17 @@ public sealed class PluginProcessManager(
             return PluginRuntimeStatus.External();
         }
 
+        if (OperatingSystem.IsIOS())
+        {
+            AppendProcessEvent(
+                manifest.Id,
+                "startup skipped: process-managed plugin is unsupported on iOS; only wasm/external plugins are allowed");
+            return current.WithState(
+                PluginRuntimeState.Disabled,
+                "process-plugins-unsupported",
+                "Process-managed plugins are not supported on iOS. Use wasm/external plugin runtime paths.");
+        }
+
         if (_signatureOptions.RequireSignedPlugins)
         {
             if (!_signatureVerifier.Verify(manifest, out var reason))
@@ -532,6 +543,12 @@ public sealed class PluginProcessManager(
         {
             if (!handle.Process.HasExited)
             {
+                if (OperatingSystem.IsIOS())
+                {
+                    AppendProcessEvent(pluginId, "stop skipped: process kill unsupported on iOS");
+                    return;
+                }
+
                 handle.Process.Kill(entireProcessTree: true);
             }
 

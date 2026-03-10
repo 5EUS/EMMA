@@ -146,6 +146,8 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken) as SqliteTransaction
             ?? throw new InvalidOperationException("Failed to start SQLite transaction.");
 
+        await EnsureMediaRowExistsAsync(connection, transaction, mediaId, cancellationToken);
+
         await using (var deleteCommand = connection.CreateCommand())
         {
             deleteCommand.Transaction = transaction;
@@ -226,6 +228,8 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken) as SqliteTransaction
             ?? throw new InvalidOperationException("Failed to start SQLite transaction.");
+
+        await EnsureMediaRowExistsAsync(connection, transaction, mediaId, cancellationToken);
 
         await using (var deleteCommand = connection.CreateCommand())
         {
@@ -354,5 +358,51 @@ var tags = JsonSerializer.Deserialize(tagsJson, StorageJsonContext.Default.IRead
         return string.Equals(value, "video", StringComparison.OrdinalIgnoreCase)
             ? MediaType.Video
             : MediaType.Paged;
+    }
+
+    private static async Task EnsureMediaRowExistsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MediaId mediaId,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow.ToString("O");
+
+        await using var ensureCommand = connection.CreateCommand();
+        ensureCommand.Transaction = transaction;
+        ensureCommand.CommandText = """
+            INSERT OR IGNORE INTO media (
+                id,
+                source_id,
+                title,
+                media_type,
+                rating,
+                synopsis,
+                language,
+                tags,
+                created_at,
+                updated_at
+            ) VALUES (
+                $id,
+                $sourceId,
+                $title,
+                $mediaType,
+                NULL,
+                NULL,
+                NULL,
+                $tags,
+                $createdAt,
+                $updatedAt
+            );
+            """;
+        ensureCommand.Parameters.AddWithValue("$id", mediaId.Value);
+        ensureCommand.Parameters.AddWithValue("$sourceId", "unknown");
+        ensureCommand.Parameters.AddWithValue("$title", mediaId.Value);
+        ensureCommand.Parameters.AddWithValue("$mediaType", "paged");
+        ensureCommand.Parameters.AddWithValue("$tags", "[]");
+        ensureCommand.Parameters.AddWithValue("$createdAt", now);
+        ensureCommand.Parameters.AddWithValue("$updatedAt", now);
+
+        await ensureCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 }

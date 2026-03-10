@@ -35,7 +35,9 @@ public static class PagedPipelineEndpoints
             var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null)
             {
-                return error ?? Results.Problem("Plugin resolution failed.");
+                return error is null
+                    ? Results.Problem("Plugin resolution failed.")
+                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
             }
 
             var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
@@ -144,7 +146,9 @@ public static class PagedPipelineEndpoints
             var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null)
             {
-                return error ?? Results.Problem("Plugin resolution failed.");
+                return error is null
+                    ? Results.Problem("Plugin resolution failed.")
+                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
             }
 
             var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
@@ -206,7 +210,9 @@ public static class PagedPipelineEndpoints
             var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null)
             {
-                return error ?? Results.Problem("Plugin resolution failed.");
+                return error is null
+                    ? Results.Problem("Plugin resolution failed.")
+                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
             }
 
             var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
@@ -281,7 +287,9 @@ public static class PagedPipelineEndpoints
             var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null)
             {
-                return error ?? Results.Problem("Plugin resolution failed.");
+                return error is null
+                    ? Results.Problem("Plugin resolution failed.")
+                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
             }
 
             var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
@@ -358,7 +366,9 @@ public static class PagedPipelineEndpoints
             var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
             if (error is not null || record is null)
             {
-                return error ?? Results.Problem("Plugin resolution failed.");
+                return error is null
+                    ? Results.Problem("Plugin resolution failed.")
+                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
             }
 
             var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);

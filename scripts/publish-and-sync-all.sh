@@ -41,6 +41,21 @@ if [[ "$RID" == osx-* || "$RID" == linux-* ]]; then
   fi
 
   echo "Done. WASM runtime + Native AOT (with embedded PluginHost) + TestPlugin artifacts are published and synced for $RID."
+elif [[ "$RID" == ios-* || "$RID" == iossimulator-* ]]; then
+  IOS_BUILD_SIMULATOR="${BUILD_SIMULATOR:-}"
+  if [[ -z "$IOS_BUILD_SIMULATOR" ]]; then
+    if [[ "$RID" == ios-* ]]; then
+      IOS_BUILD_SIMULATOR="0"
+    else
+      IOS_BUILD_SIMULATOR="1"
+    fi
+  fi
+
+  echo "[1/1] Running iOS runtime publish+sync lane..."
+  BUILD_SIMULATOR="$IOS_BUILD_SIMULATOR" \
+    "$ROOT_DIR/scripts/publish-and-sync-ios-runtime.sh" "$EMMAUI_DIR"
+
+  echo "Done. iOS static XCFramework artifacts are published and synced for $RID."
 else
   echo "[1/3] Building WASM runtime ($RID)..."
   "$ROOT_DIR/scripts/build-wasm-runtime-native.sh" "$RID"

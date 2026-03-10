@@ -260,6 +260,11 @@ public sealed class PluginHandshakeTests
     {
         public bool IsWasmPlugin(PluginManifest manifest) => false;
 
+        public Task WarmupAsync(PluginManifest manifest, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
         public Task<PluginHandshakeStatus> HandshakeAsync(PluginManifest manifest, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();

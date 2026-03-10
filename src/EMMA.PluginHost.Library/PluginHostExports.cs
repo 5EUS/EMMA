@@ -26,6 +26,9 @@ namespace EMMA.PluginHost.Library;
 public static class PluginHostExports
 {
     private const string DefaultProgressUserId = "local";
+    private const string DirectHttpEnvVar = "EMMA_WASM_DIRECT_HTTP";
+    private const string InMemoryBridgeEnvVar = "EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD";
+    private const string InMemoryBridgeMaxBytesEnvVar = "EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD_MAX_BYTES";
     private static ServiceProvider? _serviceProvider;
     private static PluginRegistry? _registry;
     private static PluginHandshakeService? _handshake;
@@ -75,6 +78,12 @@ public static class PluginHostExports
                             .SetValue(options, false);
                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmOperationTimeoutSeconds))!
                             .SetValue(options, 15);
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmDirectHttp))!
+                            .SetValue(options, ResolveWasmDirectHttpEnabled());
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmBridgeInMemoryPayload))!
+                            .SetValue(options, ResolveWasmBridgeInMemoryPayloadEnabled());
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmBridgeInMemoryPayloadMaxBytes))!
+                            .SetValue(options, ResolveWasmBridgeInMemoryPayloadMaxBytes());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.SandboxEnabled))!
                             .SetValue(options, true);
                     });
@@ -158,6 +167,60 @@ public static class PluginHostExports
             SetLastError(ex);
             return -1;
         }
+    }
+
+    private static bool ResolveWasmBridgeInMemoryPayloadEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable(InMemoryBridgeEnvVar);
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            if (bool.TryParse(value, out var parsedBool))
+            {
+                return parsedBool;
+            }
+
+            return value.Trim() switch
+            {
+                "1" or "yes" or "on" => true,
+                "0" or "no" or "off" => false,
+                _ => false
+            };
+        }
+
+        return false;
+    }
+
+    private static bool ResolveWasmDirectHttpEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable(DirectHttpEnvVar);
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            if (bool.TryParse(value, out var parsedBool))
+            {
+                return parsedBool;
+            }
+
+            return value.Trim() switch
+            {
+                "1" or "yes" or "on" => true,
+                _ => false
+            };
+        }
+
+        return false;
+    }
+
+    private static int ResolveWasmBridgeInMemoryPayloadMaxBytes()
+    {
+        var value = Environment.GetEnvironmentVariable(InMemoryBridgeMaxBytesEnvVar);
+        if (!string.IsNullOrWhiteSpace(value)
+            && int.TryParse(value, out var parsed)
+            && parsed > 0)
+        {
+            return parsed;
+        }
+
+        return 262_144;
     }
 
     /// <summary>
@@ -244,6 +307,18 @@ public static class PluginHostExports
     /// </summary>
     public static string? SearchJsonManaged(string pluginId, string query)
     {
+        var results = SearchMediaManaged(pluginId, query);
+        return results is null
+            ? null
+            : JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+    }
+
+    /// <summary>
+    /// Search for media using the specified plugin and return typed results.
+    /// Returns null on error, check GetLastErrorManaged().
+    /// </summary>
+    public static IReadOnlyList<EMMA.Domain.MediaSummary>? SearchMediaManaged(string pluginId, string query)
+    {
         ClearLastError();
 
         try
@@ -256,6 +331,21 @@ public static class PluginHostExports
                 return null;
             }
 
+            var snapshotRecord = _registry!
+                .GetSnapshot()
+                .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+
+            if (snapshotRecord is not null
+                && _wasmRuntime!.IsWasmPlugin(snapshotRecord.Manifest)
+                && snapshotRecord.Runtime.State is PluginRuntimeState.Running or PluginRuntimeState.External
+                && (snapshotRecord.Runtime.State == PluginRuntimeState.External || snapshotRecord.Status.Success))
+            {
+                var fastResults = _wasmRuntime.SearchAsync(snapshotRecord, query ?? string.Empty, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                return fastResults;
+            }
+
             var resolution = _pluginResolution!
                 .ResolveAsync(pluginId, CancellationToken.None)
                 .GetAwaiter()
@@ -264,10 +354,6 @@ public static class PluginHostExports
             var record = resolution.Record;
             if (record == null)
             {
-                var snapshotRecord = _registry!
-                    .GetSnapshot()
-                    .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
-
                 if (snapshotRecord is not null)
                 {
                     SetLastError(
@@ -348,13 +434,18 @@ public static class PluginHostExports
                     .ToList();
             }
 
-            return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+            return results;
         }
         catch (Exception ex)
         {
             SetLastError(ex);
             return null;
         }
+    }
+
+    public static string? TakeLastWasmNativeTimingManaged()
+    {
+        return NativeInProcessWasmComponentInvoker.TakeLastNativeTimingSnapshot();
     }
 
     public static string? GetChaptersJsonManaged(string pluginId, string mediaId)
@@ -1445,7 +1536,11 @@ public static class PluginHostExports
 
     private static void InitializeSqliteForEmbeddedHost()
     {
-        if (OperatingSystem.IsLinux())
+        if (OperatingSystem.IsLinux()
+            || OperatingSystem.IsIOS()
+            || OperatingSystem.IsMacOS()
+            || OperatingSystem.IsMacCatalyst()
+            || OperatingSystem.IsTvOS())
         {
             try
             {

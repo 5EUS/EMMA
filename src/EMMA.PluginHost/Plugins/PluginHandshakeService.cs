@@ -41,7 +41,7 @@ public sealed class PluginHandshakeService(
         var manifests = await _loader.LoadManifestsAsync(cancellationToken);
         foreach (var manifest in manifests)
         {
-            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            var updated = ResolveEndpointIfNeeded(manifest);
             _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
         }
 
@@ -53,7 +53,7 @@ public sealed class PluginHandshakeService(
 
         foreach (var manifest in manifests)
         {
-            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            var updated = ResolveEndpointIfNeeded(manifest);
             await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
                 updated,
@@ -64,6 +64,11 @@ public sealed class PluginHandshakeService(
             var status = await HandshakeAsync(updated, runtime, cancellationToken);
             runtime = _registry.GetRuntime(updated);
             _registry.Upsert(updated, status, runtime);
+
+            if (status.Success)
+            {
+                await _wasmRuntimeHost.WarmupAsync(updated, cancellationToken);
+            }
         }
     }
 
@@ -100,7 +105,7 @@ public sealed class PluginHandshakeService(
                 resolved = manifest with { Endpoint = existing.Manifest.Endpoint };
             }
 
-            var updated = _endpointAllocator.EnsureEndpoint(resolved);
+            var updated = ResolveEndpointIfNeeded(resolved);
             _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
         }
 
@@ -112,7 +117,7 @@ public sealed class PluginHandshakeService(
 
         foreach (var manifest in manifests)
         {
-            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            var updated = ResolveEndpointIfNeeded(manifest);
             await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
                 updated,
@@ -123,6 +128,11 @@ public sealed class PluginHandshakeService(
             var status = await HandshakeAsync(updated, runtime, cancellationToken);
             runtime = _registry.GetRuntime(updated);
             _registry.Upsert(updated, status, runtime);
+
+            if (status.Success)
+            {
+                await _wasmRuntimeHost.WarmupAsync(updated, cancellationToken);
+            }
         }
     }
 
@@ -130,12 +140,26 @@ public sealed class PluginHandshakeService(
         PluginManifest manifest,
         CancellationToken cancellationToken)
     {
-        var updated = _endpointAllocator.EnsureEndpoint(manifest);
+        var updated = ResolveEndpointIfNeeded(manifest);
         var runtime = _registry.GetRuntime(updated);
         var status = await HandshakeAsync(updated, runtime, cancellationToken);
         runtime = _registry.GetRuntime(updated);
         _registry.Upsert(updated, status, runtime);
+        if (status.Success)
+        {
+            await _wasmRuntimeHost.WarmupAsync(updated, cancellationToken);
+        }
         return status;
+    }
+
+    private PluginManifest ResolveEndpointIfNeeded(PluginManifest manifest)
+    {
+        if (_wasmRuntimeHost.IsWasmPlugin(manifest))
+        {
+            return manifest;
+        }
+
+        return _endpointAllocator.EnsureEndpoint(manifest);
     }
 
     private async Task<PluginHandshakeStatus> HandshakeAsync(

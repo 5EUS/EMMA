@@ -45,28 +45,58 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             return false;
         }
 
-        var candidates = new List<string>
+        var preferPrecompiled = OperatingSystem.IsIOS();
+        var candidates = new List<string>();
+
+        if (preferPrecompiled)
         {
-            Path.Combine(pluginRoot, "plugin.wasm"),
-            Path.Combine(pluginRoot, "wasm", "plugin.wasm"),
-            Path.Combine(pluginRoot, "plugin.cwasm"),
-            Path.Combine(pluginRoot, "wasm", "plugin.cwasm")
-        };
+            candidates.Add(Path.Combine(pluginRoot, "plugin.cwasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.cwasm"));
+            candidates.Add(Path.Combine(pluginRoot, "plugin.wasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.wasm"));
+        }
+        else
+        {
+            candidates.Add(Path.Combine(pluginRoot, "plugin.wasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.wasm"));
+            candidates.Add(Path.Combine(pluginRoot, "plugin.cwasm"));
+            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.cwasm"));
+        }
 
         if (!string.IsNullOrWhiteSpace(manifest.Id))
         {
-            candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".wasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".wasm"));
-            candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".cwasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".cwasm"));
+            if (preferPrecompiled)
+            {
+                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".cwasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".cwasm"));
+                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".wasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".wasm"));
+            }
+            else
+            {
+                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".wasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".wasm"));
+                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".cwasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".cwasm"));
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(manifest.Name))
         {
-            candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".wasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".wasm"));
-            candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".cwasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".cwasm"));
+            if (preferPrecompiled)
+            {
+                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".cwasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".cwasm"));
+                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".wasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".wasm"));
+            }
+            else
+            {
+                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".wasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".wasm"));
+                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".cwasm"));
+                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".cwasm"));
+            }
         }
 
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -78,11 +108,21 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             }
         }
 
-        var wildcard = Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
-            .Where(IsWasmComponentBinary)
-            .ToList();
-        wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
-            .Where(IsWasmComponentBinary));
+        var wildcard = new List<string>();
+        if (preferPrecompiled)
+        {
+            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
+                .Where(IsWasmComponentBinary));
+            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
+                .Where(IsWasmComponentBinary));
+        }
+        else
+        {
+            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
+                .Where(IsWasmComponentBinary));
+            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
+                .Where(IsWasmComponentBinary));
+        }
 
         if (wildcard.Count == 1)
         {
@@ -95,6 +135,7 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
 
     private static bool IsWasmComponentBinary(string path)
     {
+        var extension = Path.GetExtension(path);
         using var stream = File.OpenRead(path);
         Span<byte> header = stackalloc byte[8];
         if (stream.Read(header) != header.Length)
@@ -102,6 +143,18 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             return false;
         }
 
+        if (string.Equals(extension, ".cwasm", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsWasmComponentHeader(header)
+                || IsElfHeader(header)
+                || IsMachOHeader(header);
+        }
+
+        return IsWasmComponentHeader(header);
+    }
+
+    private static bool IsWasmComponentHeader(ReadOnlySpan<byte> header)
+    {
         return header[0] == 0x00
             && header[1] == 0x61
             && header[2] == 0x73
@@ -110,6 +163,20 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             && header[5] == 0x00
             && header[6] == 0x01
             && header[7] == 0x00;
+    }
+
+    private static bool IsElfHeader(ReadOnlySpan<byte> header)
+    {
+        return header[0] == 0x7F
+            && header[1] == 0x45
+            && header[2] == 0x4C
+            && header[3] == 0x46;
+    }
+
+    private static bool IsMachOHeader(ReadOnlySpan<byte> header)
+    {
+        var magic = (uint)(header[0] << 24 | header[1] << 16 | header[2] << 8 | header[3]);
+        return magic is 0xFEEDFACE or 0xFEEDFACF or 0xCEFAEDFE or 0xCFFAEDFE or 0xCAFEBABE or 0xBEBAFECA;
     }
 
     private static string ResolveDefaultEntrypoint(string pluginRoot, PluginManifest manifest)

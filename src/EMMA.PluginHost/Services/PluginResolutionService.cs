@@ -3,6 +3,8 @@ using EMMA.PluginHost.Sandboxing;
 
 namespace EMMA.PluginHost.Services;
 
+public sealed record PluginResolutionError(string Message, int StatusCode);
+
 public sealed class PluginResolutionService(
     PluginRegistry registry,
     PluginManifestLoader manifestLoader,
@@ -20,7 +22,7 @@ public sealed class PluginResolutionService(
     private readonly IWasmPluginRuntimeHost _wasmRuntimeHost = wasmRuntimeHost;
     private readonly Plugins.PluginEndpointAllocator _endpointAllocator = endpointAllocator;
 
-    public async Task<(PluginRecord? Record, Uri? Address, IResult? Error)> ResolveAsync(
+    public async Task<(PluginRecord? Record, Uri? Address, PluginResolutionError? Error)> ResolveAsync(
         string? pluginId,
         CancellationToken cancellationToken)
     {
@@ -46,10 +48,10 @@ public sealed class PluginResolutionService(
                 string.Equals(item.Id, pluginId, StringComparison.OrdinalIgnoreCase));
             if (manifest is null)
             {
-                return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
+                return (null, null, new PluginResolutionError("No matching plugin record found.", 404));
             }
 
-            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            var updated = ResolveEndpointIfNeeded(manifest);
             await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
                 updated,
@@ -65,7 +67,7 @@ public sealed class PluginResolutionService(
 
         if (record is null)
         {
-            return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
+            return (null, null, new PluginResolutionError("No matching plugin record found.", 404));
         }
 
         var runtimeState = record.Runtime.State;
@@ -82,7 +84,7 @@ public sealed class PluginResolutionService(
 
         if (shouldEnsureRuntime || shouldRehandshake)
         {
-            var updated = _endpointAllocator.EnsureEndpoint(record.Manifest);
+            var updated = ResolveEndpointIfNeeded(record.Manifest);
             await _sandboxManager.PrepareAsync(updated, cancellationToken);
 
             var runtime = await _processManager.EnsureStartedAsync(
@@ -103,12 +105,12 @@ public sealed class PluginResolutionService(
 
         if (record is null)
         {
-            return (null, null, Results.NotFound(new { message = "No matching plugin record found." }));
+            return (null, null, new PluginResolutionError("No matching plugin record found.", 404));
         }
 
         if (string.IsNullOrWhiteSpace(record.Manifest.Protocol))
         {
-            return (record, null, Results.Problem("Plugin manifest protocol is missing."));
+            return (record, null, new PluginResolutionError("Plugin manifest protocol is missing.", 500));
         }
 
         if (record.Runtime.State is not (PluginRuntimeState.Running or PluginRuntimeState.External))
@@ -116,9 +118,9 @@ public sealed class PluginResolutionService(
             return (
                 record,
                 null,
-                Results.Problem(
+                new PluginResolutionError(
                     $"Plugin '{record.Manifest.Id}' runtime is '{record.Runtime.State}' ({record.Runtime.LastErrorCode ?? "no-code"}: {record.Runtime.LastErrorMessage ?? "no-details"}).",
-                    statusCode: StatusCodes.Status503ServiceUnavailable));
+                    503));
         }
 
         if (record.Runtime.State != PluginRuntimeState.External && !record.Status.Success)
@@ -126,9 +128,9 @@ public sealed class PluginResolutionService(
             return (
                 record,
                 null,
-                Results.Problem(
+                new PluginResolutionError(
                     $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
-                    statusCode: StatusCodes.Status503ServiceUnavailable));
+                    503));
         }
 
         if (_wasmRuntimeHost.IsWasmPlugin(record.Manifest))
@@ -138,29 +140,41 @@ public sealed class PluginResolutionService(
                 return (
                     record,
                     null,
-                    Results.Problem(
+                    new PluginResolutionError(
                         $"Plugin '{record.Manifest.Id}' handshake failed: {record.Status.Message}",
-                        statusCode: StatusCodes.Status503ServiceUnavailable));
+                        503));
             }
+
+            await _wasmRuntimeHost.WarmupAsync(record.Manifest, cancellationToken);
 
             return (record, null, null);
         }
 
         if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
         {
-            return (record, null, Results.Problem($"Unsupported plugin protocol: {record.Manifest.Protocol}."));
+            return (record, null, new PluginResolutionError($"Unsupported plugin protocol: {record.Manifest.Protocol}.", 500));
         }
 
         if (string.IsNullOrWhiteSpace(record.Manifest.Endpoint))
         {
-            return (record, null, Results.Problem("Plugin manifest endpoint is missing."));
+            return (record, null, new PluginResolutionError("Plugin manifest endpoint is missing.", 500));
         }
 
         if (!Uri.TryCreate(record.Manifest.Endpoint, UriKind.Absolute, out var address))
         {
-            return (record, null, Results.Problem("Plugin manifest endpoint is invalid."));
+            return (record, null, new PluginResolutionError("Plugin manifest endpoint is invalid.", 500));
         }
 
         return (record, address, null);
+    }
+
+    private PluginManifest ResolveEndpointIfNeeded(PluginManifest manifest)
+    {
+        if (_wasmRuntimeHost.IsWasmPlugin(manifest))
+        {
+            return manifest;
+        }
+
+        return _endpointAllocator.EnsureEndpoint(manifest);
     }
 }

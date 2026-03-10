@@ -482,6 +482,15 @@ public static class NativeExports
     public static IntPtr RuntimeSearchMediaJson(int handle, IntPtr queryUtf8)
     {
         ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string pluginIdForLog = "<none>";
+        var queryLengthForLog = 0;
+        var resultCountForLog = 0;
+        long pluginHostCallMs = 0;
+        long pluginHostParseMapMs = 0;
+        long pipelineSearchMs = 0;
+        long buildJsonMs = 0;
+        var success = false;
 
         try
         {
@@ -492,23 +501,36 @@ public static class NativeExports
             }
 
             var query = PtrToString(queryUtf8) ?? string.Empty;
+            queryLengthForLog = query.Length;
             var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
             LogDebug("search", $"Search requested. handle={handle}, pluginId={activePluginId ?? "<none>"}, query='{query}'");
 
             IReadOnlyList<MediaSummary> results;
             if (!string.IsNullOrWhiteSpace(activePluginId))
             {
-                results = SearchViaEmbeddedPluginHost(activePluginId, query);
+                var hostResult = SearchViaEmbeddedPluginHostTimed(activePluginId, query);
+                results = hostResult.Results;
+                pluginHostCallMs = hostResult.HostCallMs;
+                pluginHostParseMapMs = hostResult.ParseMapMs;
             }
             else
             {
+                var pipelineStopwatch = Stopwatch.StartNew();
                 results = state.Runtime.Pipeline
                     .SearchAsync(query, CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
+                pipelineStopwatch.Stop();
+                pipelineSearchMs = pipelineStopwatch.ElapsedMilliseconds;
             }
 
+            var buildJsonStopwatch = Stopwatch.StartNew();
             var json = BuildMediaJson(results);
+            buildJsonStopwatch.Stop();
+            buildJsonMs = buildJsonStopwatch.ElapsedMilliseconds;
+            resultCountForLog = results.Count;
+            success = true;
             LogDebug("search", $"Search completed. handle={handle}, count={results.Count}");
             return AllocUtf8(json);
         }
@@ -516,6 +538,24 @@ public static class NativeExports
         {
             SetLastError(ex);
             return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "search",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, queryLength={queryLengthForLog}, count={resultCountForLog}, success={success}");
+
+            var phaseMessage = $"search phases (handle={handle}, pluginId={pluginIdForLog}, hostCallMs={pluginHostCallMs}, hostParseMapMs={pluginHostParseMapMs}, pipelineSearchMs={pipelineSearchMs}, buildJsonMs={buildJsonMs}, totalMs={stopwatch.ElapsedMilliseconds}, success={success})";
+            if (stopwatch.ElapsedMilliseconds >= 500)
+            {
+                LogInfo("timing", phaseMessage);
+            }
+            else
+            {
+                LogDebug("timing", phaseMessage);
+            }
         }
     }
 
@@ -1566,51 +1606,33 @@ public static class NativeExports
         return selected;
     }
 
-    private static IReadOnlyList<MediaSummary> SearchViaEmbeddedPluginHost(string pluginId, string query)
+    private readonly record struct SearchHostPhaseResult(
+        IReadOnlyList<MediaSummary> Results,
+        long HostCallMs,
+        long ParseMapMs);
+
+    private static SearchHostPhaseResult SearchViaEmbeddedPluginHostTimed(string pluginId, string query)
     {
         EnsurePluginHostInitialized();
 
-        var json = PluginHostExports.SearchJsonManaged(pluginId, query);
-        if (json == null)
+        var hostCallStopwatch = Stopwatch.StartNew();
+        var results = PluginHostExports.SearchMediaManaged(pluginId, query);
+        hostCallStopwatch.Stop();
+
+        var nativeWasmTiming = PluginHostExports.TakeLastWasmNativeTimingManaged();
+        if (!string.IsNullOrWhiteSpace(nativeWasmTiming))
+        {
+            LogInfo("temp-timing-remove", nativeWasmTiming!);
+        }
+
+        if (results == null)
         {
             var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host search returned null";
             throw new InvalidOperationException(error);
         }
 
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.ValueKind != JsonValueKind.Array)
-        {
-            return [];
-        }
-
-        var results = new List<MediaSummary>();
-        foreach (var item in doc.RootElement.EnumerateArray())
-        {
-            var id = GetMediaIdProperty(item);
-            if (string.IsNullOrWhiteSpace(id))
-            {
-                continue;
-            }
-
-            var source = GetStringProperty(item, "source")
-                ?? GetStringProperty(item, "sourceId")
-                ?? string.Empty;
-            var title = GetStringProperty(item, "title") ?? string.Empty;
-            var mediaType = GetStringProperty(item, "mediaType");
-
-            results.Add(new MediaSummary(
-                MediaId.Create(id),
-                source,
-                title,
-                string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
-                    ? MediaType.Video
-                    : MediaType.Paged,
-                GetStringProperty(item, "thumbnailUrl")
-                    ?? GetStringProperty(item, "thumbnail_url"),
-                GetStringProperty(item, "description")));
-        }
-
-        return results;
+        // Typed fast-path: results are already normalized domain objects from PluginHostExports.
+        return new SearchHostPhaseResult(results, hostCallStopwatch.ElapsedMilliseconds, 0);
     }
 
     private static string? GetMediaIdProperty(JsonElement element)
@@ -2000,7 +2022,12 @@ public static class NativeExports
                 continue;
             }
 
-            if (ContainsWasmArtifacts(pluginRoot))
+            if (ContainsComponentWasmArtifacts(pluginRoot))
+            {
+                return "cwasm";
+            }
+
+            if (ContainsCoreWasmArtifacts(pluginRoot))
             {
                 return "wasm";
             }
@@ -2009,13 +2036,11 @@ public static class NativeExports
         return "csharp";
     }
 
-    private static bool ContainsWasmArtifacts(string pluginRoot)
+    private static bool ContainsComponentWasmArtifacts(string pluginRoot)
     {
         static bool Exists(string path) => File.Exists(path);
 
-        if (Exists(Path.Combine(pluginRoot, "plugin.wasm"))
-            || Exists(Path.Combine(pluginRoot, "plugin.cwasm"))
-            || Exists(Path.Combine(pluginRoot, "wasm", "plugin.wasm"))
+        if (Exists(Path.Combine(pluginRoot, "plugin.cwasm"))
             || Exists(Path.Combine(pluginRoot, "wasm", "plugin.cwasm")))
         {
             return true;
@@ -2023,8 +2048,27 @@ public static class NativeExports
 
         try
         {
-            return Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.AllDirectories).Any()
-                || Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.AllDirectories).Any();
+            return Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.AllDirectories).Any();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ContainsCoreWasmArtifacts(string pluginRoot)
+    {
+        static bool Exists(string path) => File.Exists(path);
+
+        if (Exists(Path.Combine(pluginRoot, "plugin.wasm"))
+            || Exists(Path.Combine(pluginRoot, "wasm", "plugin.wasm")))
+        {
+            return true;
+        }
+
+        try
+        {
+            return Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.AllDirectories).Any();
         }
         catch
         {
