@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using System.Net;
 using System.Net.Sockets;
 using EMMA.PluginHost.Configuration;
+using EMMA.PluginHost.Platform;
 using EMMA.PluginHost.Sandboxing;
 using Microsoft.Extensions.Options;
 
@@ -118,155 +119,151 @@ public sealed class PluginProcessManager(
 
         try
         {
-        if (string.IsNullOrWhiteSpace(manifest.Protocol))
-        {
-            AppendProcessEvent(manifest.Id, "startup aborted: protocol missing");
-            return current.WithState(PluginRuntimeState.Disabled, "protocol-missing", "Plugin manifest protocol is missing.");
-        }
+            if (string.IsNullOrWhiteSpace(manifest.Protocol))
+            {
+                AppendProcessEvent(manifest.Id, "startup aborted: protocol missing");
+                return current.WithState(PluginRuntimeState.Disabled, "protocol-missing", "Plugin manifest protocol is missing.");
+            }
 
 
-        if (current.State == PluginRuntimeState.Timeout
-            && current.NextRetryAt.HasValue
-            && current.NextRetryAt.Value > DateTimeOffset.UtcNow)
-        {
-            return current;
-        }
+            if (current.State == PluginRuntimeState.Timeout
+                && current.NextRetryAt.HasValue
+                && current.NextRetryAt.Value > DateTimeOffset.UtcNow)
+            {
+                return current;
+            }
 
-        if (current.State == PluginRuntimeState.Quarantined)
-        {
-            return current;
-        }
+            if (current.State == PluginRuntimeState.Quarantined)
+            {
+                return current;
+            }
 
-        if (!TryValidateMinHostVersion(manifest, out var hostVersionReason))
-        {
-            return current.WithState(
-                PluginRuntimeState.Disabled,
-                "host-version-incompatible",
-                hostVersionReason ?? "Plugin runtime minHostVersion is incompatible with this host.");
-        }
-
-        if (_entrypointResolver.TryResolveWasmComponent(manifest, out _))
-        {
-            AppendProcessEvent(manifest.Id, "startup skipped: wasm component plugin (external runtime)");
-            return PluginRuntimeStatus.External();
-        }
-
-        if (OperatingSystem.IsIOS())
-        {
-            AppendProcessEvent(
-                manifest.Id,
-                "startup skipped: process-managed plugin is unsupported on iOS; only wasm/external plugins are allowed");
-            return current.WithState(
-                PluginRuntimeState.Disabled,
-                "process-plugins-unsupported",
-                "Process-managed plugins are not supported on iOS. Use wasm/external plugin runtime paths.");
-        }
-
-        if (_signatureOptions.RequireSignedPlugins)
-        {
-            if (!_signatureVerifier.Verify(manifest, out var reason))
+            if (!TryValidateMinHostVersion(manifest, out var hostVersionReason))
             {
                 return current.WithState(
                     PluginRuntimeState.Disabled,
-                    "signature-invalid",
-                    reason ?? "Plugin signature validation failed.");
+                    "host-version-incompatible",
+                    hostVersionReason ?? "Plugin runtime minHostVersion is incompatible with this host.");
             }
-        }
 
-        if (TryGetProcess(manifest.Id, out var existing))
-        {
-            if (!existing.Process.HasExited)
+            var hasEndpoint = !string.IsNullOrWhiteSpace(manifest.Endpoint);
+            var allowsProcess = HostPlatformPolicy.AllowsProcessPlugins(_options);
+            var allowsWasm = HostPlatformPolicy.AllowsWasmPlugins(_options);
+            var allowsExternal = HostPlatformPolicy.AllowsExternalEndpointPlugins(_options);
+
+            if (_entrypointResolver.TryResolveWasmComponent(manifest, out _))
             {
-                AppendProcessEvent(manifest.Id, $"startup skipped: process already running pid={existing.Process.Id}");
-                return current.WithState(PluginRuntimeState.Running, current.LastErrorCode, current.LastErrorMessage);
+                if (!allowsWasm)
+                {
+                    AppendProcessEvent(manifest.Id, "startup blocked: wasm component detected but wasm runtime is disabled by strategy");
+                    return current.WithState(
+                        PluginRuntimeState.Disabled,
+                        "wasm-plugins-disabled",
+                        "WASM component plugins are disabled by runtime strategy.");
+                }
+
+                AppendProcessEvent(manifest.Id, "startup skipped: wasm component plugin (external runtime)");
+                return PluginRuntimeStatus.External();
             }
 
-            AppendProcessEvent(manifest.Id, $"existing process was exited pid={existing.Process.Id}, removing stale handle");
-            RemoveProcess(manifest.Id);
-        }
+            if (!allowsProcess)
+            {
+                if (hasEndpoint && allowsExternal)
+                {
+                    AppendProcessEvent(manifest.Id, "startup skipped: process runtime disabled by strategy; using external endpoint runtime");
+                    return PluginRuntimeStatus.External();
+                }
 
-        var executable = (string?)null;
-        var hasEndpoint = !string.IsNullOrWhiteSpace(manifest.Endpoint);
-        if (hasEndpoint && !TryResolveEntrypoint(manifest, out executable))
-        {
-            AppendProcessEvent(manifest.Id, "startup skipped: endpoint configured but no local entrypoint resolvable");
-            return current.State == PluginRuntimeState.Unknown
-                ? PluginRuntimeStatus.External()
-                : current;
-        }
+                AppendProcessEvent(
+                    manifest.Id,
+                    "startup blocked: process runtime disabled by strategy and no eligible external endpoint runtime path");
+                return current.WithState(
+                    PluginRuntimeState.Disabled,
+                    "process-plugins-unsupported",
+                    "Process-managed plugins are disabled by runtime strategy.");
+            }
 
-        AppendProcessEvent(manifest.Id, "preparing sandbox");
-        await _sandboxManager.PrepareAsync(manifest, cancellationToken);
-        AppendProcessEvent(manifest.Id, "sandbox prepared");
+            if (_signatureOptions.RequireSignedPlugins)
+            {
+                if (!_signatureVerifier.Verify(manifest, out var reason))
+                {
+                    return current.WithState(
+                        PluginRuntimeState.Disabled,
+                        "signature-invalid",
+                        reason ?? "Plugin signature validation failed.");
+                }
+            }
 
-        var startInfo = BuildStartInfo(manifest, executable);
-        ApplyPluginPort(manifest, startInfo);
-        startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
-        AppendProcessEvent(
-            manifest.Id,
-            $"launch envelope file={startInfo.FileName} cwd={startInfo.WorkingDirectory} args={startInfo.Arguments} fileExists={File.Exists(startInfo.FileName ?? string.Empty)} cwdExists={Directory.Exists(startInfo.WorkingDirectory ?? string.Empty)} envPort={ReadEnv(startInfo, "EMMA_PLUGIN_PORT") ?? "<none>"}");
-        if (_logger.IsEnabled(LogLevel.Information))
-        {
-            _logger.LogInformation(
-                "Starting plugin {PluginId} with {FileName} {Arguments} (cwd={WorkingDirectory})",
+            if (TryGetProcess(manifest.Id, out var existing))
+            {
+                if (!existing.Process.HasExited)
+                {
+                    AppendProcessEvent(manifest.Id, $"startup skipped: process already running pid={existing.Process.Id}");
+                    return current.WithState(PluginRuntimeState.Running, current.LastErrorCode, current.LastErrorMessage);
+                }
+
+                AppendProcessEvent(manifest.Id, $"existing process was exited pid={existing.Process.Id}, removing stale handle");
+                RemoveProcess(manifest.Id);
+            }
+
+            var executable = (string?)null;
+            if (hasEndpoint && !TryResolveEntrypoint(manifest, out executable))
+            {
+                AppendProcessEvent(manifest.Id, "startup skipped: endpoint configured but no local entrypoint resolvable");
+                if (allowsExternal)
+                {
+                    return current.State == PluginRuntimeState.Unknown
+                        ? PluginRuntimeStatus.External()
+                        : current;
+                }
+
+                return current.WithState(
+                    PluginRuntimeState.Disabled,
+                    "external-runtime-disabled",
+                    "Endpoint is configured but external endpoint runtime is disabled by runtime strategy.");
+            }
+
+            AppendProcessEvent(manifest.Id, "preparing sandbox");
+            await _sandboxManager.PrepareAsync(manifest, cancellationToken);
+            AppendProcessEvent(manifest.Id, "sandbox prepared");
+
+            var startInfo = BuildStartInfo(manifest, executable);
+            ApplyPluginPort(manifest, startInfo);
+            startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
+            AppendProcessEvent(
                 manifest.Id,
-                startInfo.FileName,
-                startInfo.Arguments,
-                string.IsNullOrWhiteSpace(startInfo.WorkingDirectory) ? "<none>" : startInfo.WorkingDirectory);
-        }
-        var process = new Process
-        {
-            StartInfo = startInfo,
-            EnableRaisingEvents = true
-        };
+                $"launch envelope file={startInfo.FileName} cwd={startInfo.WorkingDirectory} args={startInfo.Arguments} fileExists={File.Exists(startInfo.FileName ?? string.Empty)} cwdExists={Directory.Exists(startInfo.WorkingDirectory ?? string.Empty)} envPort={ReadEnv(startInfo, "EMMA_PLUGIN_PORT") ?? "<none>"}");
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                _logger.LogInformation(
+                    "Starting plugin {PluginId} with {FileName} {Arguments} (cwd={WorkingDirectory})",
+                    manifest.Id,
+                    startInfo.FileName,
+                    startInfo.Arguments,
+                    string.IsNullOrWhiteSpace(startInfo.WorkingDirectory) ? "<none>" : startInfo.WorkingDirectory);
+            }
+            var process = new Process
+            {
+                StartInfo = startInfo,
+                EnableRaisingEvents = true
+            };
 
-        if (!process.Start())
-        {
-            AppendProcessEvent(manifest.Id, "process.Start() returned false");
-            return current.WithState(PluginRuntimeState.Crashed, "start-failed", "Failed to start plugin process.");
-        }
+            if (!process.Start())
+            {
+                AppendProcessEvent(manifest.Id, "process.Start() returned false");
+                return current.WithState(PluginRuntimeState.Crashed, "start-failed", "Failed to start plugin process.");
+            }
 
-        AppendProcessEvent(manifest.Id, $"process started pid={process.Id}");
+            AppendProcessEvent(manifest.Id, $"process started pid={process.Id}");
 
-        AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty);
-        AttachLogCapture(manifest.Id, process);
+            AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty);
+            AttachLogCapture(manifest.Id, process);
 
-        if (process.HasExited)
-        {
-            var exitCode = SafeExitCode(process);
-            var details = BuildProcessExitDetails(manifest.Id, process);
-            AppendProcessEvent(manifest.Id, $"process exited immediately exitCode={exitCode?.ToString() ?? "unknown"}");
-            RemoveProcess(manifest.Id);
-            return current.WithState(
-                PluginRuntimeState.Crashed,
-                "process-exited",
-                details,
-                exitCode);
-        }
-
-        await _sandboxManager.EnforceAsync(manifest, process, cancellationToken);
-
-        if (string.IsNullOrWhiteSpace(manifest.Endpoint)
-            || !Uri.TryCreate(manifest.Endpoint, UriKind.Absolute, out var address))
-        {
-            AppendProcessEvent(manifest.Id, "startup ready: no endpoint probe required");
-            return PluginRuntimeStatus.Running();
-        }
-
-        AppendProcessEvent(manifest.Id, $"probing endpoint {address}");
-        var ready = await WaitForEndpointAsync(
-            address,
-            TimeSpan.FromSeconds(_options.StartupTimeoutSeconds),
-            TimeSpan.FromMilliseconds(_options.StartupProbeIntervalMs),
-            cancellationToken);
-
-        if (!ready)
-        {
             if (process.HasExited)
             {
                 var exitCode = SafeExitCode(process);
                 var details = BuildProcessExitDetails(manifest.Id, process);
-                AppendProcessEvent(manifest.Id, $"process exited during startup exitCode={exitCode?.ToString() ?? "unknown"}");
+                AppendProcessEvent(manifest.Id, $"process exited immediately exitCode={exitCode?.ToString() ?? "unknown"}");
                 RemoveProcess(manifest.Id);
                 return current.WithState(
                     PluginRuntimeState.Crashed,
@@ -274,17 +271,48 @@ public sealed class PluginProcessManager(
                     details,
                     exitCode);
             }
-            await StopAsync(manifest.Id, cancellationToken);
-            AppendProcessEvent(manifest.Id, $"startup timeout after {_options.StartupTimeoutSeconds}s");
-            return current.WithRetry(
-                current.RetryCount + 1,
-                DateTimeOffset.UtcNow.AddSeconds(Math.Max(1, _options.TimeoutBackoffSeconds) * (current.RetryCount + 1)),
-                "startup-timeout",
-                "Plugin did not become ready in time.");
-        }
 
-        AppendProcessEvent(manifest.Id, "startup ready: endpoint probe succeeded");
-        return PluginRuntimeStatus.Running();
+            await _sandboxManager.EnforceAsync(manifest, process, cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(manifest.Endpoint)
+                || !Uri.TryCreate(manifest.Endpoint, UriKind.Absolute, out var address))
+            {
+                AppendProcessEvent(manifest.Id, "startup ready: no endpoint probe required");
+                return PluginRuntimeStatus.Running();
+            }
+
+            AppendProcessEvent(manifest.Id, $"probing endpoint {address}");
+            var ready = await WaitForEndpointAsync(
+                address,
+                TimeSpan.FromSeconds(_options.StartupTimeoutSeconds),
+                TimeSpan.FromMilliseconds(_options.StartupProbeIntervalMs),
+                cancellationToken);
+
+            if (!ready)
+            {
+                if (process.HasExited)
+                {
+                    var exitCode = SafeExitCode(process);
+                    var details = BuildProcessExitDetails(manifest.Id, process);
+                    AppendProcessEvent(manifest.Id, $"process exited during startup exitCode={exitCode?.ToString() ?? "unknown"}");
+                    RemoveProcess(manifest.Id);
+                    return current.WithState(
+                        PluginRuntimeState.Crashed,
+                        "process-exited",
+                        details,
+                        exitCode);
+                }
+                await StopAsync(manifest.Id, cancellationToken);
+                AppendProcessEvent(manifest.Id, $"startup timeout after {_options.StartupTimeoutSeconds}s");
+                return current.WithRetry(
+                    current.RetryCount + 1,
+                    DateTimeOffset.UtcNow.AddSeconds(Math.Max(1, _options.TimeoutBackoffSeconds) * (current.RetryCount + 1)),
+                    "startup-timeout",
+                    "Plugin did not become ready in time.");
+            }
+
+            AppendProcessEvent(manifest.Id, "startup ready: endpoint probe succeeded");
+            return PluginRuntimeStatus.Running();
         }
         finally
         {
@@ -543,7 +571,7 @@ public sealed class PluginProcessManager(
         {
             if (!handle.Process.HasExited)
             {
-                if (OperatingSystem.IsIOS())
+                if (HostPlatformPolicy.Current == HostPlatform.AppleMobile)
                 {
                     AppendProcessEvent(pluginId, "stop skipped: process kill unsupported on iOS");
                     return;

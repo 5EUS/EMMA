@@ -429,16 +429,6 @@ public static class NativeExports
         }
     }
 
-    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_configure_host")]
-    public static int RuntimeConfigureHost(IntPtr executablePathUtf8, IntPtr baseUrlUtf8, IntPtr modeUtf8)
-    {
-        ClearLastError();
-
-        // This method is deprecated - plugin host is now embedded in-process
-        // Configuration parameters are ignored
-        return 1;
-    }
-
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_open_plugin")]
     public static int RuntimeOpenPlugin(int handle, IntPtr pluginIdUtf8)
     {
@@ -1729,7 +1719,7 @@ public static class NativeExports
 
             if (resultCode != 0)
             {
-                var error = PluginHostExports.GetLastErrorManaged() 
+                var error = PluginHostExports.GetLastErrorManaged()
                     ?? $"Plugin host initialization failed with code {resultCode}";
                 throw new InvalidOperationException(error);
             }

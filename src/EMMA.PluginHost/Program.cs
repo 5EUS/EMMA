@@ -3,6 +3,7 @@ using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Http;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
+using EMMA.PluginHost.Platform;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
 using EMMA.Storage;
@@ -35,33 +36,15 @@ builder.Services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
 builder.Services.AddSingleton<IPluginSandboxManager>(sp =>
 {
     var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostOptions>>();
-
-    if (OperatingSystem.IsAndroid())
+    return HostPlatformPolicy.Current switch
     {
-        return new AndroidPluginSandboxManager(options, sp.GetRequiredService<ILogger<AndroidPluginSandboxManager>>());
-    }
-
-    if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
-    {
-        return new IosPluginSandboxManager(options, sp.GetRequiredService<ILogger<IosPluginSandboxManager>>());
-    }
-
-    if (OperatingSystem.IsWindows())
-    {
-        return new WindowsPluginSandboxManager(options, sp.GetRequiredService<ILogger<WindowsPluginSandboxManager>>());
-    }
-
-    if (OperatingSystem.IsLinux())
-    {
-        return new LinuxPluginSandboxManager(options, sp.GetRequiredService<ILogger<LinuxPluginSandboxManager>>());
-    }
-
-    if (OperatingSystem.IsMacOS())
-    {
-        return new MacOsPluginSandboxManager(options, sp.GetRequiredService<ILogger<MacOsPluginSandboxManager>>());
-    }
-
-    return new NoOpPluginSandboxManager(options, sp.GetRequiredService<ILogger<NoOpPluginSandboxManager>>());
+        HostPlatform.Android => new AndroidPluginSandboxManager(options, sp.GetRequiredService<ILogger<AndroidPluginSandboxManager>>()),
+        HostPlatform.AppleMobile => new IosPluginSandboxManager(options, sp.GetRequiredService<ILogger<IosPluginSandboxManager>>()),
+        HostPlatform.Windows => new WindowsPluginSandboxManager(options, sp.GetRequiredService<ILogger<WindowsPluginSandboxManager>>()),
+        HostPlatform.Linux => new LinuxPluginSandboxManager(options, sp.GetRequiredService<ILogger<LinuxPluginSandboxManager>>()),
+        HostPlatform.MacOS => new MacOsPluginSandboxManager(options, sp.GetRequiredService<ILogger<MacOsPluginSandboxManager>>()),
+        _ => throw new PlatformNotSupportedException("Unsupported host platform for plugin sandbox manager.")
+    };
 });
 builder.Services.AddSingleton<PluginHandshakeService>();
 builder.Services.AddHostedService<PluginHandshakeHostedService>();

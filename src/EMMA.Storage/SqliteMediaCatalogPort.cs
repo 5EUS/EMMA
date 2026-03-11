@@ -312,8 +312,8 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
     private static MediaMetadata ReadMedia(SqliteDataReader reader)
     {
         var tagsJson = reader.GetString(7);
-var tags = JsonSerializer.Deserialize(tagsJson, StorageJsonContext.Default.IReadOnlyListString)
-            ?? Array.Empty<string>();
+        var tags = JsonSerializer.Deserialize(tagsJson, StorageJsonContext.Default.IReadOnlyListString)
+                    ?? Array.Empty<string>();
 
         return new MediaMetadata(
             MediaId.Create(reader.GetString(0)),

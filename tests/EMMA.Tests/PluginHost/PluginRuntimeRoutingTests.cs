@@ -85,7 +85,10 @@ public sealed class PluginRuntimeRoutingTests
     [Fact]
     public async Task EnsureStartedAsync_Throws_WhenNoEndpointAndEntrypointMissing()
     {
-        var options = Options.Create(new PluginHostOptions());
+        var options = Options.Create(new PluginHostOptions
+        {
+            EnableProcessPlugins = true
+        });
         var signatureOptions = Options.Create(new PluginSignatureOptions());
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);
         var manager = new PluginProcessManager(
@@ -147,6 +150,95 @@ public sealed class PluginRuntimeRoutingTests
             "1.0.0",
             "grpc",
             null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        var status = await manager.EnsureStartedAsync(
+            manifest,
+            PluginRuntimeStatus.Unknown(),
+            CancellationToken.None);
+
+        Assert.Equal(PluginRuntimeState.External, status.State);
+    }
+
+    [Fact]
+    public async Task EnsureStartedAsync_Disables_WhenWasmComponentDetectedAndWasmDisabled()
+    {
+        var sandboxRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox");
+        var options = Options.Create(new PluginHostOptions
+        {
+            SandboxRootDirectory = sandboxRoot,
+            EnableWasmPlugins = false
+        });
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var resolver = new PluginEntrypointResolver(options);
+        var manager = new PluginProcessManager(
+            options,
+            new NoOpSandboxManager(),
+            resolver,
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
+
+        var pluginRoot = Path.Combine(sandboxRoot, "demo");
+        Directory.CreateDirectory(pluginRoot);
+        await File.WriteAllBytesAsync(
+            Path.Combine(pluginRoot, "plugin.wasm"),
+            [0x00, 0x61, 0x73, 0x6D, 0x0D, 0x00, 0x01, 0x00]);
+
+        var manifest = new PluginManifest(
+            "demo",
+            "Demo",
+            "1.0.0",
+            "grpc",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null);
+
+        var status = await manager.EnsureStartedAsync(
+            manifest,
+            PluginRuntimeStatus.Unknown(),
+            CancellationToken.None);
+
+        Assert.Equal(PluginRuntimeState.Disabled, status.State);
+        Assert.Equal("wasm-plugins-disabled", status.LastErrorCode);
+    }
+
+    [Fact]
+    public async Task EnsureStartedAsync_ReturnsExternal_WhenProcessDisabledAndEndpointPresent()
+    {
+        var options = Options.Create(new PluginHostOptions
+        {
+            EnableProcessPlugins = false,
+            EnableExternalEndpointPlugins = true
+        });
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var manager = new PluginProcessManager(
+            options,
+            new NoOpSandboxManager(),
+            new ThrowingEntrypointResolver(),
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
+
+        var manifest = new PluginManifest(
+            "demo",
+            "Demo",
+            "1.0.0",
+            "grpc",
+            "http://127.0.0.1:5005",
             null,
             null,
             null,

@@ -12,9 +12,6 @@ using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
 using EMMA.Storage;
 using Grpc.Net.Client;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using EMMA.Domain;
 
 namespace EMMA.PluginHost.Library;
@@ -29,17 +26,20 @@ public static class PluginHostExports
     private const string DirectHttpEnvVar = "EMMA_WASM_DIRECT_HTTP";
     private const string InMemoryBridgeEnvVar = "EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD";
     private const string InMemoryBridgeMaxBytesEnvVar = "EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD_MAX_BYTES";
+    private const string NativeWasmLibraryModeEnvVar = "EMMA_NATIVE_WASM_LIBRARY_MODE";
+    private const string EmbeddedHandshakeOnStartupEnvVar = "EMMA_PLUGINHOST_HANDSHAKE_ON_STARTUP";
+    private const string PluginHostHandshakeOnStartupEnvVar = "PluginHost__HandshakeOnStartup";
     private static ServiceProvider? _serviceProvider;
     private static PluginRegistry? _registry;
     private static PluginHandshakeService? _handshake;
     private static PluginResolutionService? _pluginResolution;
     private static IWasmPluginRuntimeHost? _wasmRuntime;
     private static bool _initialized = false;
-    private static readonly object _initLock = new();
-    private static readonly object _errorLock = new();
+    private static readonly Lock _initLock = new();
+    private static readonly Lock _errorLock = new();
     private static readonly ConcurrentDictionary<string, GrpcChannel> _grpcChannelCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, MediaPage> _pageCache = new(StringComparer.Ordinal);
-    private static readonly object _searchTimingLock = new();
+    private static readonly Lock _searchTimingLock = new();
 
     // Don't use [ThreadStatic] - we need the error to be visible across threads for FFI
     private static string? _lastError;
@@ -77,15 +77,17 @@ public static class PluginHostExports
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.SandboxRootDirectory))!
                             .SetValue(options, sandboxDir);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.HandshakeOnStartup))!
-                            .SetValue(options, false);
-                       typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmOperationTimeoutSeconds))!
-                            .SetValue(options, 15);
+                            .SetValue(options, ResolveHandshakeOnStartupEnabled());
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmOperationTimeoutSeconds))!
+                             .SetValue(options, 15);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmDirectHttp))!
                             .SetValue(options, ResolveWasmDirectHttpEnabled());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmBridgeInMemoryPayload))!
                             .SetValue(options, ResolveWasmBridgeInMemoryPayloadEnabled());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmBridgeInMemoryPayloadMaxBytes))!
                             .SetValue(options, ResolveWasmBridgeInMemoryPayloadMaxBytes());
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.NativeWasmLibraryMode))!
+                            .SetValue(options, ResolveNativeWasmLibraryMode());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.SandboxEnabled))!
                             .SetValue(options, true);
                     });
@@ -223,6 +225,50 @@ public static class PluginHostExports
         }
 
         return 262_144;
+    }
+
+    private static NativeWasmLibraryMode ResolveNativeWasmLibraryMode()
+    {
+        var value = Environment.GetEnvironmentVariable(NativeWasmLibraryModeEnvVar);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return NativeWasmLibraryMode.Auto;
+        }
+
+        if (Enum.TryParse<NativeWasmLibraryMode>(value.Trim(), ignoreCase: true, out var parsed))
+        {
+            return parsed;
+        }
+
+        return value.Trim() switch
+        {
+            "internal" => NativeWasmLibraryMode.Internal,
+            "external" => NativeWasmLibraryMode.External,
+            _ => NativeWasmLibraryMode.Auto
+        };
+    }
+
+    private static bool ResolveHandshakeOnStartupEnabled()
+    {
+        var value = Environment.GetEnvironmentVariable(EmbeddedHandshakeOnStartupEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginHostHandshakeOnStartupEnvVar);
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            if (bool.TryParse(value, out var parsedBool))
+            {
+                return parsedBool;
+            }
+
+            return value.Trim() switch
+            {
+                "1" or "yes" or "on" => true,
+                "0" or "no" or "off" => false,
+                _ => false
+            };
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -1336,9 +1382,6 @@ public static class PluginHostExports
     {
         var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
         var canonicalDefault = ToLibraryStorageKey("Library");
-        library.NormalizeLegacyDefaultLibraryAsync(canonicalDefault, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
         library.CreateLibraryAsync(
                 canonicalDefault,
                 "Library",

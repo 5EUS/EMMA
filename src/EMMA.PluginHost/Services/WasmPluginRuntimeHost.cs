@@ -745,7 +745,7 @@ public sealed class WasmPluginRuntimeHost(
                 value = default;
                 return false;
             }
-            
+
             value = JsonSerializer.Deserialize(json, typeInfo);
             return true;
         }
@@ -1102,7 +1102,7 @@ public sealed class WasmPluginRuntimeHost(
             System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(componentPath)))
             .ToLowerInvariant()[..16];
-        
+
         var tempRoot = Path.Combine(Path.GetTempPath(), "emma-wasm-bridge");
         var bridgeDir = Path.Combine(tempRoot, componentHash, ".hostbridge");
         Directory.CreateDirectory(bridgeDir);

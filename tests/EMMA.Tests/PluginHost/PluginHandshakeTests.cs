@@ -39,6 +39,7 @@ public sealed class PluginHandshakeTests
             ManifestDirectory = tempRoot,
             HandshakeOnStartup = true,
             HandshakeTimeoutSeconds = 5,
+            AllowNoSandboxFallback = true,
             SandboxRootDirectory = Path.Combine(tempRoot, "sandbox")
         });
 
@@ -110,6 +111,7 @@ public sealed class PluginHandshakeTests
             ManifestDirectory = tempRoot,
             HandshakeOnStartup = true,
             HandshakeTimeoutSeconds = 5,
+            AllowNoSandboxFallback = true,
             SandboxRootDirectory = Path.Combine(tempRoot, "sandbox")
         });
 

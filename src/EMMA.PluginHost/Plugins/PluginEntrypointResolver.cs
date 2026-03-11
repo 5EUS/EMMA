@@ -1,6 +1,5 @@
 using EMMA.PluginHost.Configuration;
 using Microsoft.Extensions.Options;
-using System.Xml.Linq;
 
 namespace EMMA.PluginHost.Plugins;
 
@@ -45,59 +44,7 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             return false;
         }
 
-        var preferPrecompiled = OperatingSystem.IsIOS();
-        var candidates = new List<string>();
-
-        if (preferPrecompiled)
-        {
-            candidates.Add(Path.Combine(pluginRoot, "plugin.cwasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.cwasm"));
-            candidates.Add(Path.Combine(pluginRoot, "plugin.wasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.wasm"));
-        }
-        else
-        {
-            candidates.Add(Path.Combine(pluginRoot, "plugin.wasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.wasm"));
-            candidates.Add(Path.Combine(pluginRoot, "plugin.cwasm"));
-            candidates.Add(Path.Combine(pluginRoot, "wasm", "plugin.cwasm"));
-        }
-
-        if (!string.IsNullOrWhiteSpace(manifest.Id))
-        {
-            if (preferPrecompiled)
-            {
-                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".cwasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".cwasm"));
-                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".wasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".wasm"));
-            }
-            else
-            {
-                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".wasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".wasm"));
-                candidates.Add(Path.Combine(pluginRoot, manifest.Id + ".cwasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", manifest.Id + ".cwasm"));
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(manifest.Name))
-        {
-            if (preferPrecompiled)
-            {
-                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".cwasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".cwasm"));
-                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".wasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".wasm"));
-            }
-            else
-            {
-                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".wasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".wasm"));
-                candidates.Add(Path.Combine(pluginRoot, RemoveSpaces(manifest.Name) + ".cwasm"));
-                candidates.Add(Path.Combine(pluginRoot, "wasm", RemoveSpaces(manifest.Name) + ".cwasm"));
-            }
-        }
+        var candidates = BuildWasmComponentCandidates(pluginRoot, manifest);
 
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -108,21 +55,11 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             }
         }
 
-        var wildcard = new List<string>();
-        if (preferPrecompiled)
-        {
-            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
-                .Where(IsWasmComponentBinary));
-            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
-                .Where(IsWasmComponentBinary));
-        }
-        else
-        {
-            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
-                .Where(IsWasmComponentBinary));
-            wildcard.AddRange(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
-                .Where(IsWasmComponentBinary));
-        }
+        var wildcard = Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
+            .Concat(Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly))
+            .Where(IsWasmComponentBinary)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         if (wildcard.Count == 1)
         {
@@ -181,16 +118,6 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
 
     private static string ResolveDefaultEntrypoint(string pluginRoot, PluginManifest manifest)
     {
-        if (OperatingSystem.IsMacOS())
-        {
-            var appCandidates = Directory.EnumerateDirectories(pluginRoot, "*.app", SearchOption.TopDirectoryOnly)
-                .ToList();
-            if (appCandidates.Count == 1)
-            {
-                return ResolveAppBundle(appCandidates[0], Path.GetFileName(appCandidates[0]));
-            }
-        }
-
         var candidates = BuildNameCandidates(manifest);
         foreach (var name in candidates)
         {
@@ -200,12 +127,34 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             }
         }
 
-        if (OperatingSystem.IsMacOS())
+        throw new InvalidOperationException("Plugin executable not found; no matching binary was found.");
+    }
+
+    private static IEnumerable<string> BuildWasmComponentCandidates(string pluginRoot, PluginManifest manifest)
+    {
+        var names = new List<string> { "plugin" };
+        if (!string.IsNullOrWhiteSpace(manifest.Id))
         {
-            throw new InvalidOperationException("Plugin executable not found; no .app bundle was found.");
+            names.Add(manifest.Id);
         }
 
-        throw new InvalidOperationException("Plugin executable not found; no matching binary was found.");
+        if (!string.IsNullOrWhiteSpace(manifest.Name))
+        {
+            names.Add(RemoveSpaces(manifest.Name));
+        }
+
+        var uniqueNames = names
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var name in uniqueNames)
+        {
+            yield return Path.Combine(pluginRoot, name + ".cwasm");
+            yield return Path.Combine(pluginRoot, name + ".wasm");
+            yield return Path.Combine(pluginRoot, "wasm", name + ".cwasm");
+            yield return Path.Combine(pluginRoot, "wasm", name + ".wasm");
+        }
     }
 
     private static List<string> BuildNameCandidates(PluginManifest manifest)
@@ -237,25 +186,12 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             return false;
         }
 
-        if (OperatingSystem.IsMacOS())
-        {
-            var bundlePath = Path.Combine(pluginRoot, name + ".app");
-            if (Directory.Exists(bundlePath))
-            {
-                resolved = ResolveAppBundle(bundlePath, Path.GetFileName(bundlePath));
-                return true;
-            }
-        }
-
         var candidate = Path.Combine(pluginRoot, name);
-        if (OperatingSystem.IsWindows())
+        var exeCandidate = candidate + ".exe";
+        if (File.Exists(exeCandidate))
         {
-            var exeCandidate = candidate + ".exe";
-            if (File.Exists(exeCandidate))
-            {
-                resolved = exeCandidate;
-                return true;
-            }
+            resolved = exeCandidate;
+            return true;
         }
 
         if (File.Exists(candidate))
@@ -265,65 +201,5 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         }
 
         return false;
-    }
-
-    private static string ResolveAppBundle(string bundlePath, string entrypoint)
-    {
-        if (!Directory.Exists(bundlePath))
-        {
-            throw new InvalidOperationException("Plugin app bundle not found.");
-        }
-
-        var infoPlist = Path.Combine(bundlePath, "Contents", "Info.plist");
-        if (!File.Exists(infoPlist))
-        {
-            throw new InvalidOperationException("Plugin app bundle is missing Info.plist.");
-        }
-
-        var executable = ReadBundleExecutable(infoPlist)
-            ?? Path.GetFileNameWithoutExtension(entrypoint);
-
-        var candidate = Path.Combine(bundlePath, "Contents", "MacOS", executable);
-        if (!File.Exists(candidate))
-        {
-            throw new InvalidOperationException("Plugin app bundle executable not found.");
-        }
-
-        return candidate;
-    }
-
-    private static string? ReadBundleExecutable(string infoPlist)
-    {
-        try
-        {
-            var document = XDocument.Load(infoPlist);
-            var dict = document.Root?.Element("dict");
-            if (dict is null)
-            {
-                return null;
-            }
-
-            string? key = null;
-            foreach (var node in dict.Elements())
-            {
-                if (node.Name.LocalName == "key")
-                {
-                    key = node.Value;
-                    continue;
-                }
-
-                if (key == "CFBundleExecutable")
-                {
-                    return node.Value;
-                }
-
-                key = null;
-            }
-        }
-        catch
-        {
-        }
-
-        return null;
     }
 }

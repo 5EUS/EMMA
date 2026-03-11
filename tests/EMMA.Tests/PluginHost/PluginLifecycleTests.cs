@@ -25,6 +25,7 @@ public sealed class PluginLifecycleTests
             StartupProbeIntervalMs = 200,
             TimeoutBackoffSeconds = 1,
             MaxTimeoutRetries = 2,
+            AllowNoSandboxFallback = true,
             SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
         });
 
@@ -88,6 +89,7 @@ public sealed class PluginLifecycleTests
             StartupProbeIntervalMs = 200,
             TimeoutBackoffSeconds = 1,
             MaxTimeoutRetries = 2,
+            AllowNoSandboxFallback = true,
             SandboxRootDirectory = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox")
         });
 

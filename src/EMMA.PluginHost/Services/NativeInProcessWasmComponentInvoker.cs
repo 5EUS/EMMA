@@ -1,7 +1,9 @@
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.IO;
 using System.Collections.Concurrent;
+using EMMA.PluginHost.Configuration;
+using EMMA.PluginHost.Platform;
+using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Services;
 
@@ -10,10 +12,16 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
     private const int NativeSuccess = 0;
     private const uint DefaultTimeoutMs = 30_000u;
     private const uint SearchTimeoutMs = 30_000u;
-    private static readonly object LastTimingLock = new();
+    private static readonly Lock LastTimingLock = new();
     private static string? _lastNativeTimingSnapshot;
+    private static PluginHostOptions _pluginHostOptions = new();
     private readonly ConcurrentDictionary<string, ulong> _pluginHandles = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
+
+    public NativeInProcessWasmComponentInvoker(IOptions<PluginHostOptions> options)
+    {
+        _pluginHostOptions = options.Value;
+    }
 
     public static string? TakeLastNativeTimingSnapshot()
     {
@@ -56,11 +64,6 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
         try
         {
             var handle = GetOrCreatePluginHandle(componentPath);
-
-            if (handle == 0)
-            {
-                return Task.FromResult(InvokeLegacy(componentPath, operationPtr, argsPtr, timeoutMs));
-            }
 
             IntPtr outJson;
             IntPtr outError;
@@ -143,60 +146,15 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
             return existing;
         }
 
-        ulong handle;
-        try
-        {
-            handle = NativeBindings.OpenPlugin(componentPath);
-        }
-        catch (PlatformNotSupportedException)
-        {
-            handle = 0;
-        }
+        var handle = NativeBindings.OpenPlugin(componentPath);
 
         _pluginHandles[componentPath] = handle;
         return handle;
     }
 
-    private static string InvokeLegacy(string componentPath, IntPtr operationPtr, IntPtr argsPtr, uint timeoutMs)
-    {
-        var componentPtr = Marshal.StringToCoTaskMemUTF8(componentPath);
-        try
-        {
-            IntPtr outJson;
-            IntPtr outError;
-            var result = NativeBindings.Invoke(componentPtr, operationPtr, argsPtr, timeoutMs, out outJson, out outError);
-            try
-            {
-                if (result != NativeSuccess)
-                {
-                    var nativeError = PtrToUtf8String(outError);
-                    throw new InvalidOperationException(
-                        string.IsNullOrWhiteSpace(nativeError)
-                            ? $"Native WASM runtime invocation failed (code {result})."
-                            : nativeError);
-                }
-
-                return PtrToUtf8String(outJson)
-                    ?? throw new InvalidOperationException("Native WASM runtime returned empty output.");
-            }
-            finally
-            {
-                NativeBindings.FreeString(outJson);
-                NativeBindings.FreeString(outError);
-            }
-        }
-        finally
-        {
-            Marshal.FreeCoTaskMem(componentPtr);
-        }
-    }
-
     private void ThrowIfDisposed()
     {
-        if (_disposed)
-        {
-            throw new ObjectDisposedException(nameof(NativeInProcessWasmComponentInvoker));
-        }
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
     public void Dispose()
@@ -259,7 +217,7 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
         private delegate void FreeStringDelegate(IntPtr value);
         private delegate IntPtr TakeLastTimingDelegate();
 
-        private static readonly object FallbackLock = new();
+        private static readonly Lock FallbackLock = new();
         private static InvokeDelegate? _fallbackInvoke;
         private static OpenPluginDelegate? _fallbackOpen;
         private static PluginInvokeDelegate? _fallbackPluginInvoke;
@@ -585,12 +543,7 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
                 }
 
                 var baseDir = AppContext.BaseDirectory;
-                var candidates = new[]
-                {
-                    Path.Combine(baseDir, "Runner.debug.dylib"),
-                    Path.Combine(baseDir, "Runner"),
-                    Path.Combine(baseDir, "Frameworks", "App.framework", "App")
-                };
+                var candidates = ResolveFallbackLibraryCandidates(baseDir);
 
                 foreach (var candidate in candidates)
                 {
@@ -656,9 +609,28 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
             }
         }
 
+        private static IReadOnlyList<string> ResolveFallbackLibraryCandidates(string baseDir)
+        {
+            var configured = Environment.GetEnvironmentVariable("EMMA_WASM_RUNTIME_CANDIDATES");
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                return [.. configured
+                    .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(path => Path.IsPathRooted(path) ? path : Path.Combine(baseDir, path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)];
+            }
+
+            return
+            [
+                Path.Combine(baseDir, "Runner.debug.dylib"),
+                Path.Combine(baseDir, "Runner"),
+                Path.Combine(baseDir, "Frameworks", "App.framework", "App")
+            ];
+        }
+
         private static bool UseInternalLibrary()
         {
-            return OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() || OperatingSystem.IsMacCatalyst();
+            return HostPlatformPolicy.UsesInternalNativeWasmLibrary(_pluginHostOptions);
         }
     }
 }
