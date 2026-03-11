@@ -17,17 +17,16 @@ public sealed class PluginHandshakeService(
     PluginRegistry registry,
     IPluginSandboxManager sandboxManager,
     PluginProcessManager processManager,
-    PluginPermissionSanitizer permissionSanitizer,
     PluginEndpointAllocator endpointAllocator,
     IWasmPluginRuntimeHost wasmRuntimeHost,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
+    private const string HostAuthHeader = "x-emma-plugin-host-auth";
     private readonly PluginManifestLoader _loader = loader;
     private readonly PluginRegistry _registry = registry;
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginProcessManager _processManager = processManager;
-    private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
     private readonly PluginEndpointAllocator _endpointAllocator = endpointAllocator;
     private readonly IWasmPluginRuntimeHost _wasmRuntimeHost = wasmRuntimeHost;
     private readonly PluginHostOptions _options = options.Value;
@@ -220,27 +219,18 @@ public sealed class PluginHandshakeService(
             var correlationId = CreateCorrelationId();
             var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(_options.HandshakeTimeoutSeconds);
             var headers = CreateHeaders(correlationId);
+            var hostAuthToken = _processManager.GetHostAuthToken(manifest.Id);
+            if (!string.IsNullOrWhiteSpace(hostAuthToken))
+            {
+                headers.Add(HostAuthHeader, hostAuthToken);
+            }
             var context = CreateRequestContext(correlationId, deadlineUtc);
             var health = await client.GetHealthAsync(new HealthRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
             var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
 
             var caps = capabilities.Capabilities.ToArray();
-            var budgets = capabilities.Budgets;
-            var permissions = capabilities.Permissions;
             var manifestCaps = manifest.Capabilities;
             var manifestPermissions = manifest.Permissions;
-            IReadOnlyList<string> effectivePaths;
-            if (manifestPermissions?.Paths is not null)
-            {
-                effectivePaths = manifestPermissions.Paths;
-            }
-            else
-            {
-                effectivePaths = _permissionSanitizer.SanitizePaths(
-                    manifest.Id,
-                    permissions?.Paths.ToArray() ?? [],
-                    "grpc") ?? [];
-            }
             var message = string.IsNullOrWhiteSpace(health.Message) ? "Handshake ok" : health.Message;
 
             return new PluginHandshakeStatus(
@@ -249,10 +239,10 @@ public sealed class PluginHandshakeService(
                 health.Version,
                 DateTimeOffset.UtcNow,
                 caps,
-                manifestCaps?.CpuBudgetMs ?? budgets?.CpuBudgetMs ?? 0,
-                manifestCaps?.MemoryMb ?? budgets?.MemoryMb ?? 0,
-                manifestPermissions?.Domains?.ToArray() ?? permissions?.Domains.ToArray() ?? [],
-                [.. effectivePaths]);
+                manifestCaps?.CpuBudgetMs ?? 0,
+                manifestCaps?.MemoryMb ?? 0,
+                manifestPermissions?.Domains?.ToArray() ?? [],
+                manifestPermissions?.Paths?.ToArray() ?? []);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

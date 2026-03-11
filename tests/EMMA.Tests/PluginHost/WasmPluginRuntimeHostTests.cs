@@ -109,6 +109,104 @@ public sealed class WasmPluginRuntimeHostTests
         Assert.Equal(2, pages.Pages[2].Index);
     }
 
+    [Fact]
+    public async Task SearchAsync_BridgeMode_Fails_WhenPermissionsDomainsMissing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "emma-wasm-tests", Guid.NewGuid().ToString("N"));
+        var sandboxRoot = Path.Combine(root, "sandbox");
+
+        var options = Options.Create(new PluginHostOptions
+        {
+            SandboxRootDirectory = sandboxRoot
+        });
+
+        var resolver = new PluginEntrypointResolver(options);
+        var host = new WasmPluginRuntimeHost(
+            resolver,
+            new FakeWasmComponentInvoker(),
+            options,
+            NullLogger<WasmPluginRuntimeHost>.Instance);
+
+        var pluginRoot = Path.Combine(sandboxRoot, "demo");
+        Directory.CreateDirectory(pluginRoot);
+
+        var componentPath = Path.Combine(pluginRoot, "plugin.wasm");
+        await WriteWasmComponentHeaderAsync(componentPath);
+
+        var manifest = new PluginManifest(
+            "demo",
+            "Demo",
+            "1.0.0",
+            "grpc",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            new PluginManifestRuntime(
+                "1.0.0",
+                new PluginManifestWasmHostBridge(new Dictionary<string, PluginManifestWasmHttpOperation>
+                {
+                    ["search"] = new("https://api.mangadex.org/manga?title={arg0}", "GET")
+                })));
+
+        var record = new PluginRecord(manifest, PluginHandshakeDefaults.NotChecked(), PluginRuntimeStatus.External());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SearchAsync(record, "Manga", CancellationToken.None));
+        Assert.Contains("bridge payload unavailable", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SearchAsync_BridgeMode_Fails_WhenPermissionsDomainsContainsWildcard()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "emma-wasm-tests", Guid.NewGuid().ToString("N"));
+        var sandboxRoot = Path.Combine(root, "sandbox");
+
+        var options = Options.Create(new PluginHostOptions
+        {
+            SandboxRootDirectory = sandboxRoot
+        });
+
+        var resolver = new PluginEntrypointResolver(options);
+        var host = new WasmPluginRuntimeHost(
+            resolver,
+            new FakeWasmComponentInvoker(),
+            options,
+            NullLogger<WasmPluginRuntimeHost>.Instance);
+
+        var pluginRoot = Path.Combine(sandboxRoot, "demo");
+        Directory.CreateDirectory(pluginRoot);
+
+        var componentPath = Path.Combine(pluginRoot, "plugin.wasm");
+        await WriteWasmComponentHeaderAsync(componentPath);
+
+        var manifest = new PluginManifest(
+            "demo",
+            "Demo",
+            "1.0.0",
+            "grpc",
+            null,
+            null,
+            null,
+            new PluginManifestPermissions(["*"], null),
+            null,
+            null,
+            null,
+            new PluginManifestRuntime(
+                "1.0.0",
+                new PluginManifestWasmHostBridge(new Dictionary<string, PluginManifestWasmHttpOperation>
+                {
+                    ["search"] = new("https://api.mangadex.org/manga?title={arg0}", "GET")
+                })));
+
+        var record = new PluginRecord(manifest, PluginHandshakeDefaults.NotChecked(), PluginRuntimeStatus.External());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => host.SearchAsync(record, "Manga", CancellationToken.None));
+        Assert.Contains("bridge payload unavailable", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Task WriteWasmComponentHeaderAsync(string wasmPath)
     {
         return File.WriteAllBytesAsync(wasmPath, [0x00, 0x61, 0x73, 0x6D, 0x0D, 0x00, 0x01, 0x00]);

@@ -56,7 +56,7 @@ Pod::Spec.new do |s|
     'Frameworks/EmmaWasmRuntime.xcframework'
   ]
   s.user_target_xcconfig = {
-    'OTHER_LDFLAGS' => '$(inherited) -Wl,-u,_emma_wasm_component_invoke -Wl,-u,_emma_wasm_runtime_free_string'
+    'OTHER_LDFLAGS' => '$(inherited) -Wl,-u,_emma_wasm_component_invoke -Wl,-u,_emma_wasm_plugin_open -Wl,-u,_emma_wasm_plugin_invoke -Wl,-u,_emma_wasm_plugin_close -Wl,-u,_emma_wasm_runtime_free_string -Wl,-u,_emma_wasm_runtime_take_last_timing'
   }
 end
 EOF

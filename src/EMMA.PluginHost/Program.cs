@@ -14,7 +14,20 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddGrpc();
 builder.Services.Configure<PluginHostOptions>(builder.Configuration.GetSection("PluginHost"));
-builder.Services.Configure<PluginSignatureOptions>(builder.Configuration.GetSection("PluginSignature"));
+builder.Services.AddOptions<PluginSignatureOptions>()
+    .Bind(builder.Configuration.GetSection("PluginSignature"))
+    .PostConfigure(options =>
+    {
+        typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RequireSignedPlugins))!
+            .SetValue(options, ResolveRequireSignedPlugins(builder.Configuration));
+
+        var configuredKey = ResolvePluginSignatureHmacKey();
+        if (!string.IsNullOrWhiteSpace(configuredKey))
+        {
+            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.HmacKeyBase64))!
+                .SetValue(options, configuredKey);
+        }
+    });
 builder.Services.AddSingleton<PluginRegistry>();
 builder.Services.AddSingleton<PluginManifestLoader>();
 builder.Services.AddSingleton<PluginPermissionSanitizer>();
@@ -63,6 +76,72 @@ app.MapPluginHostEndpoints();
 app.MapGet("/", () => "EMMA plugin host is running.");
 
 app.Run();
+
+static bool ResolveRequireSignedPlugins(IConfiguration configuration)
+{
+    var overrideValue = Environment.GetEnvironmentVariable("EMMA_REQUIRE_SIGNED_PLUGINS")
+        ?? Environment.GetEnvironmentVariable("PluginSignature__RequireSignedPlugins");
+
+    if (!string.IsNullOrWhiteSpace(overrideValue))
+    {
+        if (bool.TryParse(overrideValue, out var parsedBool))
+        {
+            return parsedBool;
+        }
+
+        return overrideValue.Trim() switch
+        {
+            "1" or "yes" or "on" => true,
+            "0" or "no" or "off" => false,
+            _ => true
+        };
+    }
+
+    var configuredValue = configuration["PluginSignature:RequireSignedPlugins"];
+    if (!string.IsNullOrWhiteSpace(configuredValue))
+    {
+        if (bool.TryParse(configuredValue, out var parsedBool))
+        {
+            return parsedBool;
+        }
+
+        return configuredValue.Trim() switch
+        {
+            "1" or "yes" or "on" => true,
+            "0" or "no" or "off" => false,
+            _ => true
+        };
+    }
+
+    return !IsDevelopmentMode();
+}
+
+static string? ResolvePluginSignatureHmacKey()
+{
+    return Environment.GetEnvironmentVariable("EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64")
+        ?? Environment.GetEnvironmentVariable("PluginSignature__HmacKeyBase64");
+}
+
+static bool IsDevelopmentMode()
+{
+    var explicitDev = Environment.GetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE");
+    if (!string.IsNullOrWhiteSpace(explicitDev))
+    {
+        if (bool.TryParse(explicitDev, out var parsedBool))
+        {
+            return parsedBool;
+        }
+
+        return explicitDev.Trim() switch
+        {
+            "1" or "yes" or "on" => true,
+            _ => false
+        };
+    }
+
+    var aspnetEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+    return string.Equals(aspnetEnvironment, "Development", StringComparison.OrdinalIgnoreCase);
+}
 
 public partial class Program
 {

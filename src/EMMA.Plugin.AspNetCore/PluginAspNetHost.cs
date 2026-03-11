@@ -62,12 +62,15 @@ public static class PluginAspNetHost
             }
         }
 
-        for (var i = 0; i < args.Length - 1; i++)
+        if (!string.IsNullOrWhiteSpace(options.PortArgumentName))
         {
-            if (string.Equals(args[i], options.PortArgumentName, StringComparison.OrdinalIgnoreCase)
-                && int.TryParse(args[i + 1], out var parsedArgPort))
+            for (var i = 0; i < args.Length - 1; i++)
             {
-                return parsedArgPort;
+                if (string.Equals(args[i], options.PortArgumentName, StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(args[i + 1], out var parsedArgPort))
+                {
+                    return parsedArgPort;
+                }
             }
         }
 

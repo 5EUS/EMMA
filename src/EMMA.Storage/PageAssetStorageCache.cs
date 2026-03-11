@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using EMMA.Application.Ports;
 using EMMA.Domain;
 
@@ -12,16 +11,6 @@ namespace EMMA.Storage;
 public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCachePort
 {
     private readonly StorageOptions _options = options;
-    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
-
-    private static JsonSerializerOptions CreateJsonOptions()
-    {
-        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-#pragma warning disable SYSLIB0049
-        options.AddContext<StorageJsonContext>();
-#pragma warning restore SYSLIB0049
-        return options;
-    }
 
     public async Task<MediaPageAsset?> GetAsync(string key, CancellationToken cancellationToken)
     {
@@ -39,7 +28,9 @@ public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCa
         try
         {
             var metadataJson = await File.ReadAllTextAsync(metadataPath, cancellationToken);
-            var metadata = JsonSerializer.Deserialize<PageAssetMetadata>(metadataJson, JsonOptions);
+            var metadata = System.Text.Json.JsonSerializer.Deserialize(
+                metadataJson,
+                StorageJsonContext.Default.PageAssetMetadata);
             if (metadata is null)
             {
                 return null;
@@ -79,7 +70,9 @@ public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCa
         try
         {
             await File.WriteAllBytesAsync(payloadPath, payload, cancellationToken);
-            var json = JsonSerializer.Serialize(metadata, JsonOptions);
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                metadata,
+                StorageJsonContext.Default.PageAssetMetadata);
             await File.WriteAllTextAsync(metadataPath, json, cancellationToken);
         }
         catch

@@ -55,8 +55,8 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             }
         }
 
-        var wildcard = Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly)
-            .Concat(Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly))
+        var wildcard = Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
+            .Concat(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly))
             .Where(IsWasmComponentBinary)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -150,10 +150,10 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
 
         foreach (var name in uniqueNames)
         {
-            yield return Path.Combine(pluginRoot, name + ".cwasm");
             yield return Path.Combine(pluginRoot, name + ".wasm");
-            yield return Path.Combine(pluginRoot, "wasm", name + ".cwasm");
+            yield return Path.Combine(pluginRoot, name + ".cwasm");
             yield return Path.Combine(pluginRoot, "wasm", name + ".wasm");
+            yield return Path.Combine(pluginRoot, "wasm", name + ".cwasm");
         }
     }
 

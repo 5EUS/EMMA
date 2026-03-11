@@ -63,7 +63,6 @@ public sealed class PluginHandshakeTests
             registry,
             sandbox,
             processManager,
-            sanitizer,
             endpointAllocator,
             new NoOpWasmPluginRuntimeHost(),
             options,
@@ -135,7 +134,6 @@ public sealed class PluginHandshakeTests
             registry,
             sandbox,
             processManager,
-            sanitizer,
             endpointAllocator,
             new NoOpWasmPluginRuntimeHost(),
             options,
@@ -146,9 +144,7 @@ public sealed class PluginHandshakeTests
         var snapshot = registry.GetSnapshot();
         Assert.Single(snapshot);
 
-        var expectedPath = Path.GetFullPath(Path.Combine(options.Value.SandboxRootDirectory, "demo", "runtime-data"));
-        Assert.Single(snapshot[0].Status.Paths);
-        Assert.Equal(expectedPath, snapshot[0].Status.Paths[0]);
+        Assert.Empty(snapshot[0].Status.Paths);
 
         await app.StopAsync();
         try

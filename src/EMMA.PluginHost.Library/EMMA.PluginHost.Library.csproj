@@ -21,6 +21,7 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios' or ('$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true')">
     <Compile Include="..\EMMA.PluginHost\Configuration\**\*.cs" Link="PluginHost\Configuration\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\EMMA.PluginHost\Platform\**\*.cs" Link="PluginHost\Platform\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\EMMA.PluginHost\Plugins\**\*.cs" Link="PluginHost\Plugins\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\EMMA.PluginHost\Sandboxing\**\*.cs" Link="PluginHost\Sandboxing\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\EMMA.PluginHost\Services\**\*.cs" Link="PluginHost\Services\%(RecursiveDir)%(Filename)%(Extension)" />

@@ -11,6 +11,7 @@ using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
 using EMMA.Storage;
+using Grpc.Core;
 using Grpc.Net.Client;
 using EMMA.Domain;
 
@@ -29,6 +30,12 @@ public static class PluginHostExports
     private const string NativeWasmLibraryModeEnvVar = "EMMA_NATIVE_WASM_LIBRARY_MODE";
     private const string EmbeddedHandshakeOnStartupEnvVar = "EMMA_PLUGINHOST_HANDSHAKE_ON_STARTUP";
     private const string PluginHostHandshakeOnStartupEnvVar = "PluginHost__HandshakeOnStartup";
+    private const string RequireSignedPluginsEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS";
+    private const string PluginSignatureRequireSignedEnvVar = "PluginSignature__RequireSignedPlugins";
+    private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
+    private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
+    private const string DevModeEnvVar = "EMMA_PLUGIN_DEV_MODE";
+    private const string HostAuthHeader = "x-emma-plugin-host-auth";
     private static ServiceProvider? _serviceProvider;
     private static PluginRegistry? _registry;
     private static PluginHandshakeService? _handshake;
@@ -92,7 +99,19 @@ public static class PluginHostExports
                             .SetValue(options, true);
                     });
 
-                services.AddOptions<PluginSignatureOptions>();
+                services.AddOptions<PluginSignatureOptions>()
+                    .PostConfigure(options =>
+                    {
+                        typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RequireSignedPlugins))!
+                            .SetValue(options, ResolveRequireSignedPlugins());
+
+                        var hmacKey = ResolvePluginSignatureHmacKey();
+                        if (!string.IsNullOrWhiteSpace(hmacKey))
+                        {
+                            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.HmacKeyBase64))!
+                                .SetValue(options, hmacKey);
+                        }
+                    });
 
                 // Register core services
                 services.AddSingleton<PluginRegistry>();
@@ -269,6 +288,56 @@ public static class PluginHostExports
         }
 
         return true;
+    }
+
+    private static bool ResolveRequireSignedPlugins()
+    {
+        var value = Environment.GetEnvironmentVariable(RequireSignedPluginsEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureRequireSignedEnvVar);
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            if (bool.TryParse(value, out var parsedBool))
+            {
+                return parsedBool;
+            }
+
+            return value.Trim() switch
+            {
+                "1" or "yes" or "on" => true,
+                "0" or "no" or "off" => false,
+                _ => true
+            };
+        }
+
+        return !IsDevelopmentMode();
+    }
+
+    private static string? ResolvePluginSignatureHmacKey()
+    {
+        return Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
+    }
+
+    private static bool IsDevelopmentMode()
+    {
+        var explicitDev = Environment.GetEnvironmentVariable(DevModeEnvVar);
+        if (!string.IsNullOrWhiteSpace(explicitDev))
+        {
+            if (bool.TryParse(explicitDev, out var parsedBool))
+            {
+                return parsedBool;
+            }
+
+            return explicitDev.Trim() switch
+            {
+                "1" or "yes" or "on" => true,
+                _ => false
+            };
+        }
+
+        var aspnetEnvironment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        return string.Equals(aspnetEnvironment, "Development", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -492,6 +561,7 @@ public static class PluginHostExports
 
                 var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
                 var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+                var headers = BuildGrpcHeaders(record.Manifest.Id, resolvedCorrelationId);
                 var grpcCallStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 var response = client.SearchAsync(new PluginContracts.SearchRequest
                 {
@@ -501,7 +571,7 @@ public static class PluginHostExports
                         CorrelationId = resolvedCorrelationId,
                         DeadlineUtc = deadlineUtc.ToString("O")
                     }
-                }, cancellationToken: CancellationToken.None)
+                }, headers: headers, cancellationToken: CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
                 grpcCallStopwatch.Stop();
@@ -621,6 +691,7 @@ public static class PluginHostExports
                 var channel = GetOrCreateChannel(address);
                 var client = new PluginContracts.PageProvider.PageProviderClient(channel);
                 var correlationId = Guid.NewGuid().ToString("n");
+                var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
                 var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
                 var response = client.GetChaptersAsync(new PluginContracts.ChaptersRequest
                 {
@@ -630,7 +701,7 @@ public static class PluginHostExports
                         CorrelationId = correlationId,
                         DeadlineUtc = deadlineUtc.ToString("O")
                     }
-                }, cancellationToken: CancellationToken.None)
+                }, headers: headers, cancellationToken: CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
 
@@ -1447,6 +1518,7 @@ public static class PluginHostExports
         var channel = GetOrCreateChannel(address);
         var client = new PluginContracts.PageProvider.PageProviderClient(channel);
         var correlationId = Guid.NewGuid().ToString("n");
+        var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
         var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
         var response = client.GetPageAsync(new PluginContracts.PageRequest
         {
@@ -1458,7 +1530,7 @@ public static class PluginHostExports
                 CorrelationId = correlationId,
                 DeadlineUtc = deadlineUtc.ToString("O")
             }
-        }, cancellationToken: CancellationToken.None)
+        }, headers: headers, cancellationToken: CancellationToken.None)
             .GetAwaiter()
             .GetResult();
 
@@ -1540,6 +1612,7 @@ public static class PluginHostExports
         var channel = GetOrCreateChannel(address);
         var client = new PluginContracts.PageProvider.PageProviderClient(channel);
         var correlationId = Guid.NewGuid().ToString("n");
+        var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
         var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
         var response = client.GetPagesAsync(new PluginContracts.PagesRequest
         {
@@ -1552,7 +1625,7 @@ public static class PluginHostExports
                 CorrelationId = correlationId,
                 DeadlineUtc = deadlineUtc.ToString("O")
             }
-        }, cancellationToken: CancellationToken.None)
+        }, headers: headers, cancellationToken: CancellationToken.None)
             .GetAwaiter()
             .GetResult();
 
@@ -1586,6 +1659,25 @@ public static class PluginHostExports
     private static GrpcChannel GetOrCreateChannel(Uri address)
     {
         return _grpcChannelCache.GetOrAdd(address.ToString(), _ => GrpcChannel.ForAddress(address));
+    }
+
+    private static Metadata BuildGrpcHeaders(string pluginId, string correlationId)
+    {
+        var headers = new Metadata
+        {
+            { "x-correlation-id", correlationId }
+        };
+
+        var token = _serviceProvider?
+            .GetService<PluginProcessManager>()?
+            .GetHostAuthToken(pluginId);
+
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            headers.Add(HostAuthHeader, token);
+        }
+
+        return headers;
     }
 
     private static bool TryResolvePlugin(string pluginId, out PluginRecord? record, out Uri? address)

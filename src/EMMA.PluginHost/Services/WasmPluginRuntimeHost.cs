@@ -1169,14 +1169,20 @@ public sealed class WasmPluginRuntimeHost(
         var allowedDomains = manifest.Permissions?.Domains;
         if (allowedDomains is null || allowedDomains.Count == 0)
         {
-            return;
+            throw new InvalidOperationException(
+                $"WASM host bridge blocked request to '{requestUri.Host}'. Plugin permissions.domains must declare an explicit allowlist.");
+        }
+
+        if (allowedDomains.Any(domain => string.Equals(domain?.Trim(), "*", StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                $"WASM host bridge blocked request to '{requestUri.Host}'. Wildcard '*' is not allowed in plugin permissions.domains.");
         }
 
         var host = requestUri.Host;
         var isAllowed = allowedDomains.Any(domain =>
             !string.IsNullOrWhiteSpace(domain)
-            && (string.Equals(domain, "*", StringComparison.OrdinalIgnoreCase)
-                || host.Equals(domain, StringComparison.OrdinalIgnoreCase)
+            && (host.Equals(domain, StringComparison.OrdinalIgnoreCase)
                 || host.EndsWith($".{domain}", StringComparison.OrdinalIgnoreCase)));
 
         if (!isAllowed)

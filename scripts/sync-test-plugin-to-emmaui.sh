@@ -102,13 +102,13 @@ if [[ "$RID" == linux-* ]]; then
   if [[ "$PLUGIN_MODE" == "wasm" ]]; then
     if [[ ! -f "$WASM_COMPONENT_SOURCE" ]]; then
       echo "WASM component not found: $WASM_COMPONENT_SOURCE"
-      echo "Build it first with: TARGETS=\"wasm\" ./src/EMMA.TestPlugin/scripts/build-pack-plugin.sh"
+      echo "Build it first with: TARGETS=\"wasm\" ./scripts/plugin-pack.sh ./src/EMMA.TestPlugin"
       exit 1
     fi
 
     if [[ ! -d "$WASM_RUNTIME_SOURCE_DIR" ]]; then
       echo "WASM runtime payload directory not found: $WASM_RUNTIME_SOURCE_DIR"
-      echo "Build it first with: TARGETS=\"wasm\" ./src/EMMA.TestPlugin/scripts/build-pack-plugin.sh"
+      echo "Build it first with: TARGETS=\"wasm\" ./scripts/plugin-pack.sh ./src/EMMA.TestPlugin"
       exit 1
     fi
   else

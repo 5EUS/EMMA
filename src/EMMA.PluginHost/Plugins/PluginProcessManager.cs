@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Platform;
 using EMMA.PluginHost.Sandboxing;
@@ -21,6 +22,7 @@ public sealed class PluginProcessManager(
     IPluginSignatureVerifier signatureVerifier,
     ILogger<PluginProcessManager> logger)
 {
+    private const string HostAuthTokenEnvVar = "EMMA_PLUGIN_HOST_AUTH_TOKEN";
     private static readonly Regex CorrelationIdRegex = new(
         "CorrelationId\\s*[:=]\\s*(?<id>[A-Za-z0-9-]+)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -100,6 +102,7 @@ public sealed class PluginProcessManager(
     private readonly IPluginEntrypointResolver _entrypointResolver = entrypointResolver;
     private readonly ILogger<PluginProcessManager> _logger = logger;
     private readonly Dictionary<string, ProcessHandle> _processes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _hostAuthTokens = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, LogBuffer> _logs = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SemaphoreSlim> _startupGuards = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _lock = new();
@@ -227,8 +230,10 @@ public sealed class PluginProcessManager(
             await _sandboxManager.PrepareAsync(manifest, cancellationToken);
             AppendProcessEvent(manifest.Id, "sandbox prepared");
 
+            var hostAuthToken = GenerateHostAuthToken();
             var startInfo = BuildStartInfo(manifest, executable);
             ApplyPluginPort(manifest, startInfo);
+            ApplyHostAuthToken(startInfo, hostAuthToken);
             startInfo = _sandboxManager.ApplyToStartInfo(manifest, startInfo);
             AppendProcessEvent(
                 manifest.Id,
@@ -248,6 +253,15 @@ public sealed class PluginProcessManager(
                 EnableRaisingEvents = true
             };
 
+            if (OperatingSystem.IsIOS())
+            {
+                AppendProcessEvent(manifest.Id, "startup blocked: process runtime is unsupported on iOS");
+                return current.WithState(
+                    PluginRuntimeState.Disabled,
+                    "process-runtime-ios-unsupported",
+                    "Process-managed plugins are unsupported on iOS.");
+            }
+
             if (!process.Start())
             {
                 AppendProcessEvent(manifest.Id, "process.Start() returned false");
@@ -256,7 +270,7 @@ public sealed class PluginProcessManager(
 
             AppendProcessEvent(manifest.Id, $"process started pid={process.Id}");
 
-            AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty);
+            AddProcess(manifest.Id, process, startInfo.FileName ?? string.Empty, hostAuthToken);
             AttachLogCapture(manifest.Id, process);
 
             if (process.HasExited)
@@ -521,6 +535,16 @@ public sealed class PluginProcessManager(
         }
     }
 
+    private void AddProcess(string pluginId, Process process, string command, string hostAuthToken)
+    {
+        lock (_lock)
+        {
+            _processes[pluginId] = new ProcessHandle(process, command, DateTimeOffset.UtcNow);
+            _hostAuthTokens[pluginId] = hostAuthToken;
+            _logs.TryAdd(pluginId, new LogBuffer(_options.PluginLogMaxLines));
+        }
+    }
+
     private void AppendProcessEvent(string pluginId, string message)
     {
         if (string.IsNullOrWhiteSpace(pluginId) || string.IsNullOrWhiteSpace(message))
@@ -571,7 +595,7 @@ public sealed class PluginProcessManager(
         {
             if (!handle.Process.HasExited)
             {
-                if (HostPlatformPolicy.Current == HostPlatform.AppleMobile)
+                if (OperatingSystem.IsIOS())
                 {
                     AppendProcessEvent(pluginId, "stop skipped: process kill unsupported on iOS");
                     return;
@@ -596,6 +620,22 @@ public sealed class PluginProcessManager(
         lock (_lock)
         {
             _processes.Remove(pluginId);
+            _hostAuthTokens.Remove(pluginId);
+        }
+    }
+
+    public string? GetHostAuthToken(string pluginId)
+    {
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            return null;
+        }
+
+        lock (_lock)
+        {
+            return _hostAuthTokens.TryGetValue(pluginId, out var token)
+                ? token
+                : null;
         }
     }
 
@@ -754,6 +794,21 @@ public sealed class PluginProcessManager(
         }
 
         startInfo.Environment["EMMA_PLUGIN_PORT"] = address.Port.ToString();
+    }
+
+    private static void ApplyHostAuthToken(ProcessStartInfo startInfo, string hostAuthToken)
+    {
+        if (string.IsNullOrWhiteSpace(hostAuthToken))
+        {
+            return;
+        }
+
+        startInfo.Environment[HostAuthTokenEnvVar] = hostAuthToken;
+    }
+
+    private static string GenerateHostAuthToken()
+    {
+        return Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     }
 
     private static string? ReadEnv(ProcessStartInfo startInfo, string key)
