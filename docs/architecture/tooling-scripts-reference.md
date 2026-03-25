@@ -117,7 +117,7 @@ Usage:
 
 Recommended:
 ```bash
-BUILD_SIMULATOR=0 BUILD_NATIVE_IOS_LIBS=1 RUN_POD_INSTALL=1 publish-and-sync-ios-runtime.sh /Users/zeus/Git/emmaui
+BUILD_SIMULATOR=0 BUILD_NATIVE_IOS_LIBS=1 RUN_POD_INSTALL=1 ./publish-and-sync-ios-runtime.sh /Users/zeus/Git/emmaui
 ```
 
 Behavior:
