@@ -125,6 +125,7 @@ public static class PluginHostExports
                 services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
                 services.AddSingleton<ILibraryPort, SqliteLibraryPort>();
                 services.AddSingleton<IProgressPort, SqliteProgressPort>();
+                services.AddSingleton<IHistoryPort, SqliteHistoryPort>();
                 services.AddSingleton<IPageAssetCachePort>(sp =>
                     new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
                 services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
@@ -1333,6 +1334,51 @@ public static class PluginHostExports
         {
             SetLastError(ex);
             return 0;
+        }
+    }
+
+    public static string? GetReadChapterIdsJsonManaged(
+        string mediaId,
+        string pluginId,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return null;
+            }
+
+            EnsureInitialized();
+            var history = _serviceProvider!.GetRequiredService<IHistoryPort>();
+            var normalizedPluginId = pluginId ?? string.Empty;
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            var entries = history.GetHistoryAsync(normalizedUserId, 10000, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var chapterIds = entries
+                .Where(entry => entry.MediaId.Value == mediaId)
+                .Where(entry => string.Equals(entry.PluginId, normalizedPluginId, StringComparison.Ordinal))
+                .Where(entry => entry.EntryId.StartsWith("paged::", StringComparison.Ordinal))
+                .Select(entry => entry.ExternalId)
+                .Where(externalId => !string.IsNullOrWhiteSpace(externalId))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            IReadOnlyList<string> payload = chapterIds;
+            return JsonSerializer.Serialize(payload, PluginHostExportsJsonContext.Default.IReadOnlyListString);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
         }
     }
 

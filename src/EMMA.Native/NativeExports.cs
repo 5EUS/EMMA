@@ -1446,6 +1446,49 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_read_chapter_ids_json")]
+    public static IntPtr RuntimeGetReadChapterIdsJson(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr pluginIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaId = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("mediaId is required.");
+                return IntPtr.Zero;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.GetReadChapterIdsJsonManaged(mediaId, pluginId);
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to get read chapter IDs.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_last_error")]
     public static IntPtr LastError()
     {
