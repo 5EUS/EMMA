@@ -277,7 +277,7 @@ public sealed class WasmPluginRuntimeHost(
         var componentPath = ResolveComponentPath(record.Manifest);
         var normalizedQuery = query?.Trim() ?? string.Empty;
         var invokeStopwatch = Stopwatch.StartNew();
-        var searchJson = await RunInvokeOperationAsync(
+        var operationResult = await RunInvokeOperationWithResultAsync(
             componentPath,
             operation: SearchOperation,
             mediaId: null,
@@ -286,6 +286,26 @@ public sealed class WasmPluginRuntimeHost(
             permittedDomains: record.Manifest.Permissions?.Domains,
             cancellationToken: cancellationToken);
         invokeStopwatch.Stop();
+
+        var searchJson = operationResult.PayloadJson ?? string.Empty;
+
+        _logger.LogDebug(
+            "WASM search invoke contentType for {PluginId}: {ContentType}",
+            record.Manifest.Id,
+            operationResult.ContentType ?? "<null>");
+
+        if (TryParseSearchTimingMetadata(operationResult.ContentType, out var splitTiming))
+        {
+            _logger.LogInformation(
+                "WASM search split timing for {PluginId}: fetch={FetchMs}ms parse={ParseMs}ms map={MapMs}ms pluginTotal={PluginTotalMs}ms resultCount={ResultCount} payloadSource={PayloadSource}",
+                record.Manifest.Id,
+                splitTiming.FetchMs,
+                splitTiming.ParseMs,
+                splitTiming.MapMs,
+                splitTiming.TotalMs,
+                splitTiming.ResultCount,
+                splitTiming.PayloadSource);
+        }
 
         if (invokeStopwatch.ElapsedMilliseconds >= 500)
         {
@@ -597,6 +617,27 @@ public sealed class WasmPluginRuntimeHost(
         IReadOnlyList<string>? permittedDomains,
         CancellationToken cancellationToken)
     {
+        var operationResult = await RunInvokeOperationWithResultAsync(
+            componentPath,
+            operation,
+            mediaId,
+            mediaType,
+            argsJson,
+            permittedDomains,
+            cancellationToken);
+
+        return operationResult.PayloadJson ?? string.Empty;
+    }
+
+    private async Task<WasmOperationResult> RunInvokeOperationWithResultAsync(
+        string componentPath,
+        string operation,
+        string? mediaId,
+        string? mediaType,
+        string? argsJson,
+        IReadOnlyList<string>? permittedDomains,
+        CancellationToken cancellationToken)
+    {
         var invokeArgs = new List<string>(4)
         {
             operation,
@@ -626,7 +667,72 @@ public sealed class WasmPluginRuntimeHost(
                     : operationResult.Error);
         }
 
-        return operationResult.PayloadJson ?? string.Empty;
+        return operationResult;
+    }
+
+    private static bool TryParseSearchTimingMetadata(string? contentType, out SearchSplitTiming timing)
+    {
+        timing = default;
+
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return false;
+        }
+
+        var parts = contentType.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length <= 1)
+        {
+            return false;
+        }
+
+        long fetchMs = 0;
+        long parseMs = 0;
+        long mapMs = 0;
+        long totalMs = 0;
+        int resultCount = 0;
+        var payloadSource = "unknown";
+
+        foreach (var part in parts.Skip(1))
+        {
+            var separator = part.IndexOf('=');
+            if (separator <= 0 || separator >= part.Length - 1)
+            {
+                continue;
+            }
+
+            var key = part[..separator].Trim();
+            var value = part[(separator + 1)..].Trim();
+
+            switch (key)
+            {
+                case "emma-search-fetch-ms":
+                    long.TryParse(value, out fetchMs);
+                    break;
+                case "emma-search-parse-ms":
+                    long.TryParse(value, out parseMs);
+                    break;
+                case "emma-search-map-ms":
+                    long.TryParse(value, out mapMs);
+                    break;
+                case "emma-search-total-ms":
+                    long.TryParse(value, out totalMs);
+                    break;
+                case "emma-search-result-count":
+                    int.TryParse(value, out resultCount);
+                    break;
+                case "emma-search-payload-source":
+                    payloadSource = value;
+                    break;
+            }
+        }
+
+        if (fetchMs == 0 && parseMs == 0 && mapMs == 0 && totalMs == 0 && resultCount == 0 && string.Equals(payloadSource, "unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        timing = new SearchSplitTiming(fetchMs, parseMs, mapMs, totalMs, resultCount, payloadSource);
+        return true;
     }
 
     private T? DeserializeJson<T>(string? json)
@@ -705,4 +811,12 @@ public sealed class WasmPluginRuntimeHost(
         var trimmed = value.Trim();
         return trimmed.StartsWith('{') || trimmed.StartsWith('[') || trimmed.StartsWith('"');
     }
+
+    private readonly record struct SearchSplitTiming(
+        long FetchMs,
+        long ParseMs,
+        long MapMs,
+        long TotalMs,
+        int ResultCount,
+        string PayloadSource);
 }

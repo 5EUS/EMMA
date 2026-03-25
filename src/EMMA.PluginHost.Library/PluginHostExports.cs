@@ -7,7 +7,6 @@ using PluginContracts = EMMA.Contracts.Plugins;
 using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Http;
 using EMMA.PluginHost.Configuration;
-using EMMA.PluginHost.Platform;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
@@ -33,6 +32,8 @@ public static class PluginHostExports
     private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
     private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
     private const string DevModeEnvVar = "EMMA_PLUGIN_DEV_MODE";
+    private const string PluginHostConsoleLogsEnvVar = "EMMA_PLUGINHOST_CONSOLE_LOGS";
+    private const string PluginHostLogLevelEnvVar = "EMMA_PLUGINHOST_LOG_LEVEL";
     private const string HostAuthHeader = "x-emma-plugin-host-auth";
     private static ServiceProvider? _serviceProvider;
     private static PluginRegistry? _registry;
@@ -146,15 +147,22 @@ public static class PluginHostExports
                 // Handshake
                 services.AddSingleton<PluginHandshakeService>();
 
-                // Logging (simple console logger for now)
+                // Logging is consolidated through EMMA.Native by default.
+                // Console provider is opt-in for host-only diagnostics.
                 services.AddLogging(builder =>
                 {
-                    builder.AddSimpleConsole(options =>
+                    builder.ClearProviders();
+
+                    if (ShouldEnablePluginHostConsoleLogs())
                     {
-                        options.SingleLine = true;
-                        options.IncludeScopes = false;
-                    });
-                    builder.SetMinimumLevel(LogLevel.Information);
+                        builder.AddSimpleConsole(options =>
+                        {
+                            options.SingleLine = true;
+                            options.IncludeScopes = false;
+                        });
+                    }
+
+                    builder.SetMinimumLevel(ResolvePluginHostMinimumLogLevel());
                 });
 
                 _serviceProvider = services.BuildServiceProvider();
@@ -278,6 +286,34 @@ public static class PluginHostExports
         return string.Equals(aspnetEnvironment, "Development", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool ShouldEnablePluginHostConsoleLogs()
+    {
+        var value = Environment.GetEnvironmentVariable(PluginHostConsoleLogsEnvVar);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(value, out var parsedBool))
+        {
+            return parsedBool;
+        }
+
+        return value.Trim() is "1" or "yes" or "on";
+    }
+
+    private static LogLevel ResolvePluginHostMinimumLogLevel()
+    {
+        var value = Environment.GetEnvironmentVariable(PluginHostLogLevelEnvVar);
+        if (!string.IsNullOrWhiteSpace(value)
+            && Enum.TryParse<LogLevel>(value.Trim(), ignoreCase: true, out var parsed))
+        {
+            return parsed;
+        }
+
+        return LogLevel.Warning;
+    }
+
     /// <summary>
     /// Shutdown the plugin host and release resources.
     /// </summary>
@@ -369,23 +405,14 @@ public static class PluginHostExports
     {
         ClearLastError();
         var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
-            ? Guid.NewGuid().ToString("n")
-            : correlationId!;
-        var ensureInitMs = 0L;
-        var snapshotLookupMs = 0L;
-        var runtimeSearchMs = 0L;
-        var path = "wasm";
-        var success = false;
 
         try
         {
             var ensureInitStopwatch = System.Diagnostics.Stopwatch.StartNew();
             EnsureInitialized();
             ensureInitStopwatch.Stop();
-            ensureInitMs = ensureInitStopwatch.ElapsedMilliseconds;
 
-            if (!TryResolveWasmSearchRecord(pluginId, out var record, out snapshotLookupMs))
+            if (!TryResolveWasmSearchRecord(pluginId, out var record))
             {
                 return null;
             }
@@ -395,8 +422,6 @@ public static class PluginHostExports
                 .GetAwaiter()
                 .GetResult();
             runtimeSearchStopwatch.Stop();
-            runtimeSearchMs = runtimeSearchStopwatch.ElapsedMilliseconds;
-            success = true;
             return json;
         }
         catch (Exception ex)
@@ -407,7 +432,6 @@ public static class PluginHostExports
         finally
         {
             totalStopwatch.Stop();
-            SetLastSearchTiming($"[search-timing] correlationId={resolvedCorrelationId} pluginId={pluginId} queryLength={(query ?? string.Empty).Length} path={path} ensureInitMs={ensureInitMs} snapshotLookupMs={snapshotLookupMs} fastPathMs=0 resolveMs=0 runtimeSearchMs={runtimeSearchMs} grpcSearchMs=0 grpcMapMs=0 totalMs={totalStopwatch.ElapsedMilliseconds} success={success}");
         }
     }
 
@@ -509,23 +533,14 @@ public static class PluginHostExports
     {
         ClearLastError();
         var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
-        var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
-            ? Guid.NewGuid().ToString("n")
-            : correlationId!;
-        var ensureInitMs = 0L;
-        var snapshotLookupMs = 0L;
-        var runtimeSearchMs = 0L;
-        var path = "wasm";
-        var success = false;
 
         try
         {
             var ensureInitStopwatch = System.Diagnostics.Stopwatch.StartNew();
             EnsureInitialized();
             ensureInitStopwatch.Stop();
-            ensureInitMs = ensureInitStopwatch.ElapsedMilliseconds;
 
-            if (!TryResolveWasmSearchRecord(pluginId, out var record, out snapshotLookupMs))
+            if (!TryResolveWasmSearchRecord(pluginId, out var record))
             {
                 return null;
             }
@@ -535,8 +550,6 @@ public static class PluginHostExports
                 .GetAwaiter()
                 .GetResult();
             runtimeSearchStopwatch.Stop();
-            runtimeSearchMs = runtimeSearchStopwatch.ElapsedMilliseconds;
-            success = true;
             return results;
         }
         catch (Exception ex)
@@ -547,14 +560,12 @@ public static class PluginHostExports
         finally
         {
             totalStopwatch.Stop();
-            SetLastSearchTiming($"[search-timing] correlationId={resolvedCorrelationId} pluginId={pluginId} queryLength={(query ?? string.Empty).Length} path={path} ensureInitMs={ensureInitMs} snapshotLookupMs={snapshotLookupMs} fastPathMs=0 resolveMs=0 runtimeSearchMs={runtimeSearchMs} grpcSearchMs=0 grpcMapMs=0 totalMs={totalStopwatch.ElapsedMilliseconds} success={success}");
         }
     }
 
-    private static bool TryResolveWasmSearchRecord(string pluginId, out PluginRecord? record, out long snapshotLookupMs)
+    private static bool TryResolveWasmSearchRecord(string pluginId, out PluginRecord? record)
     {
         record = null;
-        snapshotLookupMs = 0;
 
         if (string.IsNullOrWhiteSpace(pluginId))
         {
@@ -567,7 +578,6 @@ public static class PluginHostExports
             .GetSnapshot()
             .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
         snapshotLookupStopwatch.Stop();
-        snapshotLookupMs = snapshotLookupStopwatch.ElapsedMilliseconds;
 
         if (snapshotRecord is null)
         {
@@ -600,11 +610,6 @@ public static class PluginHostExports
         return true;
     }
 
-    public static string? TakeLastWasmNativeTimingManaged()
-    {
-        return NativeInProcessWasmComponentInvoker.TakeLastNativeTimingSnapshot();
-    }
-
     public static string? TakeLastSearchTimingManaged()
     {
         lock (_searchTimingLock)
@@ -612,14 +617,6 @@ public static class PluginHostExports
             var value = _lastSearchTiming;
             _lastSearchTiming = null;
             return value;
-        }
-    }
-
-    private static void SetLastSearchTiming(string value)
-    {
-        lock (_searchTimingLock)
-        {
-            _lastSearchTiming = value;
         }
     }
 

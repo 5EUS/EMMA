@@ -15,6 +15,8 @@ namespace EMMA.Native;
 
 public static class NativeExports
 {
+    private const string NativeConsoleLogLevelEnvVar = "EMMA_NATIVE_LOG_LEVEL";
+    private const string NativeVerboseTimingEnvVar = "EMMA_NATIVE_VERBOSE_TIMING";
     private sealed class RuntimeState(EmbeddedRuntime runtime, InMemoryMediaStore store)
     {
         public EmbeddedRuntime Runtime { get; } = runtime;
@@ -41,6 +43,7 @@ public static class NativeExports
     private static int _runtimeReferenceCount;
     private static PluginPathConfiguration _pluginPathConfiguration = new(null, null);
     private static bool _pluginHostInitialized = false;
+    private static int _nativeLoggingConfigured = 0;
 
     // Don't use [ThreadStatic] - we need the error to be visible across threads for FFI
     private static string? _lastError;
@@ -48,6 +51,7 @@ public static class NativeExports
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_start")]
     public static int RuntimeStart()
     {
+        EnsureNativeLoggingConfigured();
         ClearLastError();
         LogInfo("runtime", "RuntimeStart requested.");
 
@@ -522,19 +526,10 @@ public static class NativeExports
             LogTimedOperation(
                 "search",
                 stopwatch.ElapsedMilliseconds,
-                $"handle={handle}, pluginId={pluginIdForLog}, queryLength={queryLengthForLog}, responseBytes={responseBytesForLog}, success={success}");
+                $"handle={handle}, pluginId={pluginIdForLog}, queryLength={queryLengthForLog}, responseBytes={responseBytesForLog}, success={success}",
+                forceInfo: true);
 
-            var phaseMessage = $"search phases (handle={handle}, pluginId={pluginIdForLog}, hostCorrelationId={pluginHostCorrelationId}, hostCallMs={pluginHostCallMs}, responseBytes={responseBytesForLog}, totalMs={stopwatch.ElapsedMilliseconds}, success={success})";
-            if (stopwatch.ElapsedMilliseconds >= 500)
-            {
-                LogInfo("timing", phaseMessage);
-            }
-            else
-            {
-                LogDebug("timing", phaseMessage);
-            }
-
-            if (!string.IsNullOrWhiteSpace(pluginHostTimingSnapshot))
+            if (ShouldLogVerboseTimingDetails() && !string.IsNullOrWhiteSpace(pluginHostTimingSnapshot))
             {
                 LogInfo("timing", $"search host detail (handle={handle}, pluginId={pluginIdForLog}) {pluginHostTimingSnapshot}");
             }
@@ -1719,14 +1714,8 @@ public static class NativeExports
         var json = PluginHostExports.SearchJsonManaged(pluginId, query, correlationId);
         hostCallStopwatch.Stop();
 
-        var nativeWasmTiming = PluginHostExports.TakeLastWasmNativeTimingManaged();
-        if (!string.IsNullOrWhiteSpace(nativeWasmTiming))
-        {
-            LogInfo("temp-timing-remove", nativeWasmTiming!);
-        }
-
         var hostTimingSnapshot = PluginHostExports.TakeLastSearchTimingManaged();
-        if (!string.IsNullOrWhiteSpace(hostTimingSnapshot))
+        if (ShouldLogVerboseTimingDetails() && !string.IsNullOrWhiteSpace(hostTimingSnapshot))
         {
             LogInfo("timing", hostTimingSnapshot!);
         }
@@ -1738,36 +1727,6 @@ public static class NativeExports
         }
 
         return new SearchHostPhaseResult(json, hostCallStopwatch.ElapsedMilliseconds, hostTimingSnapshot, correlationId);
-    }
-
-    private static string? GetMediaIdProperty(JsonElement element)
-    {
-        var directId = GetStringProperty(element, "id")
-            ?? GetStringProperty(element, "mediaId");
-        if (!string.IsNullOrWhiteSpace(directId))
-        {
-            return directId;
-        }
-
-        if (TryGetObjectProperty(element, "id", out var idObject))
-        {
-            var nestedId = GetStringProperty(idObject, "value");
-            if (!string.IsNullOrWhiteSpace(nestedId))
-            {
-                return nestedId;
-            }
-        }
-
-        if (TryGetObjectProperty(element, "mediaId", out var mediaIdObject))
-        {
-            var nestedId = GetStringProperty(mediaIdObject, "value");
-            if (!string.IsNullOrWhiteSpace(nestedId))
-            {
-                return nestedId;
-            }
-        }
-
-        return null;
     }
 
     private static bool TryGetObjectProperty(JsonElement element, string propertyName, out JsonElement objectValue)
@@ -1886,16 +1845,65 @@ public static class NativeExports
         LogStore.Write(NativeLogLevel.Error, category, message);
     }
 
-    private static void LogTimedOperation(string operation, long elapsedMs, string details)
+    private static void LogTimedOperation(string operation, long elapsedMs, string details, bool forceInfo = false)
     {
         var message = $"{operation} took {elapsedMs}ms ({details})";
-        if (elapsedMs >= 500)
+        if (forceInfo || elapsedMs >= 500)
         {
             LogInfo("timing", message);
             return;
         }
 
         LogDebug("timing", message);
+    }
+
+    private static bool ShouldLogVerboseTimingDetails()
+    {
+        var value = Environment.GetEnvironmentVariable(NativeVerboseTimingEnvVar)
+            ?? Environment.GetEnvironmentVariable("EMMA_WASM_PAYLOAD_DIAGNOSTICS")
+            ?? Environment.GetEnvironmentVariable("EMMA_PLUGIN_TIMING_DIAGNOSTICS");
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(value, out var parsedBool))
+        {
+            return parsedBool;
+        }
+
+        return value.Trim() is "1" or "yes" or "on";
+    }
+
+    private static void EnsureNativeLoggingConfigured()
+    {
+        if (Interlocked.Exchange(ref _nativeLoggingConfigured, 1) != 0)
+        {
+            return;
+        }
+
+        var configuredLevel = ResolveNativeConsoleLogLevel();
+        LogStore.SetConsoleMinLevel(configuredLevel);
+    }
+
+    private static NativeLogLevel ResolveNativeConsoleLogLevel()
+    {
+        var value = Environment.GetEnvironmentVariable(NativeConsoleLogLevelEnvVar);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return NativeLogLevel.Information;
+        }
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "trace" => NativeLogLevel.Trace,
+            "debug" => NativeLogLevel.Debug,
+            "information" or "info" => NativeLogLevel.Information,
+            "warning" or "warn" => NativeLogLevel.Warning,
+            "error" => NativeLogLevel.Error,
+            _ => NativeLogLevel.Information
+        };
     }
 
     private static string? ResolveManifestDirectory()

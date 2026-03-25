@@ -32,6 +32,7 @@ internal sealed class NativeLogStore
     }
 
     public bool ConsoleEnabled { get; private set; } = true;
+    public NativeLogLevel ConsoleMinLevel { get; private set; } = NativeLogLevel.Information;
 
     public long LatestSequence
     {
@@ -52,6 +53,14 @@ internal sealed class NativeLogStore
         }
     }
 
+    public void SetConsoleMinLevel(NativeLogLevel level)
+    {
+        lock (_lock)
+        {
+            ConsoleMinLevel = level;
+        }
+    }
+
     public void Clear()
     {
         lock (_lock)
@@ -67,6 +76,7 @@ internal sealed class NativeLogStore
 
         NativeLogEntry entry;
         bool consoleEnabled;
+        NativeLogLevel consoleMinLevel;
 
         lock (_lock)
         {
@@ -80,9 +90,10 @@ internal sealed class NativeLogStore
             }
 
             consoleEnabled = ConsoleEnabled;
+            consoleMinLevel = ConsoleMinLevel;
         }
 
-        if (consoleEnabled)
+        if (consoleEnabled && level >= consoleMinLevel)
         {
             Console.WriteLine($"[EMMA.Native][{entry.TimestampUtc:O}][{entry.Level}][{entry.Category}] {entry.Message}");
         }

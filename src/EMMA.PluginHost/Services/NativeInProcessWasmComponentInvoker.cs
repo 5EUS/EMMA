@@ -13,7 +13,6 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
     private const uint DefaultTimeoutMs = 30_000u;
     private const uint SearchTimeoutMs = 30_000u;
     private static readonly Lock LastTimingLock = new();
-    private static string? _lastNativeTimingSnapshot;
     private static PluginHostOptions _pluginHostOptions = new();
     private readonly ConcurrentDictionary<string, CachedPluginHandle> _pluginHandles = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
@@ -26,16 +25,6 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
     public NativeInProcessWasmComponentInvoker(IOptions<PluginHostOptions> options)
     {
         _pluginHostOptions = options.Value;
-    }
-
-    public static string? TakeLastNativeTimingSnapshot()
-    {
-        lock (LastTimingLock)
-        {
-            var value = _lastNativeTimingSnapshot;
-            _lastNativeTimingSnapshot = null;
-            return value;
-        }
     }
 
     public Task<string> InvokeAsync(
@@ -71,65 +60,40 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
         try
         {
             var handle = GetOrCreatePluginHandle(componentPath);
-
-            IntPtr outJson;
-            IntPtr outError;
             var result = NativeBindings.PluginInvoke(
                 handle,
                 operationPtr,
                 argsPtr,
                 timeoutMs,
-                out outJson,
-                out outError);
+                out nint outJson,
+                out nint outError);
 
-            try
+            if (result != NativeSuccess)
             {
-                var timingPtr = NativeBindings.TakeLastTiming();
-                try
+                var nativeError = PtrToUtf8String(outError);
+                if (!string.IsNullOrWhiteSpace(nativeError)
+                    && nativeError.Contains("unknown plugin handle", StringComparison.OrdinalIgnoreCase)
+                    && _pluginHandles.TryRemove(componentPath, out _))
                 {
-                    var timing = PtrToUtf8String(timingPtr);
-                    if (!string.IsNullOrWhiteSpace(timing))
-                    {
-                        lock (LastTimingLock)
-                        {
-                            _lastNativeTimingSnapshot = timing;
-                        }
-                    }
-                }
-                finally
-                {
-                    NativeBindings.FreeString(timingPtr);
+                    return InvokeAsync(componentPath, operation, operationArgs ?? [], permittedDomains, cancellationToken);
                 }
 
-                if (result != NativeSuccess)
-                {
-                    var nativeError = PtrToUtf8String(outError);
-                    if (!string.IsNullOrWhiteSpace(nativeError)
-                        && nativeError.Contains("unknown plugin handle", StringComparison.OrdinalIgnoreCase)
-                        && _pluginHandles.TryRemove(componentPath, out _))
-                    {
-                        return InvokeAsync(componentPath, operation, operationArgs ?? [], permittedDomains, cancellationToken);
-                    }
-
-                    throw new InvalidOperationException(
-                        string.IsNullOrWhiteSpace(nativeError)
-                            ? $"Native WASM runtime invocation failed (code {result})."
-                            : nativeError);
-                }
-
-                var output = PtrToUtf8String(outJson);
-                if (string.IsNullOrWhiteSpace(output))
-                {
-                    throw new InvalidOperationException("Native WASM runtime returned empty output.");
-                }
-
-                return Task.FromResult(output);
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(nativeError)
+                        ? $"Native WASM runtime invocation failed (code {result})."
+                        : nativeError);
             }
-            finally
+
+            var output = PtrToUtf8String(outJson);
+            if (string.IsNullOrWhiteSpace(output))
             {
-                NativeBindings.FreeString(outJson);
-                NativeBindings.FreeString(outError);
+                throw new InvalidOperationException("Native WASM runtime returned empty output.");
             }
+
+            NativeBindings.FreeString(outJson);
+            NativeBindings.FreeString(outError);
+            
+            return Task.FromResult(output);
         }
         catch (DllNotFoundException ex)
         {
