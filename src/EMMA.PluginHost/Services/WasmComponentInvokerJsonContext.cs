@@ -11,6 +11,7 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(WasmComponentInvokeEnvelope))]
 public partial class WasmComponentInvokerJsonContext : JsonSerializerContext
 {
 }

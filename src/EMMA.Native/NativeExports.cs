@@ -475,13 +475,10 @@ public static class NativeExports
         var stopwatch = Stopwatch.StartNew();
         string pluginIdForLog = "<none>";
         var queryLengthForLog = 0;
-        var resultCountForLog = 0;
+        var responseBytesForLog = 0;
         long pluginHostCallMs = 0;
-        long pluginHostParseMapMs = 0;
         string? pluginHostTimingSnapshot = null;
         string pluginHostCorrelationId = "<none>";
-        long pipelineSearchMs = 0;
-        long buildJsonMs = 0;
         var success = false;
 
         try
@@ -498,35 +495,21 @@ public static class NativeExports
             pluginIdForLog = activePluginId ?? "<none>";
             LogDebug("search", $"Search requested. handle={handle}, pluginId={activePluginId ?? "<none>"}, query='{query}'");
 
-            IReadOnlyList<MediaSummary> results;
-            if (!string.IsNullOrWhiteSpace(activePluginId))
+            if (string.IsNullOrWhiteSpace(activePluginId))
             {
-                var hostResult = SearchViaEmbeddedPluginHostTimed(activePluginId, query);
-                results = hostResult.Results;
-                pluginHostCallMs = hostResult.HostCallMs;
-                pluginHostParseMapMs = hostResult.ParseMapMs;
-                pluginHostTimingSnapshot = hostResult.HostTimingSnapshot;
-                pluginHostCorrelationId = hostResult.CorrelationId;
-            }
-            else
-            {
-                var pipelineStopwatch = Stopwatch.StartNew();
-                results = state.Runtime.Pipeline
-                    .SearchAsync(query, CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
-                pipelineStopwatch.Stop();
-                pipelineSearchMs = pipelineStopwatch.ElapsedMilliseconds;
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
             }
 
-            var buildJsonStopwatch = Stopwatch.StartNew();
-            var json = BuildMediaJson(results);
-            buildJsonStopwatch.Stop();
-            buildJsonMs = buildJsonStopwatch.ElapsedMilliseconds;
-            resultCountForLog = results.Count;
+            var hostResult = SearchViaEmbeddedPluginHostTimed(activePluginId, query);
+            pluginHostCallMs = hostResult.HostCallMs;
+            pluginHostTimingSnapshot = hostResult.HostTimingSnapshot;
+            pluginHostCorrelationId = hostResult.CorrelationId;
+            responseBytesForLog = hostResult.Json.Length;
+
             success = true;
-            LogDebug("search", $"Search completed. handle={handle}, count={results.Count}");
-            return AllocUtf8(json);
+            LogDebug("search", $"Search completed. handle={handle}, responseBytes={responseBytesForLog}");
+            return AllocUtf8(hostResult.Json);
         }
         catch (Exception ex)
         {
@@ -539,9 +522,9 @@ public static class NativeExports
             LogTimedOperation(
                 "search",
                 stopwatch.ElapsedMilliseconds,
-                $"handle={handle}, pluginId={pluginIdForLog}, queryLength={queryLengthForLog}, count={resultCountForLog}, success={success}");
+                $"handle={handle}, pluginId={pluginIdForLog}, queryLength={queryLengthForLog}, responseBytes={responseBytesForLog}, success={success}");
 
-            var phaseMessage = $"search phases (handle={handle}, pluginId={pluginIdForLog}, hostCorrelationId={pluginHostCorrelationId}, hostCallMs={pluginHostCallMs}, hostParseMapMs={pluginHostParseMapMs}, pipelineSearchMs={pipelineSearchMs}, buildJsonMs={buildJsonMs}, totalMs={stopwatch.ElapsedMilliseconds}, success={success})";
+            var phaseMessage = $"search phases (handle={handle}, pluginId={pluginIdForLog}, hostCorrelationId={pluginHostCorrelationId}, hostCallMs={pluginHostCallMs}, responseBytes={responseBytesForLog}, totalMs={stopwatch.ElapsedMilliseconds}, success={success})";
             if (stopwatch.ElapsedMilliseconds >= 500)
             {
                 LogInfo("timing", phaseMessage);
@@ -619,6 +602,122 @@ public static class NativeExports
                 "get-chapters",
                 stopwatch.ElapsedMilliseconds,
                 $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, success={success}");
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_benchmark_plugin_json")]
+    public static IntPtr RuntimeBenchmarkPluginJson(int handle, int iterations)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string pluginIdForLog = "<none>";
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            var normalizedIterations = Math.Clamp(iterations, 1, 1000);
+            LogDebug(
+                "benchmark",
+                $"Benchmark requested. handle={handle}, pluginId={activePluginId}, iterations={normalizedIterations}");
+
+            var json = PluginHostExports.BenchmarkJsonManaged(activePluginId, normalizedIterations);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin benchmark returned null.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            success = true;
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "benchmark",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, iterations={Math.Clamp(iterations, 1, 1000)}, success={success}");
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_benchmark_network_plugin_json")]
+    public static IntPtr RuntimeBenchmarkNetworkPluginJson(int handle, IntPtr queryUtf8)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string pluginIdForLog = "<none>";
+        var queryForLog = string.Empty;
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            var query = PtrToString(queryUtf8);
+            var normalizedQuery = string.IsNullOrWhiteSpace(query)
+                ? "one piece"
+                : query.Trim();
+            queryForLog = normalizedQuery;
+
+            LogDebug(
+                "benchmark-network",
+                $"Network benchmark requested. handle={handle}, pluginId={activePluginId}, queryLength={normalizedQuery.Length}");
+
+            var json = PluginHostExports.BenchmarkNetworkJsonManaged(activePluginId, normalizedQuery);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin network benchmark returned null.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            success = true;
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "benchmark-network",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, queryLength={queryForLog.Length}, success={success}");
         }
     }
 
@@ -1606,9 +1705,8 @@ public static class NativeExports
     }
 
     private readonly record struct SearchHostPhaseResult(
-        IReadOnlyList<MediaSummary> Results,
+        string Json,
         long HostCallMs,
-        long ParseMapMs,
         string? HostTimingSnapshot,
         string CorrelationId);
 
@@ -1618,7 +1716,7 @@ public static class NativeExports
         var correlationId = Guid.NewGuid().ToString("n");
 
         var hostCallStopwatch = Stopwatch.StartNew();
-        var results = PluginHostExports.SearchMediaManaged(pluginId, query, correlationId);
+        var json = PluginHostExports.SearchJsonManaged(pluginId, query, correlationId);
         hostCallStopwatch.Stop();
 
         var nativeWasmTiming = PluginHostExports.TakeLastWasmNativeTimingManaged();
@@ -1633,14 +1731,13 @@ public static class NativeExports
             LogInfo("timing", hostTimingSnapshot!);
         }
 
-        if (results == null)
+        if (json == null)
         {
             var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host search returned null";
             throw new InvalidOperationException(error);
         }
 
-        // Typed fast-path: results are already normalized domain objects from PluginHostExports.
-        return new SearchHostPhaseResult(results, hostCallStopwatch.ElapsedMilliseconds, 0, hostTimingSnapshot, correlationId);
+        return new SearchHostPhaseResult(json, hostCallStopwatch.ElapsedMilliseconds, hostTimingSnapshot, correlationId);
     }
 
     private static string? GetMediaIdProperty(JsonElement element)

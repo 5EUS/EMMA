@@ -7,6 +7,7 @@ using PluginContracts = EMMA.Contracts.Plugins;
 using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Http;
 using EMMA.PluginHost.Configuration;
+using EMMA.PluginHost.Platform;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
@@ -24,9 +25,6 @@ namespace EMMA.PluginHost.Library;
 public static class PluginHostExports
 {
     private const string DefaultProgressUserId = "local";
-    private const string DirectHttpEnvVar = "EMMA_WASM_DIRECT_HTTP";
-    private const string InMemoryBridgeEnvVar = "EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD";
-    private const string InMemoryBridgeMaxBytesEnvVar = "EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD_MAX_BYTES";
     private const string NativeWasmLibraryModeEnvVar = "EMMA_NATIVE_WASM_LIBRARY_MODE";
     private const string EmbeddedHandshakeOnStartupEnvVar = "EMMA_PLUGINHOST_HANDSHAKE_ON_STARTUP";
     private const string PluginHostHandshakeOnStartupEnvVar = "PluginHost__HandshakeOnStartup";
@@ -87,12 +85,6 @@ public static class PluginHostExports
                             .SetValue(options, ResolveHandshakeOnStartupEnabled());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmOperationTimeoutSeconds))!
                              .SetValue(options, 15);
-                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmDirectHttp))!
-                            .SetValue(options, ResolveWasmDirectHttpEnabled());
-                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmBridgeInMemoryPayload))!
-                            .SetValue(options, ResolveWasmBridgeInMemoryPayloadEnabled());
-                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmBridgeInMemoryPayloadMaxBytes))!
-                            .SetValue(options, ResolveWasmBridgeInMemoryPayloadMaxBytes());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.NativeWasmLibraryMode))!
                             .SetValue(options, ResolveNativeWasmLibraryMode());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.SandboxEnabled))!
@@ -190,60 +182,6 @@ public static class PluginHostExports
             SetLastError(ex);
             return -1;
         }
-    }
-
-    private static bool ResolveWasmBridgeInMemoryPayloadEnabled()
-    {
-        var value = Environment.GetEnvironmentVariable(InMemoryBridgeEnvVar);
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            if (bool.TryParse(value, out var parsedBool))
-            {
-                return parsedBool;
-            }
-
-            return value.Trim() switch
-            {
-                "1" or "yes" or "on" => true,
-                "0" or "no" or "off" => false,
-                _ => false
-            };
-        }
-
-        return false;
-    }
-
-    private static bool ResolveWasmDirectHttpEnabled()
-    {
-        var value = Environment.GetEnvironmentVariable(DirectHttpEnvVar);
-        if (!string.IsNullOrWhiteSpace(value))
-        {
-            if (bool.TryParse(value, out var parsedBool))
-            {
-                return parsedBool;
-            }
-
-            return value.Trim() switch
-            {
-                "1" or "yes" or "on" => true,
-                _ => false
-            };
-        }
-
-        return false;
-    }
-
-    private static int ResolveWasmBridgeInMemoryPayloadMaxBytes()
-    {
-        var value = Environment.GetEnvironmentVariable(InMemoryBridgeMaxBytesEnvVar);
-        if (!string.IsNullOrWhiteSpace(value)
-            && int.TryParse(value, out var parsed)
-            && parsed > 0)
-        {
-            return parsed;
-        }
-
-        return 262_144;
     }
 
     private static NativeWasmLibraryMode ResolveNativeWasmLibraryMode()
@@ -424,10 +362,138 @@ public static class PluginHostExports
     /// </summary>
     public static string? SearchJsonManaged(string pluginId, string query)
     {
-        var results = SearchMediaManaged(pluginId, query);
-        return results is null
-            ? null
-            : JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+        return SearchJsonManaged(pluginId, query, null);
+    }
+
+    public static string? SearchJsonManaged(string pluginId, string query, string? correlationId)
+    {
+        ClearLastError();
+        var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+            ? Guid.NewGuid().ToString("n")
+            : correlationId!;
+        var ensureInitMs = 0L;
+        var snapshotLookupMs = 0L;
+        var runtimeSearchMs = 0L;
+        var path = "wasm";
+        var success = false;
+
+        try
+        {
+            var ensureInitStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            EnsureInitialized();
+            ensureInitStopwatch.Stop();
+            ensureInitMs = ensureInitStopwatch.ElapsedMilliseconds;
+
+            if (!TryResolveWasmSearchRecord(pluginId, out var record, out snapshotLookupMs))
+            {
+                return null;
+            }
+
+            var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var json = _wasmRuntime!.SearchJsonAsync(record!, query ?? string.Empty, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            runtimeSearchStopwatch.Stop();
+            runtimeSearchMs = runtimeSearchStopwatch.ElapsedMilliseconds;
+            success = true;
+            return json;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+        finally
+        {
+            totalStopwatch.Stop();
+            SetLastSearchTiming($"[search-timing] correlationId={resolvedCorrelationId} pluginId={pluginId} queryLength={(query ?? string.Empty).Length} path={path} ensureInitMs={ensureInitMs} snapshotLookupMs={snapshotLookupMs} fastPathMs=0 resolveMs=0 runtimeSearchMs={runtimeSearchMs} grpcSearchMs=0 grpcMapMs=0 totalMs={totalStopwatch.ElapsedMilliseconds} success={success}");
+        }
+    }
+
+    public static string? BenchmarkJsonManaged(string pluginId, int iterations)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (string.IsNullOrWhiteSpace(pluginId))
+            {
+                SetLastError("Plugin ID is required");
+                return null;
+            }
+
+            var snapshotRecord = _registry!
+                .GetSnapshot()
+                .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+            if (snapshotRecord is null)
+            {
+                SetLastError($"Plugin '{pluginId}' not found");
+                return null;
+            }
+
+            if (!_wasmRuntime!.IsWasmPlugin(snapshotRecord.Manifest))
+            {
+                SetLastError($"Plugin '{pluginId}' is not a WASM plugin.");
+                return null;
+            }
+
+            var normalizedIterations = Math.Clamp(iterations, 1, 1000);
+            return _wasmRuntime.BenchmarkAsync(snapshotRecord, normalizedIterations, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? BenchmarkNetworkJsonManaged(string pluginId, string query)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (string.IsNullOrWhiteSpace(pluginId))
+            {
+                SetLastError("Plugin ID is required");
+                return null;
+            }
+
+            var snapshotRecord = _registry!
+                .GetSnapshot()
+                .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+            if (snapshotRecord is null)
+            {
+                SetLastError($"Plugin '{pluginId}' not found");
+                return null;
+            }
+
+            if (!_wasmRuntime!.IsWasmPlugin(snapshotRecord.Manifest))
+            {
+                SetLastError($"Plugin '{pluginId}' is not a WASM plugin.");
+                return null;
+            }
+
+            var normalizedQuery = string.IsNullOrWhiteSpace(query)
+                ? "one piece"
+                : query.Trim();
+
+            return _wasmRuntime.BenchmarkNetworkAsync(snapshotRecord, normalizedQuery, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
     }
 
     /// <summary>
@@ -448,12 +514,8 @@ public static class PluginHostExports
             : correlationId!;
         var ensureInitMs = 0L;
         var snapshotLookupMs = 0L;
-        var fastPathMs = 0L;
-        var resolveMs = 0L;
         var runtimeSearchMs = 0L;
-        var grpcSearchMs = 0L;
-        var grpcMapMs = 0L;
-        var path = "unknown";
+        var path = "wasm";
         var success = false;
 
         try
@@ -463,137 +525,17 @@ public static class PluginHostExports
             ensureInitStopwatch.Stop();
             ensureInitMs = ensureInitStopwatch.ElapsedMilliseconds;
 
-            if (string.IsNullOrWhiteSpace(pluginId))
+            if (!TryResolveWasmSearchRecord(pluginId, out var record, out snapshotLookupMs))
             {
-                SetLastError("Plugin ID is required");
                 return null;
             }
 
-            var snapshotLookupStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var snapshotRecord = _registry!
-                .GetSnapshot()
-                .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
-            snapshotLookupStopwatch.Stop();
-            snapshotLookupMs = snapshotLookupStopwatch.ElapsedMilliseconds;
-
-            if (snapshotRecord is not null
-                && _wasmRuntime!.IsWasmPlugin(snapshotRecord.Manifest)
-                && snapshotRecord.Runtime.State is PluginRuntimeState.Running or PluginRuntimeState.External
-                && (snapshotRecord.Runtime.State == PluginRuntimeState.External || snapshotRecord.Status.Success))
-            {
-                var fastPathStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var fastResults = _wasmRuntime.SearchAsync(snapshotRecord, query ?? string.Empty, CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
-                fastPathStopwatch.Stop();
-                fastPathMs = fastPathStopwatch.ElapsedMilliseconds;
-                path = "fast-wasm";
-                success = true;
-                return fastResults;
-            }
-
-            var resolveStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var resolution = _pluginResolution!
-                .ResolveAsync(pluginId, CancellationToken.None)
+            var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
+            var results = _wasmRuntime!.SearchAsync(record!, query ?? string.Empty, CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
-            resolveStopwatch.Stop();
-            resolveMs = resolveStopwatch.ElapsedMilliseconds;
-
-            var record = resolution.Record;
-            if (record == null)
-            {
-                if (snapshotRecord is not null)
-                {
-                    SetLastError(
-                        $"Plugin '{pluginId}' resolution failed before record binding. " +
-                        $"runtimeState={snapshotRecord.Runtime.State}, " +
-                        $"runtimeCode={snapshotRecord.Runtime.LastErrorCode ?? "none"}, " +
-                        $"runtimeMessage={snapshotRecord.Runtime.LastErrorMessage ?? "none"}, " +
-                        $"handshakeSuccess={snapshotRecord.Status.Success}, " +
-                        $"handshakeMessage={snapshotRecord.Status.Message}");
-                    return null;
-                }
-
-                SetLastError($"Plugin '{pluginId}' not found");
-                return null;
-            }
-
-            if (resolution.Error is not null)
-            {
-                SetLastError(
-                    $"Plugin resolution failed for '{pluginId}'. " +
-                    $"runtimeState={record.Runtime.State}, " +
-                    $"runtimeCode={record.Runtime.LastErrorCode ?? "none"}, " +
-                    $"runtimeMessage={record.Runtime.LastErrorMessage ?? "none"}, " +
-                    $"handshakeSuccess={record.Status.Success}, " +
-                    $"handshakeMessage={record.Status.Message}");
-                return null;
-            }
-
-            IReadOnlyList<EMMA.Domain.MediaSummary> results;
-            if (_wasmRuntime!.IsWasmPlugin(record.Manifest))
-            {
-                var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                results = _wasmRuntime.SearchAsync(record, query ?? string.Empty, CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
-                runtimeSearchStopwatch.Stop();
-                runtimeSearchMs = runtimeSearchStopwatch.ElapsedMilliseconds;
-                path = "resolved-wasm";
-            }
-            else
-            {
-                if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
-                {
-                    SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
-                    return null;
-                }
-
-                var address = resolution.Address;
-                if (address is null)
-                {
-                    SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
-                    return null;
-                }
-
-                var channel = GetOrCreateChannel(address);
-
-                var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
-                var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
-                var headers = BuildGrpcHeaders(record.Manifest.Id, resolvedCorrelationId);
-                var grpcCallStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var response = client.SearchAsync(new PluginContracts.SearchRequest
-                {
-                    Query = query ?? string.Empty,
-                    Context = new PluginContracts.RequestContext
-                    {
-                        CorrelationId = resolvedCorrelationId,
-                        DeadlineUtc = deadlineUtc.ToString("O")
-                    }
-                }, headers: headers, cancellationToken: CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
-                grpcCallStopwatch.Stop();
-                grpcSearchMs = grpcCallStopwatch.ElapsedMilliseconds;
-
-                var grpcMapStopwatch = System.Diagnostics.Stopwatch.StartNew();
-                results = response.Results
-                    .Select(result => new EMMA.Domain.MediaSummary(
-                        EMMA.Domain.MediaId.Create(result.Id),
-                        result.Source ?? string.Empty,
-                        result.Title ?? string.Empty,
-                        string.Equals(result.MediaType, "video", StringComparison.OrdinalIgnoreCase)
-                            ? EMMA.Domain.MediaType.Video
-                            : EMMA.Domain.MediaType.Paged,
-                        string.IsNullOrWhiteSpace(result.ThumbnailUrl) ? null : result.ThumbnailUrl,
-                        string.IsNullOrWhiteSpace(result.Description) ? null : result.Description))
-                    .ToList();
-                grpcMapStopwatch.Stop();
-                grpcMapMs = grpcMapStopwatch.ElapsedMilliseconds;
-                path = "grpc";
-            }
-
+            runtimeSearchStopwatch.Stop();
+            runtimeSearchMs = runtimeSearchStopwatch.ElapsedMilliseconds;
             success = true;
             return results;
         }
@@ -605,8 +547,57 @@ public static class PluginHostExports
         finally
         {
             totalStopwatch.Stop();
-            SetLastSearchTiming($"[search-timing] correlationId={resolvedCorrelationId} pluginId={pluginId} queryLength={(query ?? string.Empty).Length} path={path} ensureInitMs={ensureInitMs} snapshotLookupMs={snapshotLookupMs} fastPathMs={fastPathMs} resolveMs={resolveMs} runtimeSearchMs={runtimeSearchMs} grpcSearchMs={grpcSearchMs} grpcMapMs={grpcMapMs} totalMs={totalStopwatch.ElapsedMilliseconds} success={success}");
+            SetLastSearchTiming($"[search-timing] correlationId={resolvedCorrelationId} pluginId={pluginId} queryLength={(query ?? string.Empty).Length} path={path} ensureInitMs={ensureInitMs} snapshotLookupMs={snapshotLookupMs} fastPathMs=0 resolveMs=0 runtimeSearchMs={runtimeSearchMs} grpcSearchMs=0 grpcMapMs=0 totalMs={totalStopwatch.ElapsedMilliseconds} success={success}");
         }
+    }
+
+    private static bool TryResolveWasmSearchRecord(string pluginId, out PluginRecord? record, out long snapshotLookupMs)
+    {
+        record = null;
+        snapshotLookupMs = 0;
+
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            SetLastError("Plugin ID is required");
+            return false;
+        }
+
+        var snapshotLookupStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var snapshotRecord = _registry!
+            .GetSnapshot()
+            .FirstOrDefault(r => string.Equals(r.Manifest.Id, pluginId, StringComparison.OrdinalIgnoreCase));
+        snapshotLookupStopwatch.Stop();
+        snapshotLookupMs = snapshotLookupStopwatch.ElapsedMilliseconds;
+
+        if (snapshotRecord is null)
+        {
+            SetLastError($"Plugin '{pluginId}' not found");
+            return false;
+        }
+
+        if (!_wasmRuntime!.IsWasmPlugin(snapshotRecord.Manifest))
+        {
+            SetLastError($"Plugin '{pluginId}' is not a WASM plugin.");
+            return false;
+        }
+
+        var runtimeState = snapshotRecord.Runtime.State;
+        var searchReady = runtimeState is PluginRuntimeState.Running or PluginRuntimeState.External
+            && (runtimeState == PluginRuntimeState.External || snapshotRecord.Status.Success);
+        if (!searchReady)
+        {
+            SetLastError(
+                $"Plugin '{pluginId}' is not ready for WASM search. " +
+                $"runtimeState={snapshotRecord.Runtime.State}, " +
+                $"runtimeCode={snapshotRecord.Runtime.LastErrorCode ?? "none"}, " +
+                $"runtimeMessage={snapshotRecord.Runtime.LastErrorMessage ?? "none"}, " +
+                $"handshakeSuccess={snapshotRecord.Status.Success}, " +
+                $"handshakeMessage={snapshotRecord.Status.Message}");
+            return false;
+        }
+
+        record = snapshotRecord;
+        return true;
     }
 
     public static string? TakeLastWasmNativeTimingManaged()

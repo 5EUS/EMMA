@@ -273,6 +273,21 @@ public sealed class PluginHandshakeTests
             throw new NotSupportedException();
         }
 
+        public Task<string> SearchJsonAsync(PluginRecord record, string query, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string> BenchmarkAsync(PluginRecord record, int iterations, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<string> BenchmarkNetworkAsync(PluginRecord record, string query, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<IReadOnlyList<EMMA.Domain.MediaChapter>> GetChaptersAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();

@@ -13,14 +13,11 @@ namespace EMMA.PluginHost.Plugins;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(PluginManifest))]
 [JsonSerializable(typeof(PluginManifestRuntime))]
-[JsonSerializable(typeof(PluginManifestWasmHostBridge))]
-[JsonSerializable(typeof(PluginManifestWasmHttpOperation))]
 [JsonSerializable(typeof(PluginManifestThumbnail))]
 [JsonSerializable(typeof(PluginManifestCapabilities))]
 [JsonSerializable(typeof(PluginManifestPermissions))]
 [JsonSerializable(typeof(PluginManifestSignature))]
 [JsonSerializable(typeof(List<PluginManifest>))]
-[JsonSerializable(typeof(Dictionary<string, PluginManifestWasmHttpOperation>))]
 public partial class PluginManifestJsonContext : JsonSerializerContext
 {
 }

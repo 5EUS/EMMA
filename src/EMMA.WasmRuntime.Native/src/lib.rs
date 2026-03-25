@@ -1,32 +1,36 @@
 use anyhow::{anyhow, Context, Result};
+use serde::Deserialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use std::{sync::mpsc, thread};
-use serde_json::json;
-use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, OptLevel, Store, Strategy};
-use wasmtime_wasi::{DirPerms, FilePerms};
-use wasmtime_wasi::p2::bindings::Command;
-use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi_http::bindings::http::types::ErrorCode;
+use wasmtime_wasi_http::body::HyperOutgoingBody;
+use wasmtime_wasi_http::types::{default_send_request, HostFutureIncomingResponse, OutgoingRequestConfig};
+use wasmtime_wasi_http::{HttpResult, WasiHttpCtx, WasiHttpView};
 
-wasmtime::component::bindgen!({
-    world: "library",
-    path: "wit/",
-});
+mod typed_bindings {
+    wasmtime::component::bindgen!({
+        path: "wit",
+        world: "library",
+        async: true,
+    });
+}
 
 struct RunnerState {
     wasi_ctx: WasiCtx,
     http_ctx: WasiHttpCtx,
     table: ResourceTable,
+    permitted_domains: Vec<String>,
 }
 
 impl WasiView for RunnerState {
@@ -45,18 +49,36 @@ impl WasiHttpView for RunnerState {
     fn ctx(&mut self) -> &mut WasiHttpCtx {
         &mut self.http_ctx
     }
+
+    fn send_request(
+        &mut self,
+        request: hyper::Request<HyperOutgoingBody>,
+        config: OutgoingRequestConfig,
+    ) -> HttpResult<HostFutureIncomingResponse> {
+        let host = request.uri().host().unwrap_or_default();
+        let is_allowed = self.permitted_domains.iter().any(|domain| {
+            !domain.trim().is_empty()
+                && (host.eq_ignore_ascii_case(domain)
+                    || host
+                        .to_ascii_lowercase()
+                        .ends_with(&format!(".{}", domain.to_ascii_lowercase())))
+        });
+
+        if !is_allowed {
+            return Err(ErrorCode::HttpRequestDenied.into());
+        }
+
+        Ok(default_send_request(request, config))
+    }
 }
 
 static ENGINE: OnceLock<Engine> = OnceLock::new();
 static COMPONENT_CACHE: OnceLock<Mutex<HashMap<String, Arc<Component>>>> = OnceLock::new();
-static ARG_VARIANT_CACHE: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
-static BRIDGE_DIR_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
-static MANAGED_ENTRY_CACHE: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
 static WORKER_CACHE: OnceLock<Mutex<HashMap<String, Arc<WorkerHandle>>>> = OnceLock::new();
 static HANDLE_CACHE: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 static LAST_TIMING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-static ASYNC_RUNTIME: OnceLock<TokioRuntime> = OnceLock::new();
+static HOST_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 struct InvokeAttemptOutput {
     json: String,
@@ -66,6 +88,7 @@ struct InvokeAttemptOutput {
 struct WorkerRequest {
     operation: String,
     operation_args: Vec<String>,
+    permitted_domains: Vec<String>,
     timeout_ms: u32,
     response_tx: mpsc::SyncSender<Result<InvokeAttemptOutput>>,
 }
@@ -76,20 +99,8 @@ struct WorkerHandle {
 
 struct WorkerContext {
     engine: &'static Engine,
-    component: Arc<Component>,
-    linker: Linker<RunnerState>,
-    component_path: String,
-    component_dir: PathBuf,
-    bridge_dir: PathBuf,
-    managed_entries: Vec<String>,
-    variant_cache_key: String,
-    preferred_variant_index: Option<usize>,
-    typed_plugin: Option<TypedPlugin>,
-}
-
-struct TypedPlugin {
-    store: Store<RunnerState>,
-    instance: wasmtime::component::Instance,
+    typed_pre: typed_bindings::LibraryPre<RunnerState>,
+    runtime: tokio::runtime::Runtime,
 }
 
 fn set_last_timing(value: String) {
@@ -147,22 +158,6 @@ fn resolve_runtime_target() -> Option<String> {
         "ios" => Some("pulley64".to_string()),
         _ => None,
     }
-}
-
-fn get_async_runtime() -> Result<&'static TokioRuntime> {
-    if let Some(runtime) = ASYNC_RUNTIME.get() {
-        return Ok(runtime);
-    }
-
-    let runtime = TokioRuntimeBuilder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("failed to create async runtime")?;
-    let _ = ASYNC_RUNTIME.set(runtime);
-
-    ASYNC_RUNTIME
-        .get()
-        .ok_or_else(|| anyhow!("failed to initialize async runtime"))
 }
 
 fn load_component(engine: &Engine, component_path: &str) -> Result<Arc<Component>> {
@@ -234,32 +229,30 @@ fn get_or_create_worker(component_path: &str) -> Result<(String, Arc<WorkerHandl
     }
 
     let component = load_component(engine, component_path)?;
-    let linker = create_linker(engine)?;
-    let component_dir = component_path_abs
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf();
-    let bridge_dir = resolve_bridge_dir(component_path, &component_path_abs)?;
-    let managed_entries = resolve_managed_entry_candidates_cached(&component_path_abs, &component_dir);
-    let preferred_variant_index = ARG_VARIANT_CACHE
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .ok()
-        .and_then(|guard| guard.get(&cache_key).copied());
+    let mut linker = create_linker(engine)?;
+    typed_bindings::Library::add_to_linker::<
+        RunnerState,
+        wasmtime::component::HasSelf<RunnerState>,
+    >(&mut linker, |state| state)
+        .context("failed to add typed world imports to linker")?;
+
+    let instance_pre = linker
+        .instantiate_pre(component.as_ref())
+        .context("failed to pre-instantiate component")?;
+
+    let typed_pre = typed_bindings::LibraryPre::new(instance_pre)
+        .context("failed to build typed world pre-instantiation")?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .context("failed to create shared tokio runtime for wasm worker")?;
 
     let (tx, rx) = mpsc::sync_channel::<WorkerRequest>(64);
     let context = WorkerContext {
         engine,
-        component,
-        linker,
-        component_path: component_path.to_string(),
-        component_dir,
-        bridge_dir,
-        managed_entries,
-        variant_cache_key: cache_key.clone(),
-        preferred_variant_index,
-        typed_plugin: None,
+        typed_pre,
+        runtime,
     };
 
     thread::spawn(move || worker_loop(context, rx));
@@ -293,6 +286,7 @@ fn worker_loop(mut context: WorkerContext, rx: mpsc::Receiver<WorkerRequest>) {
             &mut context,
             &request.operation,
             &request.operation_args,
+            &request.permitted_domains,
         )
         .map(|mut output| {
             output.timing = format!(
@@ -312,146 +306,21 @@ fn invoke_with_context(
     context: &mut WorkerContext,
     operation: &str,
     operation_args: &[String],
+    permitted_domains: &[String],
 ) -> Result<InvokeAttemptOutput> {
-    if let Some(output) = invoke_typed_operation(context, operation, operation_args)? {
-        return Ok(output);
+    match invoke_typed_operation(context, operation, operation_args, permitted_domains)? {
+        Some(output) => Ok(output),
+        None => Err(anyhow!(
+            "unsupported operation for typed world runtime: '{operation}'"
+        )),
     }
-
-    let total_start = Instant::now();
-    let mut failures = Vec::new();
-    let mut attempt_timings = Vec::new();
-    let arg_variants = build_arg_variants(
-        &context.component_path,
-        operation,
-        operation_args,
-        &context.managed_entries,
-    );
-
-    if let Some(index) = context.preferred_variant_index {
-        if index < arg_variants.len() {
-            let preferred_args = &arg_variants[index];
-            match invoke_component_once_inner(
-                context,
-                preferred_args,
-            ) {
-                Ok(output) => {
-                    attempt_timings.push(format!("preferred#{index}:{}", output.timing));
-                    return Ok(InvokeAttemptOutput {
-                        json: output.json,
-                        timing: format!(
-                            "workerMs={} attempts={} preferred={:?}",
-                            total_start.elapsed().as_millis(),
-                            attempt_timings.join(" | "),
-                            context.preferred_variant_index
-                        ),
-                    });
-                }
-                Err(err) => {
-                    attempt_timings.push(format!(
-                        "preferred#{index}:err={}ms",
-                        total_start.elapsed().as_millis()
-                    ));
-                    failures.push(format!("args={:?}: {err:#}", preferred_args));
-                }
-            }
-        }
-    }
-
-    for (index, wasi_args) in arg_variants.iter().enumerate() {
-        if context
-            .preferred_variant_index
-            .is_some_and(|preferred| preferred == index)
-        {
-            continue;
-        }
-
-        match invoke_component_once_inner(
-            context,
-            wasi_args,
-        ) {
-            Ok(output) => {
-                attempt_timings.push(format!("idx{index}:{}", output.timing));
-                context.preferred_variant_index = Some(index);
-                if let Ok(mut guard) = ARG_VARIANT_CACHE
-                    .get_or_init(|| Mutex::new(HashMap::new()))
-                    .lock()
-                {
-                    guard.insert(context.variant_cache_key.clone(), index);
-                }
-
-                return Ok(InvokeAttemptOutput {
-                    json: output.json,
-                    timing: format!(
-                        "workerMs={} attempts={} preferred={:?} resolved={index}",
-                        total_start.elapsed().as_millis(),
-                        attempt_timings.join(" | "),
-                        context.preferred_variant_index
-                    ),
-                });
-            }
-            Err(err) => {
-                attempt_timings.push(format!("idx{index}:err={}ms", total_start.elapsed().as_millis()));
-                failures.push(format!("args={:?}: {err:#}", wasi_args));
-            }
-        }
-    }
-
-    Err(anyhow!(
-        "all WASM invocation argv strategies failed in worker ({}):\n{}",
-        attempt_timings.join(" | "),
-        failures.join("\n")
-    ))
-}
-
-fn build_arg_variants(
-    component_path: &str,
-    operation: &str,
-    operation_args: &[String],
-    managed_entries: &[String],
-) -> Vec<Vec<String>> {
-    let mut arg_variants = Vec::new();
-
-    if !managed_entries.is_empty() {
-        for entry in managed_entries {
-            let entry_rooted = if entry.starts_with('/') {
-                entry.clone()
-            } else {
-                format!("/{entry}")
-            };
-
-            let mut variant1 = vec!["dotnet.wasm".to_string(), entry.clone(), operation.to_string()];
-            variant1.extend(operation_args.iter().cloned());
-            arg_variants.push(variant1);
-
-            let mut variant2 = vec!["dotnet.wasm".to_string(), entry_rooted.clone(), operation.to_string()];
-            variant2.extend(operation_args.iter().cloned());
-            arg_variants.push(variant2);
-
-            let mut variant3 = vec![component_path.to_string(), entry_rooted, operation.to_string()];
-            variant3.extend(operation_args.iter().cloned());
-            arg_variants.push(variant3);
-
-            let mut variant4 = vec![component_path.to_string(), entry.clone(), operation.to_string()];
-            variant4.extend(operation_args.iter().cloned());
-            arg_variants.push(variant4);
-        }
-    } else {
-        let mut args = vec![operation.to_string()];
-        args.extend(operation_args.iter().cloned());
-        arg_variants.push(args);
-
-        let mut args = vec![component_path.to_string(), operation.to_string()];
-        args.extend(operation_args.iter().cloned());
-        arg_variants.push(args);
-    }
-
-    arg_variants
 }
 
 fn invoke_component(
     component_path: &str,
     operation: &str,
     operation_args: &[String],
+    permitted_domains: Vec<String>,
     timeout_ms: u32,
 ) -> Result<String> {
     let total_start = Instant::now();
@@ -463,6 +332,7 @@ fn invoke_component(
     let request = WorkerRequest {
         operation: operation.to_string(),
         operation_args: operation_args.to_vec(),
+        permitted_domains: permitted_domains.clone(),
         timeout_ms,
         response_tx,
     };
@@ -476,6 +346,7 @@ fn invoke_component(
         let retry_request = WorkerRequest {
             operation: operation.to_string(),
             operation_args: operation_args.to_vec(),
+            permitted_domains,
             timeout_ms,
             response_tx: retry_tx,
         };
@@ -563,323 +434,238 @@ fn recv_worker_response(
     }
 }
 
-fn invoke_component_once_inner(
-    context: &mut WorkerContext,
-    wasi_args: &[String],
-) -> Result<InvokeAttemptOutput> {
-    let inner_start = Instant::now();
-    let stdout_pipe = MemoryOutputPipe::new(2 * 1024 * 1024);
-    let stderr_pipe = MemoryOutputPipe::new(2 * 1024 * 1024);
+impl typed_bindings::emma::plugin::host_bridge::Host for RunnerState {
+    async fn operation_payload(
+        &mut self,
+        operation: String,
+        args_json: Option<String>,
+    ) -> Option<String> {
+        let _ = operation;
 
-    let wasi_setup_start = Instant::now();
-    let state = build_runner_state(context, wasi_args, Some(stdout_pipe.clone()), Some(stderr_pipe.clone()))?;
-    let wasi_setup_ms = wasi_setup_start.elapsed().as_millis();
-    let wasi_setup_us = wasi_setup_start.elapsed().as_micros();
-
-    let runtime = get_async_runtime()?;
-    let mut instantiate_ms = 0u128;
-    let mut instantiate_us = 0u128;
-    let mut run_ms = 0u128;
-    let mut run_us = 0u128;
-    let run_result = runtime.block_on(async {
-        let instantiate_start = Instant::now();
-        let mut store = Store::new(context.engine, state);
-        store.set_epoch_deadline(1);
-        let command = Command::instantiate_async(&mut store, context.component.as_ref(), &context.linker)
-            .await
-            .context("failed to instantiate command component")?;
-        instantiate_ms = instantiate_start.elapsed().as_millis();
-        instantiate_us = instantiate_start.elapsed().as_micros();
-
-        let run_start = Instant::now();
-        let result = command
-            .wasi_cli_run()
-            .call_run(&mut store)
-            .await;
-        run_ms = run_start.elapsed().as_millis();
-        run_us = run_start.elapsed().as_micros();
-        Ok::<_, anyhow::Error>(result)
-    })?;
-
-    let stdout = String::from_utf8_lossy(&stdout_pipe.contents()).trim().to_string();
-    let stderr = String::from_utf8_lossy(&stderr_pipe.contents()).trim().to_string();
-
-    match run_result {
-        Ok(inner) => {
-            if inner.is_err() {
-                let mut parts = Vec::new();
-                if !stdout.is_empty() {
-                    parts.push(format!("stdout: {stdout}"));
-                }
-                if !stderr.is_empty() {
-                    parts.push(format!("stderr: {stderr}"));
-                }
-
-                let detail = if parts.is_empty() {
-                    "component returned failing exit status".to_string()
-                } else {
-                    parts.join("\n")
-                };
-                return Err(anyhow!(detail));
-            }
+        let raw = args_json?.trim().to_string();
+        if raw.is_empty() {
+            return None;
         }
-        Err(err) => {
-            let mut parts = Vec::new();
-            if !stdout.is_empty() {
-                parts.push(format!("stdout: {stdout}"));
-            }
-            if !stderr.is_empty() {
-                parts.push(format!("stderr: {stderr}"));
-            }
-            parts.push(format!("wasmtime: {err:#}"));
-            let detail = parts.join("\n");
 
-            return Err(anyhow!(detail));
+        if raw.starts_with("https://") || raw.starts_with("http://") {
+            return fetch_host_payload(self, &raw);
         }
+
+        let args = parse_args_json_value(Some(raw.as_str()));
+        let url = get_json_arg_string(args.as_ref(), "url")?;
+        fetch_host_payload(self, &url)
     }
 
-    if stdout.is_empty() {
-        let detail = if stderr.is_empty() {
-            "WASM component operation returned empty output".to_string()
-        } else {
-            format!("WASM component operation returned empty output. {stderr}")
-        };
-        return Err(anyhow!(detail));
+    async fn search_payload(&mut self, query: String) -> Option<String> {
+        let _ = query;
+        None
     }
 
-    if let Some(json_payload) = extract_json_payload(&stdout) {
-        let timing = format!(
-            "innerMs={} innerUs={} linkerMs=0 linkerUs=0 wasiSetupMs={} wasiSetupUs={} instantiateMs={} instantiateUs={} runMs={} runUs={} stdoutBytes={} stderrBytes={} linkerReuse=1",
-            inner_start.elapsed().as_millis(),
-            inner_start.elapsed().as_micros(),
-            wasi_setup_ms,
-            wasi_setup_us,
-            instantiate_ms,
-            instantiate_us,
-            run_ms,
-            run_us,
-            stdout.len(),
-            stderr.len()
-        );
-        return Ok(InvokeAttemptOutput {
-            json: json_payload,
-            timing,
-        });
+    async fn chapters_payload(&mut self, media_id: String) -> Option<String> {
+        let _ = media_id;
+        None
     }
 
-    let mut parts = vec!["WASM component output did not include JSON payload.".to_string()];
-    parts.push(format!("stdout: {stdout}"));
-    if !stderr.is_empty() {
-        parts.push(format!("stderr: {stderr}"));
+    async fn page_payload(
+        &mut self,
+        media_id: String,
+        chapter_id: String,
+        page_index: u32,
+    ) -> Option<String> {
+        let _ = media_id;
+        let _ = chapter_id;
+        let _ = page_index;
+        None
     }
 
-    Err(anyhow!(parts.join("\n")))
+    async fn pages_payload(
+        &mut self,
+        media_id: String,
+        chapter_id: String,
+        start_index: u32,
+        count: u32,
+    ) -> Option<String> {
+        let _ = media_id;
+        let _ = chapter_id;
+        let _ = start_index;
+        let _ = count;
+        None
+    }
 }
 
-fn resolve_bridge_dir(component_path_raw: &str, component_path_abs: &Path) -> Result<PathBuf> {
-    let cache = BRIDGE_DIR_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let cache_key = component_path_abs.to_string_lossy().to_string();
-
-    {
-        let guard = cache
-            .lock()
-            .map_err(|_| anyhow!("bridge dir cache lock poisoned"))?;
-        if let Some(existing) = guard.get(&cache_key) {
-            return Ok(existing.clone());
-        }
+fn parse_args_json_value(args_json: Option<&str>) -> Option<Value> {
+    let value = args_json?.trim();
+    if value.is_empty() {
+        return None;
     }
 
-    let bridge_dir = get_bridge_dir(component_path_raw)?;
-    std::fs::create_dir_all(&bridge_dir)
-        .with_context(|| format!("failed to create bridge directory at {}", bridge_dir.display()))?;
-
-    let mut guard = cache
-        .lock()
-        .map_err(|_| anyhow!("bridge dir cache lock poisoned"))?;
-    guard.insert(cache_key, bridge_dir.clone());
-    Ok(bridge_dir)
+    serde_json::from_str::<Value>(value).ok()
 }
 
-fn build_runner_state(
-    context: &WorkerContext,
-    wasi_args: &[String],
-    stdout_pipe: Option<MemoryOutputPipe>,
-    stderr_pipe: Option<MemoryOutputPipe>,
-) -> Result<RunnerState> {
-    let mut builder = WasiCtxBuilder::new();
-    builder
-        .preopened_dir(&context.component_dir, "/", DirPerms::all(), FilePerms::all())
-        .context("failed to preopen component directory")?;
-
-    if let Err(e) = builder.preopened_dir(&context.bridge_dir, "/.hostbridge", DirPerms::all(), FilePerms::all()) {
-        eprintln!("Warning: failed to mount bridge directory: {}", e);
+fn get_json_arg_string(args: Option<&Value>, key: &str) -> Option<String> {
+    let value = args?.as_object()?.get(key)?;
+    match value {
+        Value::String(text) if !text.trim().is_empty() => Some(text.trim().to_string()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
     }
+}
 
-    builder.env("PWD", "/");
-    builder.env("MONO_PATH", "/");
-    builder.args(wasi_args);
-    builder.inherit_env();
-
-    if let Some(pipe) = stdout_pipe {
-        builder.stdout(pipe);
-    }
-    if let Some(pipe) = stderr_pipe {
-        builder.stderr(pipe);
-    }
-
-    Ok(RunnerState {
-        wasi_ctx: builder.build(),
-        http_ctx: WasiHttpCtx::new(),
-        table: ResourceTable::new(),
+fn is_host_allowed(permitted_domains: &[String], host: &str) -> bool {
+    let host_lower = host.to_ascii_lowercase();
+    permitted_domains.iter().any(|domain| {
+        let trimmed = domain.trim();
+        !trimmed.is_empty()
+            && (host_lower == trimmed.to_ascii_lowercase()
+                || host_lower.ends_with(&format!(".{}", trimmed.to_ascii_lowercase())))
     })
+}
+
+fn get_host_http_client() -> Option<&'static reqwest::blocking::Client> {
+    if let Some(client) = HOST_HTTP_CLIENT.get() {
+        return Some(client);
+    }
+
+    let builder = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("EMMA-WasmRuntime/1.0");
+    let client = builder.build().ok()?;
+    let _ = HOST_HTTP_CLIENT.set(client);
+    HOST_HTTP_CLIENT.get()
+}
+
+fn fetch_host_payload(state: &RunnerState, absolute_url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(absolute_url).ok()?;
+    let host = parsed.host_str()?;
+    if !is_host_allowed(&state.permitted_domains, host) {
+        return None;
+    }
+
+    let client = get_host_http_client()?;
+    let response = client.get(parsed).send().ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+
+    response.text().ok().filter(|value| !value.trim().is_empty())
 }
 
 fn invoke_typed_operation(
     context: &mut WorkerContext,
     operation: &str,
     operation_args: &[String],
+    permitted_domains: &[String],
 ) -> Result<Option<InvokeAttemptOutput>> {
-    let typed = match context.typed_plugin.as_mut() {
-        Some(typed) => typed,
-        None => return Ok(None),
-    };
+    let typed_pre = &context.typed_pre;
+
+    if operation != "handshake" && operation != "capabilities" && operation != "invoke" {
+        return Ok(None);
+    }
 
     let op_start = Instant::now();
+    let state = RunnerState {
+        wasi_ctx: WasiCtxBuilder::new().build(),
+        http_ctx: WasiHttpCtx::new(),
+        table: ResourceTable::new(),
+        permitted_domains: permitted_domains.to_vec(),
+    };
+
+    let mut store = Store::new(context.engine, state);
+    store.set_epoch_deadline(1);
+
+    let instance = context
+        .runtime
+        .block_on(async { typed_pre.instantiate_async(&mut store).await })
+        .context("failed to instantiate typed world")?;
+
+    let guest = instance.emma_plugin_plugin();
+
     let json = match operation {
         "handshake" => {
-            json!({
-                "version": "1.0.0",
-                "message": "WASM typed component runtime ready"
-            })
-            .to_string()
+            let response = context
+                .runtime
+                .block_on(async { guest.call_handshake(&mut store).await })
+                .context("typed handshake failed")?;
+            serde_json::to_string(&serde_json::json!({
+                "version": response.version,
+                "message": response.message,
+            }))
+            .context("failed to serialize typed handshake response")?
         }
         "capabilities" => {
-            let func = typed
-                .instance
-                .get_func(&mut typed.store, "getcapabilities")
-                .or_else(|| typed.instance.get_func(&mut typed.store, "library#getcapabilities"))
-                .ok_or_else(|| anyhow!("missing typed export getcapabilities"))?;
-            let typed_func = func.typed::<(), (ProviderCapabilities,)>(&typed.store)?;
-            let (caps,) = typed_func.call(&mut typed.store, ())?;
-            typed_func.post_return(&mut typed.store)?;
-
-            let mut capabilities = vec!["health", "search"];
-            if !caps.unit_kinds.is_empty() {
-                capabilities.push("paged");
-            }
-            if !caps.asset_kinds.is_empty() {
-                capabilities.push("pages");
-            }
-            serde_json::to_string(&capabilities)?
-        }
-        "search" => {
-            let query = operation_args.first().cloned().unwrap_or_default();
-            let func = typed
-                .instance
-                .get_func(&mut typed.store, "fetchmedialist")
-                .or_else(|| typed.instance.get_func(&mut typed.store, "library#fetchmedialist"))
-                .ok_or_else(|| anyhow!("missing typed export fetchmedialist"))?;
-            let typed_func = func.typed::<(MediaType, String), (Vec<Media>,)>(&typed.store)?;
-            let (media,) = typed_func.call(&mut typed.store, (MediaType::Manga, query))?;
-            typed_func.post_return(&mut typed.store)?;
-
-            let payload = media
+            let capabilities = context
+                .runtime
+                .block_on(async { guest.call_capabilities(&mut store).await })
+                .context("typed capabilities failed")?;
+            let value = capabilities
                 .into_iter()
                 .map(|item| {
-                    json!({
-                        "id": item.id,
-                        "source": context.component_path,
-                        "title": item.title,
-                        "mediaType": match item.mediatype {
-                            MediaType::Anime => "video",
-                            _ => "paged",
-                        },
-                        "thumbnailUrl": item.cover_url,
-                        "description": item.description,
+                    serde_json::json!({
+                        "name": item.name,
+                        "mediaTypes": item.media_types,
+                        "operations": item.operations,
                     })
                 })
                 .collect::<Vec<_>>();
-
-            serde_json::to_string(&payload)?
+            serde_json::to_string(&value).context("failed to serialize typed capabilities")?
         }
-        "chapters" => {
-            let media_id = operation_args.first().cloned().unwrap_or_default();
-            let func = typed
-                .instance
-                .get_func(&mut typed.store, "fetchunits")
-                .or_else(|| typed.instance.get_func(&mut typed.store, "library#fetchunits"))
-                .ok_or_else(|| anyhow!("missing typed export fetchunits"))?;
-            let typed_func = func.typed::<(String,), (Vec<Unit>,)>(&typed.store)?;
-            let (units,) = typed_func.call(&mut typed.store, (media_id,))?;
-            typed_func.post_return(&mut typed.store)?;
+        "invoke" => {
+            let nested_operation = operation_args.get(0).cloned().unwrap_or_default();
+            let media_id = operation_args
+                .get(1)
+                .filter(|value| !value.trim().is_empty())
+                .cloned();
+            let media_type = operation_args
+                .get(2)
+                .filter(|value| !value.trim().is_empty())
+                .cloned();
+            let args_json = operation_args
+                .get(3)
+                .filter(|value| !value.trim().is_empty())
+                .cloned();
 
-            let payload = units
-                .into_iter()
-                .enumerate()
-                .map(|(index, unit)| {
-                    let number = unit
-                        .number
-                        .map(|v| v.floor() as i32)
-                        .or_else(|| unit.number_text.as_ref().and_then(|t| t.parse::<f32>().ok()).map(|v| v.floor() as i32))
-                        .unwrap_or((index + 1) as i32);
+            let request = typed_bindings::exports::emma::plugin::plugin::MediaOperationRequest {
+                operation: nested_operation,
+                media_id,
+                media_type,
+                args_json,
+                payload_json: None,
+            };
 
-                    json!({
-                        "id": unit.id,
-                        "number": number,
-                        "title": unit.title,
-                    })
-                })
-                .collect::<Vec<_>>();
+            let response = context
+                .runtime
+                .block_on(async { guest.call_invoke(&mut store, &request).await })
+                .context("typed invoke call failed")?;
 
-            serde_json::to_string(&payload)?
-        }
-        "page" => {
-            if operation_args.len() < 3 {
-                return Err(anyhow!("page requires [mediaId, chapterId, pageIndex]"));
-            }
+            let operation_result = match response {
+                Ok(ok) => serde_json::json!({
+                    "isError": false,
+                    "error": null,
+                    "contentType": ok.content_type,
+                    "payloadJson": ok.payload_json,
+                }),
+                Err(typed_bindings::exports::emma::plugin::plugin::OperationError::UnsupportedOperation(message)) => serde_json::json!({
+                    "isError": true,
+                    "error": format!("unsupported-operation:{}", message),
+                    "contentType": "application/problem+json",
+                    "payloadJson": "",
+                }),
+                Err(typed_bindings::exports::emma::plugin::plugin::OperationError::InvalidArguments(message)) => serde_json::json!({
+                    "isError": true,
+                    "error": format!("invalid-arguments:{}", message),
+                    "contentType": "application/problem+json",
+                    "payloadJson": "",
+                }),
+                Err(typed_bindings::exports::emma::plugin::plugin::OperationError::Failed(message)) => serde_json::json!({
+                    "isError": true,
+                    "error": format!("failed:{}", message),
+                    "contentType": "application/problem+json",
+                    "payloadJson": "",
+                }),
+            };
 
-            let chapter_id = operation_args[1].clone();
-            let page_index = operation_args[2]
-                .parse::<usize>()
-                .map_err(|_| anyhow!("invalid page index"))?;
-
-            let assets = fetch_assets(typed, &chapter_id)?;
-            let asset = assets.get(page_index).ok_or_else(|| anyhow!("page index out of range"))?;
-            let payload = json!({
-                "id": format!("{chapter_id}:{page_index}"),
-                "index": page_index as i32,
-                "contentUri": asset.url,
-            });
-            payload.to_string()
-        }
-        "pages" => {
-            if operation_args.len() < 4 {
-                return Err(anyhow!("pages requires [mediaId, chapterId, startIndex, count]"));
-            }
-
-            let chapter_id = operation_args[1].clone();
-            let start_index = operation_args[2]
-                .parse::<usize>()
-                .map_err(|_| anyhow!("invalid start index"))?;
-            let count = operation_args[3]
-                .parse::<usize>()
-                .map_err(|_| anyhow!("invalid count"))?;
-
-            let assets = fetch_assets(typed, &chapter_id)?;
-            let payload = assets
-                .into_iter()
-                .enumerate()
-                .skip(start_index)
-                .take(count)
-                .map(|(index, asset)| {
-                    json!({
-                        "id": format!("{chapter_id}:{index}"),
-                        "index": index as i32,
-                        "contentUri": asset.url,
-                    })
-                })
-                .collect::<Vec<_>>();
-            serde_json::to_string(&payload)?
+            serde_json::to_string(&operation_result)
+                .context("failed to serialize typed invoke operation result")?
         }
         _ => return Ok(None),
     };
@@ -887,138 +673,37 @@ fn invoke_typed_operation(
     Ok(Some(InvokeAttemptOutput {
         json,
         timing: format!(
-            "typedExport=1 op={} opMs={} persistentStore=1",
+            "typedWorld=1 op={} opMs={}",
             operation,
             op_start.elapsed().as_millis()
         ),
     }))
 }
 
-fn fetch_assets(typed: &mut TypedPlugin, chapter_id: &str) -> Result<Vec<Asset>> {
-    let func = typed
-        .instance
-        .get_func(&mut typed.store, "fetchassets")
-        .or_else(|| typed.instance.get_func(&mut typed.store, "library#fetchassets"))
-        .ok_or_else(|| anyhow!("missing typed export fetchassets"))?;
-    let typed_func = func.typed::<(String,), (Vec<Asset>,)>(&typed.store)?;
-    let (assets,) = typed_func.call(&mut typed.store, (chapter_id.to_string(),))?;
-    typed_func.post_return(&mut typed.store)?;
-    Ok(assets)
+#[derive(Deserialize)]
+struct InvokeArgsEnvelope {
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default, rename = "permittedDomains")]
+    permitted_domains: Option<Vec<String>>,
 }
 
-fn extract_json_payload(stdout: &str) -> Option<String> {
-    for line in stdout.lines().rev() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if trimmed.starts_with('{')
-            || trimmed.starts_with('[')
-            || trimmed.starts_with('"')
-            || trimmed == "null"
-            || trimmed == "true"
-            || trimmed == "false"
-            || trimmed.chars().next().map(|ch| ch.is_ascii_digit() || ch == '-').unwrap_or(false)
-        {
-            return Some(trimmed.to_string());
-        }
-    }
-
-    None
-}
-
-fn get_bridge_dir(component_path: &str) -> Result<PathBuf> {
-    use sha2::{Sha256, Digest};
-    
-    // Hash the full component path to match C# implementation
-    let mut hasher = Sha256::new();
-    hasher.update(component_path.as_bytes());
-    let hash_bytes = hasher.finalize();
-    
-    // Convert to hex string and take first 16 characters (like C# does)
-    let hash_hex = format!("{:x}", hash_bytes);
-    let hash_short = &hash_hex[..16];
-    
-    let temp_dir = std::env::temp_dir();
-    Ok(temp_dir.join("emma-wasm-bridge").join(hash_short).join(".hostbridge"))
-}
-
-fn resolve_managed_entry_candidates(component_dir: &Path) -> Vec<String> {
-    let dotnet_wasm = component_dir.join("dotnet.wasm");
-    if !dotnet_wasm.is_file() {
-        return vec![];
-    }
-
-    let entries = match std::fs::read_dir(component_dir) {
-        Ok(entries) => entries,
-        Err(_) => return vec![],
-    };
-
-    let mut runtimeconfigs = entries
-        .filter_map(|entry| entry.ok())
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_name()?.to_string_lossy();
-            if !name.ends_with(".runtimeconfig.json") {
-                return None;
-            }
-
-            let stem = name.strip_suffix(".runtimeconfig.json")?;
-            Some(stem.to_string())
-        })
-        .collect::<Vec<_>>();
-
-    runtimeconfigs.sort();
-    runtimeconfigs.dedup();
-    if runtimeconfigs.len() != 1 {
-        return vec![];
-    }
-
-    let stem = runtimeconfigs.remove(0);
-    let mut candidates = vec![];
-    let dll_name = format!("{stem}.dll");
-    let dll_path: PathBuf = component_dir.join(&dll_name);
-    if dll_path.is_file() {
-        candidates.push(dll_name);
-    }
-    candidates.push(stem.clone());
-
-    candidates.sort();
-    candidates.dedup();
-    candidates
-}
-
-fn resolve_managed_entry_candidates_cached(
-    component_path_abs: &Path,
-    component_dir: &Path,
-) -> Vec<String> {
-    let cache_key = component_path_abs.to_string_lossy().to_string();
-    let cache = MANAGED_ENTRY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-
-    if let Some(existing) = cache
-        .lock()
-        .ok()
-        .and_then(|guard| guard.get(&cache_key).cloned())
-    {
-        return existing;
-    }
-
-    let resolved = resolve_managed_entry_candidates(component_dir);
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(cache_key, resolved.clone());
-    }
-
-    resolved
-}
-
-fn parse_args_json(operation_args_json: &str) -> Result<Vec<String>> {
+fn parse_args_json(operation_args_json: &str) -> Result<(Vec<String>, Vec<String>)> {
     if operation_args_json.trim().is_empty() {
-        return Ok(vec![]);
+        return Ok((vec![], vec![]));
     }
 
-    serde_json::from_str::<Vec<String>>(operation_args_json)
-        .context("failed to parse operation args JSON")
+    if operation_args_json.trim_start().starts_with('[') {
+        let args = serde_json::from_str::<Vec<String>>(operation_args_json)
+            .context("failed to parse operation args JSON")?;
+        return Ok((args, vec![]));
+    }
+
+    let envelope = serde_json::from_str::<InvokeArgsEnvelope>(operation_args_json)
+        .context("failed to parse operation args envelope")?;
+    let permitted_domains = envelope.permitted_domains.unwrap_or_default();
+
+    Ok((envelope.args, permitted_domains))
 }
 
 fn to_c_string(value: String) -> *mut c_char {
@@ -1066,8 +751,14 @@ pub extern "C" fn emma_wasm_component_invoke(
             .to_string_lossy()
             .to_string();
 
-        let operation_args = parse_args_json(&operation_args_json)?;
-        invoke_component(&component_path, &operation, &operation_args, timeout_ms)
+        let (operation_args, permitted_domains) = parse_args_json(&operation_args_json)?;
+        invoke_component(
+            &component_path,
+            &operation,
+            &operation_args,
+            permitted_domains,
+            timeout_ms,
+        )
     });
 
     match result {
@@ -1154,8 +845,14 @@ pub extern "C" fn emma_wasm_plugin_invoke(
             .cloned()
             .ok_or_else(|| anyhow!("unknown plugin handle"))?;
 
-        let operation_args = parse_args_json(&operation_args_json)?;
-        invoke_component(&component_path, &operation, &operation_args, timeout_ms)
+        let (operation_args, permitted_domains) = parse_args_json(&operation_args_json)?;
+        invoke_component(
+            &component_path,
+            &operation,
+            &operation_args,
+            permitted_domains,
+            timeout_ms,
+        )
     });
 
     match result {

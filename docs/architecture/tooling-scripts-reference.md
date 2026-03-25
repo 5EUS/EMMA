@@ -292,6 +292,11 @@ Usage:
 TARGETS="osx-arm64 linux-x64 wasm" templates/plugin/scripts/build-pack-plugin.sh [manifest-path]
 ```
 
+New typed exports can only be built on Linux/Windows. If macOS, try using docker:
+```bash
+docker run --rm --platform linux/amd64 -v {ROOT}:/work -v {SDK}:/opt/wasi-sdk:ro -v emma-nuget:/root/.nuget/packages -w /work/src/EMMA.TestPlugin/scripts mcr.microsoft.com/dotnet/sdk:10.0-preview bash -lc 'apt-get update >/dev/null && apt-get install -y --no-install-recommends python3 zip >/dev/null && TARGETS=wasm WASI_SDK_PATH=/opt/wasi-sdk ./build-pack-plugin.sh'
+```
+
 Behavior:
 
 - Parses manifest (`id`, `name`, `version`) via `python3`.

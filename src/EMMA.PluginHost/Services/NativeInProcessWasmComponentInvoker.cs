@@ -15,8 +15,13 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
     private static readonly Lock LastTimingLock = new();
     private static string? _lastNativeTimingSnapshot;
     private static PluginHostOptions _pluginHostOptions = new();
-    private readonly ConcurrentDictionary<string, ulong> _pluginHandles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CachedPluginHandle> _pluginHandles = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
+
+    private readonly record struct CachedPluginHandle(
+        ulong Handle,
+        DateTime LastWriteTimeUtc,
+        long Length);
 
     public NativeInProcessWasmComponentInvoker(IOptions<PluginHostOptions> options)
     {
@@ -37,6 +42,7 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
         string componentPath,
         string operation,
         IReadOnlyList<string> operationArgs,
+        IReadOnlyList<string>? permittedDomains,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -51,7 +57,8 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
             throw new ArgumentException("Operation is required.", nameof(operation));
         }
 
-        var argsJson = JsonSerializer.Serialize(operationArgs ?? [], WasmComponentInvokerJsonContext.Default.IReadOnlyListString);
+        var envelope = new WasmComponentInvokeEnvelope(operationArgs ?? [], permittedDomains);
+        var argsJson = JsonSerializer.Serialize(envelope, WasmComponentInvokerJsonContext.Default.WasmComponentInvokeEnvelope);
         var timeoutMs = DefaultTimeoutMs;
         if (string.Equals(operation, "search", StringComparison.OrdinalIgnoreCase))
         {
@@ -101,7 +108,7 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
                         && nativeError.Contains("unknown plugin handle", StringComparison.OrdinalIgnoreCase)
                         && _pluginHandles.TryRemove(componentPath, out _))
                     {
-                        return InvokeAsync(componentPath, operation, operationArgs ?? [], cancellationToken);
+                        return InvokeAsync(componentPath, operation, operationArgs ?? [], permittedDomains, cancellationToken);
                     }
 
                     throw new InvalidOperationException(
@@ -141,14 +148,28 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
     {
         ThrowIfDisposed();
 
-        if (_pluginHandles.TryGetValue(componentPath, out var existing) && existing != 0)
+        var fileInfo = new FileInfo(componentPath);
+        if (!fileInfo.Exists)
         {
-            return existing;
+            throw new FileNotFoundException("WASM component path was not found.", componentPath);
+        }
+
+        var currentLastWriteUtc = fileInfo.LastWriteTimeUtc;
+        var currentLength = fileInfo.Length;
+
+        if (_pluginHandles.TryGetValue(componentPath, out var existing) && existing.Handle != 0)
+        {
+            if (existing.LastWriteTimeUtc == currentLastWriteUtc && existing.Length == currentLength)
+            {
+                return existing.Handle;
+            }
+
+            NativeBindings.ClosePlugin(existing.Handle);
+            _pluginHandles.TryRemove(componentPath, out _);
         }
 
         var handle = NativeBindings.OpenPlugin(componentPath);
-
-        _pluginHandles[componentPath] = handle;
+        _pluginHandles[componentPath] = new CachedPluginHandle(handle, currentLastWriteUtc, currentLength);
         return handle;
     }
 
@@ -165,11 +186,11 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
         }
 
         _disposed = true;
-        foreach (var (_, handle) in _pluginHandles)
+        foreach (var (_, cachedHandle) in _pluginHandles)
         {
-            if (handle != 0)
+            if (cachedHandle.Handle != 0)
             {
-                NativeBindings.ClosePlugin(handle);
+                NativeBindings.ClosePlugin(cachedHandle.Handle);
             }
         }
 

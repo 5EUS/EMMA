@@ -1,66 +1,84 @@
-package touring:library;
+package emma:plugin;
+
+interface host-bridge {
+  operation-payload: func(operation: string, args-json: option<string>) -> option<string>;
+  search-payload: func(query: string) -> option<string>;
+  chapters-payload: func(media-id: string) -> option<string>;
+  page-payload: func(media-id: string, chapter-id: string, page-index: u32) -> option<string>;
+  pages-payload: func(media-id: string, chapter-id: string, start-index: u32, count: u32) -> option<string>;
+}
+
+interface plugin {
+  record key-value {
+    key: string,
+    value: string,
+  }
+
+  record capability {
+    name: string,
+    media-types: list<string>,
+    operations: list<string>,
+  }
+
+  record handshake-response {
+    version: string,
+    message: string,
+  }
+
+  record media-search-item {
+    id: string,
+    source: string,
+    title: string,
+    media-type: string,
+    thumbnail-url: option<string>,
+    description: option<string>,
+    metadata: list<key-value>,
+  }
+
+  record chapter-item {
+    id: string,
+    number: u32,
+    title: string,
+  }
+
+  record page-item {
+    id: string,
+    index: u32,
+    content-uri: string,
+  }
+
+  record media-operation-request {
+    operation: string,
+    media-id: option<string>,
+    media-type: option<string>,
+    args-json: option<string>,
+    payload-json: option<string>,
+  }
+
+  record media-operation-response {
+    content-type: string,
+    payload-json: string,
+  }
+
+  variant operation-error {
+    unsupported-operation(string),
+    invalid-arguments(string),
+    failed(string),
+  }
+
+  handshake: func() -> handshake-response;
+  capabilities: func() -> list<capability>;
+
+  search: func(query: string, payload-json: string) -> list<media-search-item>;
+
+  chapters: func(media-id: string, payload-json: string) -> list<chapter-item>;
+  page: func(media-id: string, chapter-id: string, page-index: u32, payload-json: string) -> option<page-item>;
+  pages: func(media-id: string, chapter-id: string, start-index: u32, count: u32, payload-json: string) -> list<page-item>;
+
+  invoke: func(request: media-operation-request) -> result<media-operation-response, operation-error>;
+}
 
 world library {
-  export fetchmedialist: func(kind: media-type, query: string) -> list<media>;
-  export fetchunits: func(mediaid: string) -> list<unit>;
-  export fetchassets: func(unitid: string) -> list<asset>;
-  export getcapabilities: func() -> provider-capabilities;
-
-  variant media-type {
-    anime,
-    manga,
-    other(string),
-  }
-
-  record media {
-    id: string,
-    mediatype: media-type,
-    title: string,
-    description: option<string>,
-    url: option<string>,
-    cover-url: option<string>,
-  }
-
-  variant unit-kind {
-    chapter,
-    episode,
-    section,
-    other(string),
-  }
-
-  record unit {
-    id: string,
-    title: string,
-    number-text: option<string>,
-    number: option<f32>,
-    lang: option<string>,
-    group: option<string>,
-    url: option<string>,
-    published-at: option<string>,
-    kind: unit-kind,
-  }
-
-  variant asset-kind {
-    page,
-    image,
-    audio,
-    video,
-    subtitle,
-    file,
-    other(string),
-  }
-
-  record asset {
-    url: string,
-    mime: option<string>,
-    width: option<u32>,
-    height: option<u32>,
-    kind: asset-kind,
-  }
-
-  record provider-capabilities {
-    media-types: list<media-type>,
-    unit-kinds: list<unit-kind>,
-    asset-kinds: list<asset-kind>,
-  }
+  import host-bridge;
+  export plugin;
 }

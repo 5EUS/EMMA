@@ -45,12 +45,6 @@ static async Task<int> RunAppFlowAsync(CliOptions options)
     var cacheBust = options.GetBool("cache-bust", false);
     var iterations = options.GetInt("iterations", 5, min: 1, max: 500);
     var warmup = options.GetInt("warmup", 1, min: 0, max: 50);
-    var hasInMemoryToggle = options.Has("in-memory-bridge");
-    var inMemoryBridge = options.GetBool("in-memory-bridge", false);
-    var hasInMemoryMaxBytes = options.Has("in-memory-bridge-max-bytes");
-    var inMemoryBridgeMaxBytes = options.GetInt("in-memory-bridge-max-bytes", 262_144, min: 1, max: 16_000_000);
-    var hasDirectHttpToggle = options.Has("direct-http");
-    var directHttp = options.GetBool("direct-http", false);
 
     EnsureDirectoryExists(manifestsDir);
     EnsureDirectoryExists(sandboxDir);
@@ -75,25 +69,6 @@ static async Task<int> RunAppFlowAsync(CliOptions options)
     Console.WriteLine($"query={query}");
     Console.WriteLine($"cacheBust={cacheBust}");
     Console.WriteLine($"warmup={warmup} iterations={iterations}");
-
-    if (hasInMemoryToggle)
-    {
-        Environment.SetEnvironmentVariable("EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD", inMemoryBridge ? "1" : "0");
-    }
-
-    if (hasInMemoryMaxBytes)
-    {
-        Environment.SetEnvironmentVariable("EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD_MAX_BYTES", inMemoryBridgeMaxBytes.ToString());
-    }
-
-    if (hasDirectHttpToggle)
-    {
-        Environment.SetEnvironmentVariable("EMMA_WASM_DIRECT_HTTP", directHttp ? "1" : "0");
-    }
-
-    Console.WriteLine($"inMemoryBridge={Environment.GetEnvironmentVariable("EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD") ?? "<default>"}");
-    Console.WriteLine($"inMemoryBridgeMaxBytes={Environment.GetEnvironmentVariable("EMMA_WASM_BRIDGE_IN_MEMORY_PAYLOAD_MAX_BYTES") ?? "<default>"}");
-    Console.WriteLine($"directHttp={Environment.GetEnvironmentVariable("EMMA_WASM_DIRECT_HTTP") ?? "<default>"}");
 
     var init = PluginHostExports.InitializeManaged(manifestsDir, sandboxDir);
     if (init != 0)
