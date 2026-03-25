@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EMMA.Domain;
+using EMMA.PluginHost.Plugins;
 
 namespace EMMA.PluginHost.Library;
 
@@ -23,6 +24,15 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(MediaPageAsset))]
 [JsonSerializable(typeof(PluginSummaryResponse))]
 [JsonSerializable(typeof(List<PluginSummaryResponse>))]
+[JsonSerializable(typeof(PluginManifestSearchExperience))]
+[JsonSerializable(typeof(PluginManifestSearchLanding))]
+[JsonSerializable(typeof(PluginManifestSearchLandingSection))]
+[JsonSerializable(typeof(PluginManifestSearchLandingAction))]
+[JsonSerializable(typeof(PluginManifestSearchFilter))]
+[JsonSerializable(typeof(PluginManifestSearchFilterRange))]
+[JsonSerializable(typeof(PluginManifestSearchFilterOption))]
+[JsonSerializable(typeof(PluginManifestSearchQueryOptions))]
+[JsonSerializable(typeof(PluginManifestSearchQueryAddition))]
 [JsonSerializable(typeof(MediaProgressResponse))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(List<string>))]

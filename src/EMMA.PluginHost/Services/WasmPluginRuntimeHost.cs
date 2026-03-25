@@ -276,13 +276,16 @@ public sealed class WasmPluginRuntimeHost(
     {
         var componentPath = ResolveComponentPath(record.Manifest);
         var normalizedQuery = query?.Trim() ?? string.Empty;
+        var searchArgs = BuildSearchArgs(record.Manifest, normalizedQuery);
         var invokeStopwatch = Stopwatch.StartNew();
+        var argsJson = SerializeJson(searchArgs);
+        _logger.LogDebug("WASM search invoke: query={Query}, argsJson={ArgsJson}", normalizedQuery, argsJson);
         var operationResult = await RunInvokeOperationWithResultAsync(
             componentPath,
             operation: SearchOperation,
             mediaId: null,
             mediaType: null,
-            argsJson: SerializeJson(new WasmQueryArgs(normalizedQuery)),
+            argsJson: argsJson,
             permittedDomains: record.Manifest.Permissions?.Domains,
             cancellationToken: cancellationToken);
         invokeStopwatch.Stop();
@@ -810,6 +813,63 @@ public sealed class WasmPluginRuntimeHost(
 
         var trimmed = value.Trim();
         return trimmed.StartsWith('{') || trimmed.StartsWith('[') || trimmed.StartsWith('"');
+    }
+
+    private static WasmQueryArgs BuildSearchArgs(PluginManifest manifest, string query)
+    {
+        var mediaTypes = manifest.MediaTypes?.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        var search = manifest.SearchExperience;
+        if (search is null)
+        {
+            return new WasmQueryArgs(query, mediaTypes);
+        }
+
+        var filters = (search.Filters ?? [])
+            .Select(filter =>
+            {
+                var values = new List<string>();
+                if (filter.DefaultValues is { Count: > 0 })
+                {
+                    values.AddRange(filter.DefaultValues.Where(value => !string.IsNullOrWhiteSpace(value)));
+                }
+                else if (!string.IsNullOrWhiteSpace(filter.DefaultValue))
+                {
+                    values.Add(filter.DefaultValue.Trim());
+                }
+
+                if (values.Count == 0)
+                {
+                    return null;
+                }
+
+                return new WasmSearchFilterArg(filter.Id, values, null);
+            })
+            .Where(item => item is not null)
+            .Select(item => item!)
+            .ToList();
+
+        var additions = (search.Query?.Additions ?? [])
+            .Select(addition =>
+            {
+                if (string.IsNullOrWhiteSpace(addition.DefaultValue))
+                {
+                    return null;
+                }
+
+                return new WasmSearchQueryAdditionArg(addition.Id, addition.DefaultValue.Trim(), addition.Type);
+            })
+            .Where(item => item is not null)
+            .Select(item => item!)
+            .ToList();
+
+        return new WasmQueryArgs(
+            query,
+            mediaTypes,
+            filters.Count == 0 ? null : filters,
+            additions.Count == 0 ? null : additions,
+            Sort: null,
+            Page: null,
+            PageSize: null);
     }
 
     private readonly record struct SearchSplitTiming(

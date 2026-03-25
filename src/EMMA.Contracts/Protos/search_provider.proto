@@ -12,7 +12,25 @@ service SearchProvider {
 
 message SearchRequest {
   string query = 1;
+  repeated SearchFilter filters = 2;
+  repeated string media_types = 3;
+  repeated SearchQueryAddition query_additions = 4;
+  string sort = 5;
+  int32 page = 6;
+  int32 page_size = 7;
   RequestContext context = 100;
+}
+
+message SearchFilter {
+  string id = 1;
+  repeated string values = 2;
+  string operation = 3;
+}
+
+message SearchQueryAddition {
+  string id = 1;
+  string value = 2;
+  string type = 3;
 }
 
 message SearchResponse {

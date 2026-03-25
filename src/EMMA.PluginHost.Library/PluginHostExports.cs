@@ -359,7 +359,8 @@ public static class PluginHostExports
                 Id: r.Manifest.Id,
                 Title: r.Manifest.Name ?? r.Manifest.Id,
                 Version: r.Manifest.Version ?? "1.0.0",
-                Author: r.Manifest.Author ?? "Unknown"
+                Author: r.Manifest.Author ?? "Unknown",
+                SearchExperience: r.Manifest.SearchExperience
             )).ToList();
 
             return JsonSerializer.Serialize(summaries, PluginHostExportsJsonContext.Default.ListPluginSummaryResponse);

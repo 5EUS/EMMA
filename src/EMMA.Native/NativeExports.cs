@@ -30,7 +30,8 @@ public static class NativeExports
         double? ThumbnailAspectRatio = null,
         string? ThumbnailFit = null,
         int? ThumbnailWidth = null,
-        int? ThumbnailHeight = null);
+        int? ThumbnailHeight = null,
+        string? SearchExperienceJson = null);
     private sealed record PluginPathConfiguration(string? ManifestsDirectory, string? PluginsDirectory);
 
     private static readonly ConcurrentDictionary<int, RuntimeState> States = new();
@@ -1992,6 +1993,14 @@ public static class NativeExports
                 sb.Append(',');
                 AppendJsonNumberProperty(sb, "thumbnailHeight", height);
             }
+
+            if (!string.IsNullOrWhiteSpace(plugin.SearchExperienceJson))
+            {
+                sb.Append(',');
+                AppendJsonString(sb, "searchExperience");
+                sb.Append(':');
+                sb.Append(plugin.SearchExperienceJson);
+            }
             sb.Append('}');
         }
 
@@ -2089,6 +2098,7 @@ public static class NativeExports
             string? thumbnailFit = null;
             int? thumbnailWidth = null;
             int? thumbnailHeight = null;
+            string? searchExperienceJson = null;
 
             if (TryGetObjectProperty(root, "thumbnail", out var thumbnail))
             {
@@ -2107,7 +2117,13 @@ public static class NativeExports
                 }
             }
 
-            return new PluginSummary(id, title, "csharp", thumbnailAspectRatio, thumbnailFit, thumbnailWidth, thumbnailHeight);
+            if (root.TryGetProperty("searchExperience", out var searchExperience)
+                && searchExperience.ValueKind == JsonValueKind.Object)
+            {
+                searchExperienceJson = searchExperience.GetRawText();
+            }
+
+            return new PluginSummary(id, title, "csharp", thumbnailAspectRatio, thumbnailFit, thumbnailWidth, thumbnailHeight, searchExperienceJson);
         }
         catch
         {

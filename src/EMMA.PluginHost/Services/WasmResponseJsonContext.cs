@@ -27,6 +27,12 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(IReadOnlyList<WasmCapabilityItem>))]
 [JsonSerializable(typeof(List<WasmCapabilityItem>))]
 [JsonSerializable(typeof(WasmQueryArgs))]
+[JsonSerializable(typeof(WasmSearchFilterArg))]
+[JsonSerializable(typeof(WasmSearchQueryAdditionArg))]
+[JsonSerializable(typeof(IReadOnlyList<WasmSearchFilterArg>))]
+[JsonSerializable(typeof(List<WasmSearchFilterArg>))]
+[JsonSerializable(typeof(IReadOnlyList<WasmSearchQueryAdditionArg>))]
+[JsonSerializable(typeof(List<WasmSearchQueryAdditionArg>))]
 [JsonSerializable(typeof(WasmBenchmarkArgs))]
 [JsonSerializable(typeof(WasmPageArgs))]
 [JsonSerializable(typeof(WasmPagesArgs))]
@@ -70,7 +76,24 @@ public sealed record WasmCapabilityItem(
 /// <summary>
 /// Query args for invoke operations.
 /// </summary>
-public sealed record WasmQueryArgs([property: JsonPropertyName("query")] string Query);
+public sealed record WasmQueryArgs(
+	[property: JsonPropertyName("query")] string Query,
+	[property: JsonPropertyName("mediaTypes")] IReadOnlyList<string>? MediaTypes = null,
+	[property: JsonPropertyName("filters")] IReadOnlyList<WasmSearchFilterArg>? Filters = null,
+	[property: JsonPropertyName("queryAdditions")] IReadOnlyList<WasmSearchQueryAdditionArg>? QueryAdditions = null,
+	[property: JsonPropertyName("sort")] string? Sort = null,
+	[property: JsonPropertyName("page")] int? Page = null,
+	[property: JsonPropertyName("pageSize")] int? PageSize = null);
+
+public sealed record WasmSearchFilterArg(
+	[property: JsonPropertyName("id")] string Id,
+	[property: JsonPropertyName("values")] IReadOnlyList<string> Values,
+	[property: JsonPropertyName("operation")] string? Operation = null);
+
+public sealed record WasmSearchQueryAdditionArg(
+	[property: JsonPropertyName("id")] string Id,
+	[property: JsonPropertyName("value")] string Value,
+	[property: JsonPropertyName("type")] string? Type = null);
 
 /// <summary>
 /// Benchmark args for invoke operations.

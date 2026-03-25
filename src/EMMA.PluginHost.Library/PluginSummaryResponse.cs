@@ -1,3 +1,5 @@
+using EMMA.PluginHost.Plugins;
+
 namespace EMMA.PluginHost.Library;
 
 /// <summary>
@@ -8,4 +10,5 @@ public sealed record PluginSummaryResponse(
     string Id,
     string Title,
     string Version,
-    string Author);
+    string Author,
+    PluginManifestSearchExperience? SearchExperience = null);
