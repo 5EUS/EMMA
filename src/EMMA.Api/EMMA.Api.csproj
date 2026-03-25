@@ -27,9 +27,13 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
+    <TargetFrameworks>net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EMMAIosAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^ios(-|simulator-)'))">
+    <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
   </PropertyGroup>
 
 </Project>
