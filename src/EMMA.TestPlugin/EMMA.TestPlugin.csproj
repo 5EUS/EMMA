@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PluginTransport Condition="'$(PluginTransport)' == ''">AspNet</PluginTransport>
+    <PluginTransport Condition="'$(RuntimeIdentifier)' == 'wasi-wasm'">Wasm</PluginTransport>
+    <PluginTransport Condition="'$(PluginTransport)' == '' and '$(ExecCommand)' != ''">Wasm</PluginTransport>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PluginTransport)' == 'AspNet'">
+    <DefineConstants>$(DefineConstants);PLUGIN_TRANSPORT_ASPNET</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PluginTransport)' == 'Wasm'">
+    <DefineConstants>$(DefineConstants);PLUGIN_TRANSPORT_WASM</DefineConstants>
+    <OutputType>Library</OutputType>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <UseAppHost>false</UseAppHost>
+    <PublishTrimmed>true</PublishTrimmed>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(PluginTransport)' == 'Wasm'">
+    <ProjectReference Include="..\EMMA.Plugin.Common\EMMA.Plugin.Common.csproj" />
+    <PackageReference Include="BytecodeAlliance.Componentize.DotNet.Wasm.SDK" Version="0.7.0-preview00010" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <Compile Remove="Services\**\*.cs" />
+    <Wit Remove="**\*.wit" />
+    <Wit Include="..\EMMA.WasmRuntime.Native\wit\library.wit" World="library" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PluginTransport)' == 'AspNet'">
+    <ProjectReference Include="..\EMMA.Plugin.Common\EMMA.Plugin.Common.csproj" />
+    <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
+    <ProjectReference Include="..\EMMA.Plugin.AspNetCore\EMMA.Plugin.AspNetCore.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.60.0" />
+  </ItemGroup>
+
+</Project>

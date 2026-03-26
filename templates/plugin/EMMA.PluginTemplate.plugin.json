@@ -1,0 +1,15 @@
+{
+  "id": "emma.plugin.template",
+  "name": "EMMA Plugin Template",
+  "version": "0.1.0",
+  "description": "Starter manifest for a gRPC plugin using PluginBuilder.",
+  "author": "Your Name",
+  "protocol": "grpc",
+  "runtime": {
+    "minHostVersion": "1.0.0"
+  },
+  "permissions": {
+    "domains": [],
+    "paths": []
+  }
+}

@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>EMMA.Contracts</PackageId>
+    <Authors>projectemma</Authors>
+    <Description>Shared contracts and generated gRPC models used by EMMA and plugins.</Description>
+    <RepositoryUrl>https://github.com/5EUS/EMMA</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/5EUS/EMMA</PackageProjectUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.25.3" />
+    <PackageReference Include="Grpc.Core.Api" Version="2.60.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.60.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\api_common.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\api_paged.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\request_context.proto" GrpcServices="None" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\plugin_control.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\search_provider.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\page_provider.proto" GrpcServices="Both" ProtoRoot="Protos" />
+    <Protobuf Include="Protos\video_provider.proto" GrpcServices="Both" ProtoRoot="Protos" />
+  </ItemGroup>
+
+</Project>

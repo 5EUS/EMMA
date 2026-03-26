@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package emma.api.v1;
+
+option csharp_namespace = "EMMA.Contracts.Api.V1";
+
+import "api_common.proto";
+
+service PagedMediaApi {
+  rpc Search (SearchRequest) returns (SearchResponse);
+  rpc GetChapters (ChaptersRequest) returns (ChaptersResponse);
+  rpc GetPage (PageRequest) returns (PageResponse);
+  rpc GetPageAsset (PageAssetRequest) returns (PageAssetResponse);
+}
+
+message SearchRequest {
+  string query = 1;
+  ApiRequestContext context = 100;
+}
+
+message SearchResponse {
+  oneof outcome {
+    SearchResult result = 1;
+    ApiError error = 100;
+  }
+}
+
+message SearchResult {
+  repeated ApiMediaSummary items = 1;
+}
+
+message ChaptersRequest {
+  string media_id = 1;
+  ApiRequestContext context = 100;
+}
+
+message ChaptersResponse {
+  oneof outcome {
+    ChaptersResult result = 1;
+    ApiError error = 100;
+  }
+}
+
+message ChaptersResult {
+  repeated ApiMediaChapter items = 1;
+}
+
+message PageRequest {
+  string media_id = 1;
+  string chapter_id = 2;
+  int32 index = 3;
+  ApiRequestContext context = 100;
+}
+
+message PageResponse {
+  oneof outcome {
+    ApiMediaPage page = 1;
+    ApiError error = 100;
+  }
+}
+
+message PageAssetRequest {
+  string media_id = 1;
+  string chapter_id = 2;
+  int32 index = 3;
+  ApiRequestContext context = 100;
+}
+
+message PageAssetResponse {
+  oneof outcome {
+    ApiPageAsset asset = 1;
+    ApiError error = 100;
+  }
+}
+
+message ApiPageAsset {
+  string content_type = 1;
+  bytes payload = 2;
+}
+
+message ApiMediaSummary {
+  string id = 1;
+  string source = 2;
+  string title = 3;
+  ApiMediaType media_type = 4;
+  string thumbnail_url = 5;
+}
+
+message ApiMediaChapter {
+  string id = 1;
+  int32 number = 2;
+  string title = 3;
+}
+
+message ApiMediaPage {
+  string id = 1;
+  int32 index = 2;
+  string content_uri = 3;
+}

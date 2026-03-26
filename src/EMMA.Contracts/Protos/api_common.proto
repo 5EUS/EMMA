@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package emma.api.v1;
+
+option csharp_namespace = "EMMA.Contracts.Api.V1";
+
+message ApiRequestContext {
+  string correlation_id = 1;
+  string deadline_utc = 2;
+  string client_id = 3;
+}
+
+message ApiError {
+  string code = 1;
+  string message = 2;
+  string details = 3;
+}
+
+enum ApiMediaType {
+  API_MEDIA_TYPE_UNSPECIFIED = 0;
+  API_MEDIA_TYPE_PAGED = 1;
+  API_MEDIA_TYPE_VIDEO = 2;
+}

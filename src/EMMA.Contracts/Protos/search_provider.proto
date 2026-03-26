@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package emma.plugins;
+
+option csharp_namespace = "EMMA.Contracts.Plugins";
+
+import "request_context.proto";
+
+service SearchProvider {
+  rpc Search (SearchRequest) returns (SearchResponse);
+}
+
+message SearchRequest {
+  string query = 1;
+  repeated SearchFilter filters = 2;
+  repeated string media_types = 3;
+  repeated SearchQueryAddition query_additions = 4;
+  string sort = 5;
+  int32 page = 6;
+  int32 page_size = 7;
+  RequestContext context = 100;
+}
+
+message SearchFilter {
+  string id = 1;
+  repeated string values = 2;
+  string operation = 3;
+}
+
+message SearchQueryAddition {
+  string id = 1;
+  string value = 2;
+  string type = 3;
+}
+
+message SearchResponse {
+  repeated MediaSummary results = 1;
+}
+
+message MediaSummary {
+  string id = 1;
+  string source = 2;
+  string title = 3;
+  string media_type = 4;
+  string thumbnail_url = 5;
+  string description = 6;
+}

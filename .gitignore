@@ -42,8 +42,19 @@ bld/
 msbuild.log
 msbuild.err
 msbuild.wrn
+artifacts/
 
 # Node.js build artifacts
 node_modules/
 package-lock.json
 package.json
+
+# VS Code settings
+.vscode/settings.json
+
+# Logs
+.tmp/
+logs/
+
+EMMA.code-workspace
+src/EMMA.WasmRuntime.Native/target
