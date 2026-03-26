@@ -414,15 +414,60 @@ public static class PluginHostExports
             EnsureInitialized();
             ensureInitStopwatch.Stop();
 
-            if (!TryResolveWasmSearchRecord(pluginId, out var record))
+            if (!TryResolvePlugin(pluginId, out var record, out var address))
             {
                 return null;
             }
 
+            var normalizedQuery = query ?? string.Empty;
+
             var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var json = _wasmRuntime!.SearchJsonAsync(record!, query ?? string.Empty, CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
+            string json;
+            if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+            {
+                json = _wasmRuntime.SearchJsonAsync(record, normalizedQuery, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            else
+            {
+                if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+                {
+                    SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+                    return null;
+                }
+
+                if (address is null)
+                {
+                    SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+                    return null;
+                }
+
+                var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+                    ? Guid.NewGuid().ToString("n")
+                    : correlationId;
+                var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+                var channel = GetOrCreateChannel(address);
+                var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+                var headers = BuildGrpcHeaders(record.Manifest.Id, resolvedCorrelationId!);
+                var response = client.SearchAsync(new PluginContracts.SearchRequest
+                {
+                    Query = normalizedQuery,
+                    Context = new PluginContracts.RequestContext
+                    {
+                        CorrelationId = resolvedCorrelationId,
+                        DeadlineUtc = deadlineUtc.ToString("O")
+                    }
+                }, headers: headers, cancellationToken: CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                var results = response.Results
+                    .Select(MapPluginSearchSummary)
+                    .ToList();
+                json = JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+            }
+
             runtimeSearchStopwatch.Stop();
             return json;
         }
@@ -542,15 +587,59 @@ public static class PluginHostExports
             EnsureInitialized();
             ensureInitStopwatch.Stop();
 
-            if (!TryResolveWasmSearchRecord(pluginId, out var record))
+            if (!TryResolvePlugin(pluginId, out var record, out var address))
             {
                 return null;
             }
 
+            var normalizedQuery = query ?? string.Empty;
+
             var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var results = _wasmRuntime!.SearchAsync(record!, query ?? string.Empty, CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
+            IReadOnlyList<EMMA.Domain.MediaSummary> results;
+            if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+            {
+                results = _wasmRuntime.SearchAsync(record, normalizedQuery, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            else
+            {
+                if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+                {
+                    SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+                    return null;
+                }
+
+                if (address is null)
+                {
+                    SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+                    return null;
+                }
+
+                var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+                    ? Guid.NewGuid().ToString("n")
+                    : correlationId;
+                var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+                var channel = GetOrCreateChannel(address);
+                var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+                var headers = BuildGrpcHeaders(record.Manifest.Id, resolvedCorrelationId!);
+                var response = client.SearchAsync(new PluginContracts.SearchRequest
+                {
+                    Query = normalizedQuery,
+                    Context = new PluginContracts.RequestContext
+                    {
+                        CorrelationId = resolvedCorrelationId,
+                        DeadlineUtc = deadlineUtc.ToString("O")
+                    }
+                }, headers: headers, cancellationToken: CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                results = response.Results
+                    .Select(MapPluginSearchSummary)
+                    .ToList();
+            }
+
             runtimeSearchStopwatch.Stop();
             return results;
         }
@@ -1804,6 +1893,29 @@ public static class PluginHostExports
     private static GrpcChannel GetOrCreateChannel(Uri address)
     {
         return _grpcChannelCache.GetOrAdd(address.ToString(), _ => GrpcChannel.ForAddress(address));
+    }
+
+    private static EMMA.Domain.MediaSummary MapPluginSearchSummary(PluginContracts.MediaSummary result)
+    {
+        var mediaType = string.Equals(result.MediaType, "video", StringComparison.OrdinalIgnoreCase)
+            ? EMMA.Domain.MediaType.Video
+            : EMMA.Domain.MediaType.Paged;
+
+        var thumbnailUrl = string.IsNullOrWhiteSpace(result.ThumbnailUrl)
+            ? null
+            : result.ThumbnailUrl;
+
+        var description = string.IsNullOrWhiteSpace(result.Description)
+            ? null
+            : result.Description;
+
+        return new EMMA.Domain.MediaSummary(
+            EMMA.Domain.MediaId.Create(result.Id ?? string.Empty),
+            result.Source ?? string.Empty,
+            result.Title ?? string.Empty,
+            mediaType,
+            thumbnailUrl,
+            description);
     }
 
     private static Metadata BuildGrpcHeaders(string pluginId, string correlationId)

@@ -17,6 +17,10 @@ public static class NativeExports
 {
     private const string NativeConsoleLogLevelEnvVar = "EMMA_NATIVE_LOG_LEVEL";
     private const string NativeVerboseTimingEnvVar = "EMMA_NATIVE_VERBOSE_TIMING";
+    private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
+    private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
+    private const string PluginSignatureHmacKeyFileEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_FILE";
+    private const string PluginSignatureHmacKeyFileName = ".plugin-signature-hmac.key";
     private sealed class RuntimeState(EmbeddedRuntime runtime, InMemoryMediaStore store)
     {
         public EmbeddedRuntime Runtime { get; } = runtime;
@@ -1922,6 +1926,8 @@ public static class NativeExports
             var manifestDirectory = ResolveManifestDirectory() ?? string.Empty;
             var sandboxDirectory = ResolvePluginSandboxDirectory() ?? string.Empty;
 
+            EnsurePluginSignatureKeyConfigured(manifestDirectory);
+
             var resultCode = PluginHostExports.InitializeManaged(manifestDirectory, sandboxDirectory);
 
             if (resultCode != 0)
@@ -1934,6 +1940,71 @@ public static class NativeExports
             _pluginHostInitialized = true;
             LogInfo("plugin-host", "Embedded plugin host initialized.");
         }
+    }
+
+    private static void EnsurePluginSignatureKeyConfigured(string? manifestDirectory)
+    {
+        var existingKey = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
+        if (!string.IsNullOrWhiteSpace(existingKey))
+        {
+            return;
+        }
+
+        var resolvedKey = ResolvePluginSignatureKeyFromFiles(manifestDirectory);
+        if (string.IsNullOrWhiteSpace(resolvedKey))
+        {
+            return;
+        }
+
+        Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, resolvedKey);
+        Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, resolvedKey);
+        LogInfo("plugin-host", "Loaded plugin signature key from configured key file.");
+    }
+
+    private static string? ResolvePluginSignatureKeyFromFiles(string? manifestDirectory)
+    {
+        var candidatePaths = new List<string>();
+
+        var explicitPath = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyFileEnvVar);
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            candidatePaths.Add(explicitPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifestDirectory))
+        {
+            candidatePaths.Add(Path.Combine(manifestDirectory, PluginSignatureHmacKeyFileName));
+        }
+
+        var support = GetApplicationSupportDirectories().FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(support))
+        {
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-hmac.key"));
+        }
+
+        foreach (var path in candidatePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var value = File.ReadAllText(path).Trim();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        return null;
     }
 
     private static void ShutdownPluginHost()

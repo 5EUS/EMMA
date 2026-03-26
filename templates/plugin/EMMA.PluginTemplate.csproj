@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PluginTransport Condition="'$(PluginTransport)' == ''">AspNet</PluginTransport>
+    <PluginTransport Condition="'$(PluginTransport)' == '' and '$(RuntimeIdentifier)' == 'wasi-wasm'">Wasm</PluginTransport>
+    <PluginTransport Condition="'$(PluginTransport)' == '' and '$(ExecCommand)' != ''">Wasm</PluginTransport>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(PluginTransport)' == 'AspNet'">

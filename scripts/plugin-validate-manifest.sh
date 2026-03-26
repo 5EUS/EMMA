@@ -18,7 +18,13 @@ import pathlib
 import sys
 
 manifest_path = pathlib.Path(sys.argv[1])
-manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+try:
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+except json.JSONDecodeError as ex:
+    print(f"Manifest validation failed: {manifest_path}")
+    print(f" - Invalid JSON at line {ex.lineno}, column {ex.colno}: {ex.msg}")
+    print(" - Ensure you passed a *.plugin.json manifest, not a project file.")
+    sys.exit(1)
 
 errors = []
 

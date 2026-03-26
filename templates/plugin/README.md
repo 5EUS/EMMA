@@ -35,3 +35,10 @@ dotnet build templates/plugin/EMMA.PluginTemplate.csproj -p:PluginTransport=Wasm
 ```bash
 ./scripts/plugin-pack.sh ./templates/plugin
 ```
+
+Pack an ASP.NET plugin bundle for a native RID (for example Linux x64):
+
+```bash
+cd templates/plugin/scripts
+TARGETS="linux-x64" ./build-pack-plugin-aspnet.sh ../EMMA.PluginTemplate.plugin.json
+```

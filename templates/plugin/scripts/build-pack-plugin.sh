@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 ROOT_DIR=$(cd "$PLUGIN_DIR/../.." && pwd)
-MANIFEST_PATH="${1:-$PLUGIN_DIR/EMMA.TestPlugin.plugin.json}"
+MANIFEST_PATH="${1:-$PLUGIN_DIR/EMMA.PluginTemplate.plugin.json}"
 OUT_DIR="$PLUGIN_DIR/artifacts"
 PACK_DIR="$OUT_DIR/pack"
 HOST_OS="$(uname -s)"
@@ -15,7 +15,7 @@ fi
 TARGETS=${TARGETS:-"$DEFAULT_TARGETS"}
 WASM_MODULE_PATH="${WASM_MODULE_PATH:-$OUT_DIR/wasm/plugin.wasm}"
 WASM_PACKAGE_FILE_NAME="${WASM_PACKAGE_FILE_NAME:-plugin.wasm}"
-WASM_PROJECT_PATH="${WASM_PROJECT_PATH:-$PLUGIN_DIR/EMMA.TestPlugin.csproj}"
+WASM_PROJECT_PATH="${WASM_PROJECT_PATH:-}"
 WASM_BUILD_CONFIGURATION="${WASM_BUILD_CONFIGURATION:-Release}"
 WASM_BUILD_RID="${WASM_BUILD_RID:-wasi-wasm}"
 WASM_BUILD_OUTPUT="${WASM_BUILD_OUTPUT:-$OUT_DIR/wasm-publish}"
@@ -25,6 +25,34 @@ CWASM_WASMTIME_TARGET="${CWASM_WASMTIME_TARGET:-}"
 CWASM_WASMTIME_BIN="${CWASM_WASMTIME_BIN:-wasmtime}"
 CWASM_EXPECTED_WASMTIME_VERSION="${CWASM_EXPECTED_WASMTIME_VERSION:-34.0.2}"
 CWASM_PRECOMPILE_TOOL="${CWASM_PRECOMPILE_TOOL:-$ROOT_DIR/tools/EMMA.CwasmPrecompile/target/release/emma_cwasm_precompile}"
+
+resolve_project_path() {
+  if [[ -n "$WASM_PROJECT_PATH" ]]; then
+    echo "$WASM_PROJECT_PATH"
+    return 0
+  fi
+
+  local -a csproj_candidates=()
+  while IFS= read -r candidate; do
+    csproj_candidates+=("$candidate")
+  done < <(find "$PLUGIN_DIR" -maxdepth 1 -type f -name "*.csproj" | sort)
+
+  if [[ ${#csproj_candidates[@]} -eq 1 ]]; then
+    echo "${csproj_candidates[0]}"
+    return 0
+  fi
+
+  if [[ ${#csproj_candidates[@]} -eq 0 ]]; then
+    echo "No .csproj found in plugin directory: $PLUGIN_DIR" >&2
+  else
+    echo "Multiple .csproj files found in plugin directory. Set WASM_PROJECT_PATH explicitly." >&2
+    printf '  - %s\n' "${csproj_candidates[@]}" >&2
+  fi
+
+  exit 1
+}
+
+WASM_PROJECT_PATH="$(resolve_project_path)"
 
 resolve_default_cwasm_target() {
   local rust_host
@@ -274,7 +302,7 @@ for TARGET in $TARGETS; do
 
     mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
-    dotnet publish "$PLUGIN_DIR/EMMA.TestPlugin.csproj" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
+    dotnet publish "$WASM_PROJECT_PATH" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
 
     APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
     if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
@@ -317,7 +345,7 @@ PLIST
     fi
     cp -R "$APP_DIR" "$PLUGIN_OUT_DIR/"
   elif [[ "$TARGET" == linux-* ]]; then
-    dotnet publish "$PLUGIN_DIR/EMMA.TestPlugin.csproj" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
+    dotnet publish "$WASM_PROJECT_PATH" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
 
     APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
     if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
