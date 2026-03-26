@@ -26,6 +26,26 @@ public sealed class SqliteLibraryPort(StorageOptions options) : ILibraryPort
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task DeleteLibraryAsync(string userId, CancellationToken cancellationToken)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using (var deleteLibraryEntries = connection.CreateCommand())
+        {
+            deleteLibraryEntries.CommandText = "DELETE FROM library WHERE user_id = $userId;";
+            deleteLibraryEntries.Parameters.AddWithValue("$userId", userId);
+            await deleteLibraryEntries.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var deleteLibraryRow = connection.CreateCommand())
+        {
+            deleteLibraryRow.CommandText = "DELETE FROM libraries WHERE id = $id;";
+            deleteLibraryRow.Parameters.AddWithValue("$id", userId);
+            await deleteLibraryRow.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
     public async Task NormalizeLegacyDefaultLibraryAsync(
         string canonicalUserId,
         CancellationToken cancellationToken)

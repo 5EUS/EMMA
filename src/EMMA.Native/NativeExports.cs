@@ -305,6 +305,39 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_delete_library")]
+    public static int RuntimeDeleteLibrary(int handle, IntPtr libraryNameUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+
+            EnsurePluginHostInitialized();
+            var deleted = PluginHostExports.DeleteLibraryManaged(libraryName);
+            if (deleted == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to delete library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_reset_database")]
     public static int RuntimeResetDatabase(int handle)
     {

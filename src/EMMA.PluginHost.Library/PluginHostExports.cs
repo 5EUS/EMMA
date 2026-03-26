@@ -982,6 +982,36 @@ public static class PluginHostExports
         }
     }
 
+    public static int DeleteLibraryManaged(string libraryName)
+    {
+        ClearLastError();
+
+        try
+        {
+            var normalizedName = NormalizeLibraryDisplayName(libraryName);
+            if (string.Equals(normalizedName, "Library", StringComparison.OrdinalIgnoreCase))
+            {
+                SetLastError("The default Library cannot be deleted.");
+                return 0;
+            }
+
+            EnsureInitialized();
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            library.DeleteLibraryAsync(
+                    ToLibraryStorageKey(normalizedName),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     public static int ResetDatabaseManaged()
     {
         ClearLastError();
