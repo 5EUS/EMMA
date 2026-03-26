@@ -12,6 +12,12 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>EMMA.Plugin.AspNetCore</PackageId>
+    <Authors>projectemma</Authors>
+    <Description>ASP.NET Core hosting helpers and security middleware for EMMA plugins.</Description>
+    <RepositoryUrl>https://github.com/5EUS/EMMA</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/5EUS/EMMA</PackageProjectUrl>
   </PropertyGroup>
 
   <ItemGroup>
