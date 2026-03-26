@@ -1382,6 +1382,86 @@ public static class PluginHostExports
         }
     }
 
+    public static string? GetHistoryJsonManaged(
+        int limit = 200,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var history = _serviceProvider!.GetRequiredService<IHistoryPort>();
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            var entries = history.GetHistoryAsync(normalizedUserId, Math.Max(1, limit), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var payload = entries
+                .Select(entry => new HistoryEntryResponse(
+                    entry.EntryId,
+                    entry.MediaId.Value,
+                    entry.PluginId,
+                    entry.ExternalId,
+                    entry.UserId,
+                    entry.Position,
+                    entry.Completed,
+                    entry.LastViewedAtUtc.ToString("O")))
+                .ToList();
+
+            IReadOnlyList<HistoryEntryResponse> typedPayload = payload;
+            return JsonSerializer.Serialize(
+                typedPayload,
+                PluginHostExportsJsonContext.Default.IReadOnlyListHistoryEntryResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static int DeleteHistoryForMediaManaged(
+        string mediaId,
+        string pluginId,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Media ID is required");
+                return 0;
+            }
+
+            EnsureInitialized();
+            var history = _serviceProvider!.GetRequiredService<IHistoryPort>();
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            history.DeleteForMediaAsync(
+                    MediaId.Create(mediaId),
+                    pluginId ?? string.Empty,
+                    normalizedUserId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     // ==================== FFI Boundary (UnmanagedCallersOnly) ====================
 
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_initialize")]

@@ -1489,6 +1489,80 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_history_json")]
+    public static IntPtr RuntimeGetHistoryJson(int handle, int limit)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.GetHistoryJsonManaged(Math.Max(1, limit));
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to get history.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_delete_media_history")]
+    public static int RuntimeDeleteMediaHistory(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr pluginIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaId = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+
+            EnsurePluginHostInitialized();
+            var result = PluginHostExports.DeleteHistoryForMediaManaged(mediaId, pluginId);
+            if (result == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to delete history.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_last_error")]
     public static IntPtr LastError()
     {

@@ -34,6 +34,9 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(PluginManifestSearchQueryOptions))]
 [JsonSerializable(typeof(PluginManifestSearchQueryAddition))]
 [JsonSerializable(typeof(MediaProgressResponse))]
+[JsonSerializable(typeof(HistoryEntryResponse))]
+[JsonSerializable(typeof(IReadOnlyList<HistoryEntryResponse>))]
+[JsonSerializable(typeof(List<HistoryEntryResponse>))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(List<string>))]
 public partial class PluginHostExportsJsonContext : JsonSerializerContext
