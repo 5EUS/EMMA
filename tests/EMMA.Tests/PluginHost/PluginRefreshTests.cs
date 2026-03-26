@@ -16,6 +16,8 @@ namespace EMMA.Tests.PluginHost;
 
 public sealed class PluginRefreshTests
 {
+    private const string StorageDatabasePathEnvVar = "EMMA_STORAGE_DATABASE_PATH";
+
     [Fact]
     public async Task RefreshEndpoint_RescansManifests()
     {
@@ -23,6 +25,10 @@ public sealed class PluginRefreshTests
 
         var tempRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
+        var storageDatabasePath = Path.Combine(tempRoot, "storage", "emma.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(storageDatabasePath)!);
+        var previousStorageDatabasePath = Environment.GetEnvironmentVariable(StorageDatabasePathEnvVar);
+        Environment.SetEnvironmentVariable(StorageDatabasePathEnvVar, storageDatabasePath);
 
         var pluginApp = BuildPluginServer();
         await pluginApp.StartAsync();
@@ -39,8 +45,9 @@ public sealed class PluginRefreshTests
                     var settings = new Dictionary<string, string?>
                     {
                         ["PluginHost:ManifestDirectory"] = tempRoot,
-                        ["PluginHost:HandshakeOnStartup"] = "false",
-                        ["PluginHost:HandshakeTimeoutSeconds"] = "5"
+                        ["PluginHost:HandshakeOnStartup"] = "true",
+                        ["PluginHost:HandshakeTimeoutSeconds"] = "5",
+                        ["PluginSignature:RequireSignedPlugins"] = "false"
                     };
 
                     config.AddInMemoryCollection(settings);
@@ -64,6 +71,10 @@ public sealed class PluginRefreshTests
         }
         catch
         {
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(StorageDatabasePathEnvVar, previousStorageDatabasePath);
         }
     }
 

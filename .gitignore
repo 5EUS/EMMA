@@ -55,3 +55,6 @@ package.json
 # Logs
 .tmp/
 logs/
+
+EMMA.code-workspace
+src/EMMA.WasmRuntime.Native/target

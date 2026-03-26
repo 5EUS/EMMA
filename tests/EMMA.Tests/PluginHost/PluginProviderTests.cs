@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using EMMA.Contracts.Plugins;
+using EMMA.Plugin.AspNetCore;
 using EMMA.TestPlugin.Services;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
@@ -15,10 +16,17 @@ namespace EMMA.Tests.PluginHost;
 
 public sealed class PluginProviderTests
 {
+    private const string HostAuthHeader = "x-emma-plugin-host-auth";
+    private const string HostAuthTokenEnvVar = "EMMA_PLUGIN_HOST_AUTH_TOKEN";
+    private const string TestHostAuthToken = "provider-test-token";
+
     [Fact]
     public async Task SearchAndPageEndpoints_ReturnDemoData()
     {
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+        var previousToken = Environment.GetEnvironmentVariable(HostAuthTokenEnvVar);
+        Environment.SetEnvironmentVariable(HostAuthTokenEnvVar, TestHostAuthToken);
 
         var app = BuildTestPluginServer();
         await app.StartAsync();
@@ -27,15 +35,16 @@ public sealed class PluginProviderTests
         {
             var address = GetServerAddress(app);
             var channel = CreateChannel(address);
+            var headers = CreateHeaders();
 
             var searchClient = new SearchProvider.SearchProviderClient(channel);
-            var searchResponse = await searchClient.SearchAsync(new SearchRequest { Query = "demo" });
+            var searchResponse = await searchClient.SearchAsync(new SearchRequest { Query = "demo" }, headers);
 
             Assert.True(searchResponse.Results.Count >= 2);
             Assert.Contains(searchResponse.Results, item => item.Id == "demo-1");
 
             var pageClient = new PageProvider.PageProviderClient(channel);
-            var chapters = await pageClient.GetChaptersAsync(new ChaptersRequest { MediaId = "demo-1" });
+            var chapters = await pageClient.GetChaptersAsync(new ChaptersRequest { MediaId = "demo-1" }, headers);
 
             Assert.Single(chapters.Chapters);
             Assert.Equal("ch-1", chapters.Chapters[0].Id);
@@ -45,7 +54,7 @@ public sealed class PluginProviderTests
                 MediaId = "demo-1",
                 ChapterId = "ch-1",
                 Index = 0
-            });
+            }, headers);
 
             Assert.NotNull(page.Page);
             Assert.Equal("https://api.example.local/data/hash-1/page-1.jpg", page.Page.ContentUri);
@@ -53,6 +62,7 @@ public sealed class PluginProviderTests
         finally
         {
             await app.StopAsync();
+            Environment.SetEnvironmentVariable(HostAuthTokenEnvVar, previousToken);
         }
     }
 
@@ -61,6 +71,9 @@ public sealed class PluginProviderTests
     {
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
+        var previousToken = Environment.GetEnvironmentVariable(HostAuthTokenEnvVar);
+        Environment.SetEnvironmentVariable(HostAuthTokenEnvVar, TestHostAuthToken);
+
         var app = BuildTestPluginServer();
         await app.StartAsync();
 
@@ -68,9 +81,10 @@ public sealed class PluginProviderTests
         {
             var address = GetServerAddress(app);
             var channel = CreateChannel(address);
+            var headers = CreateHeaders();
 
             var client = new VideoProvider.VideoProviderClient(channel);
-            var streams = await client.GetStreamsAsync(new StreamRequest { MediaId = "demo-video-1" });
+            var streams = await client.GetStreamsAsync(new StreamRequest { MediaId = "demo-video-1" }, headers);
 
             Assert.Single(streams.Streams);
             Assert.Equal("stream-1", streams.Streams[0].Id);
@@ -80,7 +94,7 @@ public sealed class PluginProviderTests
                 MediaId = "demo-video-1",
                 StreamId = "stream-1",
                 Sequence = 0
-            });
+            }, headers);
 
             Assert.NotEmpty(segment.Payload.ToByteArray());
             Assert.Equal("video/mp2t", segment.ContentType);
@@ -88,7 +102,17 @@ public sealed class PluginProviderTests
         finally
         {
             await app.StopAsync();
+            Environment.SetEnvironmentVariable(HostAuthTokenEnvVar, previousToken);
         }
+    }
+
+    private static Grpc.Core.Metadata CreateHeaders()
+    {
+        return new Grpc.Core.Metadata
+        {
+            { HostAuthHeader, TestHostAuthToken },
+            { "x-correlation-id", Guid.NewGuid().ToString("n") }
+        };
     }
 
     private static WebApplication BuildTestPluginServer()
@@ -103,6 +127,20 @@ public sealed class PluginProviderTests
         });
 
         builder.Services.AddGrpc();
+        builder.Services.AddScoped<ITestPluginRuntime, TestPluginRuntime>();
+        builder.Services.Configure<PluginSdkControlOptions>(options =>
+        {
+            options.Message = "EMMA test plugin ready";
+            options.CpuBudgetMs = 150;
+            options.MemoryMb = 128;
+            options.Capabilities.Add("test-plugin");
+            options.Capabilities.Add("search");
+            options.Capabilities.Add("pages");
+            options.Capabilities.Add("video");
+            options.Domains.Add("api.mangadex.org");
+            options.Domains.Add("uploads.mangadex.org");
+            options.Paths.Add("/plugin-data");
+        });
         builder.Services.AddHttpClient<MangadexClient>(client =>
             {
                 client.BaseAddress = new Uri("https://api.mangadex.org");
@@ -110,7 +148,7 @@ public sealed class PluginProviderTests
             .ConfigurePrimaryHttpMessageHandler(() => new FakeMangadexHandler());
 
         var app = builder.Build();
-        app.MapGrpcService<TestPluginControlService>();
+        app.MapGrpcService<PluginDefaultControlService>();
         app.MapGrpcService<TestSearchProviderService>();
         app.MapGrpcService<TestPageProviderService>();
         app.MapGrpcService<TestVideoProviderService>();

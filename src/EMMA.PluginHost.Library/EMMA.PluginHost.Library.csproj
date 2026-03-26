@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EMMAIosAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^ios(-|simulator-)'))">
+    <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' != 'true'">
+    <ProjectReference Include="..\EMMA.PluginHost\EMMA.PluginHost.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
+    <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="..\EMMA.Storage\EMMA.Storage.csproj" />
+    <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
+    <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios' or ('$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true')">
+    <Compile Include="..\EMMA.PluginHost\Configuration\**\*.cs" Link="PluginHost\Configuration\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\EMMA.PluginHost\Platform\**\*.cs" Link="PluginHost\Platform\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\EMMA.PluginHost\Plugins\**\*.cs" Link="PluginHost\Plugins\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\EMMA.PluginHost\Sandboxing\**\*.cs" Link="PluginHost\Sandboxing\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\EMMA.PluginHost\Services\**\*.cs" Link="PluginHost\Services\%(RecursiveDir)%(Filename)%(Extension)" />
+
+    <Compile Remove="..\EMMA.PluginHost\Services\PluginHostEndpoints.cs" />
+    <Compile Remove="..\EMMA.PluginHost\Services\PagedPipelineEndpoints.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.provider.sqlite3" Version="2.1.10" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.60.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0-preview.2.25163.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0-preview.2.25163.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0-preview.2.25163.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.0-preview.2.25163.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.2.25163.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0-preview.2.25163.2" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0-preview.2.25163.2" />
+  </ItemGroup>
+
+</Project>

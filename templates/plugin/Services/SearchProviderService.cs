@@ -1,4 +1,5 @@
 using EMMA.Contracts.Plugins;
+using EMMA.Plugin.AspNetCore;
 using Grpc.Core;
 using Microsoft.Extensions.Logging;
 
@@ -10,13 +11,9 @@ public sealed class SearchProviderService(ILogger<SearchProviderService> logger)
 
     public override Task<SearchResponse> Search(SearchRequest request, ServerCallContext context)
     {
-        PluginRpcGuard.EnsureActive(context);
-        var correlationId = PluginRpcGuard.GetCorrelationId(context, request.Context?.CorrelationId);
-
+        var correlationId = PluginRequestContext.GetCorrelationId(context, request.Context?.CorrelationId);
         _logger.LogInformation("Search request {CorrelationId} query={Query}", correlationId, request.Query);
 
-        var response = new SearchResponse();
-
-        return Task.FromResult(response);
+        return Task.FromResult(new SearchResponse());
     }
 }

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>EMMA.Plugin.Common</PackageId>
+    <Authors>projectemma</Authors>
+    <Description>Common plugin models and helper utilities for EMMA plugins.</Description>
+    <RepositoryUrl>https://github.com/5EUS/EMMA</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/5EUS/EMMA</PackageProjectUrl>
+  </PropertyGroup>
+
+</Project>

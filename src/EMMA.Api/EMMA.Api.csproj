@@ -7,16 +7,33 @@
     <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' != 'true'">
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Grpc.AspNetCore.Server" Version="2.60.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.1.25122.1" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
+    <Compile Remove="Services/ApiAuthHeader.cs" />
+    <Compile Remove="Services/ApiKeyAuthMiddleware.cs" />
+    <Compile Remove="Services/ApiKeyGrpcInterceptor.cs" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.2.25163.2" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true'">
+    <Compile Remove="Services/ApiAuthHeader.cs" />
+    <Compile Remove="Services/ApiKeyAuthMiddleware.cs" />
+    <Compile Remove="Services/ApiKeyGrpcInterceptor.cs" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.2.25163.2" />
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EMMAIosAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^ios(-|simulator-)'))">
+    <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
   </PropertyGroup>
 
 </Project>

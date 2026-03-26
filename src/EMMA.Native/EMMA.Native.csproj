@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\EMMA.Api\EMMA.Api.csproj" />
+    <ProjectReference Include="..\EMMA.Application\EMMA.Application.csproj" />
+    <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
+    <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="..\EMMA.PluginHost.Library\EMMA.PluginHost.Library.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EMMAIosAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^ios(-|simulator-)'))">
+    <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
+  </PropertyGroup>
+
+</Project>

@@ -83,6 +83,7 @@ message ApiMediaSummary {
   string source = 2;
   string title = 3;
   ApiMediaType media_type = 4;
+  string thumbnail_url = 5;
 }
 
 message ApiMediaChapter {

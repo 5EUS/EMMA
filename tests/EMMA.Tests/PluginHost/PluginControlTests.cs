@@ -6,12 +6,20 @@ using PluginHostProgram = global::Program;
 
 namespace EMMA.Tests.PluginHost;
 
-public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<PluginHostProgram>>
+public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<PluginHostProgram>>, IDisposable
 {
+    private const string StorageDatabasePathEnvVar = "EMMA_STORAGE_DATABASE_PATH";
     private readonly WebApplicationFactory<PluginHostProgram> _factory;
+    private readonly string? _previousStorageDatabasePath;
+    private readonly string _storageDatabasePath;
 
     public PluginControlTests(WebApplicationFactory<PluginHostProgram> factory)
     {
+        _previousStorageDatabasePath = Environment.GetEnvironmentVariable(StorageDatabasePathEnvVar);
+        _storageDatabasePath = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "control", "emma.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(_storageDatabasePath)!);
+        Environment.SetEnvironmentVariable(StorageDatabasePathEnvVar, _storageDatabasePath);
+
         _factory = factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureAppConfiguration((_, config) =>
@@ -26,6 +34,29 @@ public sealed class PluginControlTests : IClassFixture<WebApplicationFactory<Plu
                 config.AddInMemoryCollection(settings);
             });
         });
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable(StorageDatabasePathEnvVar, _previousStorageDatabasePath);
+        try
+        {
+            if (File.Exists(_storageDatabasePath))
+            {
+                File.Delete(_storageDatabasePath);
+            }
+            if (File.Exists(_storageDatabasePath + "-wal"))
+            {
+                File.Delete(_storageDatabasePath + "-wal");
+            }
+            if (File.Exists(_storageDatabasePath + "-shm"))
+            {
+                File.Delete(_storageDatabasePath + "-shm");
+            }
+        }
+        catch
+        {
+        }
     }
 
     [Fact]

@@ -1,6 +1,5 @@
 using EMMA.PluginHost.Configuration;
 using Microsoft.Extensions.Options;
-using System.Xml.Linq;
 
 namespace EMMA.PluginHost.Plugins;
 
@@ -8,6 +7,7 @@ public interface IPluginEntrypointResolver
 {
     string GetPluginRoot(string pluginId);
     string ResolveEntrypoint(PluginManifest manifest);
+    bool TryResolveWasmComponent(PluginManifest manifest, out string componentPath);
 }
 
 public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options) : IPluginEntrypointResolver
@@ -35,18 +35,89 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         return ResolveDefaultEntrypoint(pluginRoot, manifest);
     }
 
-    private static string ResolveDefaultEntrypoint(string pluginRoot, PluginManifest manifest)
+    public bool TryResolveWasmComponent(PluginManifest manifest, out string componentPath)
     {
-        if (OperatingSystem.IsMacOS())
+        componentPath = string.Empty;
+        var pluginRoot = GetPluginRoot(manifest.Id);
+        if (!Directory.Exists(pluginRoot))
         {
-            var appCandidates = Directory.EnumerateDirectories(pluginRoot, "*.app", SearchOption.TopDirectoryOnly)
-                .ToList();
-            if (appCandidates.Count == 1)
+            return false;
+        }
+
+        var candidates = BuildWasmComponentCandidates(pluginRoot, manifest);
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (File.Exists(candidate) && IsWasmComponentBinary(candidate))
             {
-                return ResolveAppBundle(appCandidates[0], Path.GetFileName(appCandidates[0]));
+                componentPath = candidate;
+                return true;
             }
         }
 
+        var wildcard = Directory.EnumerateFiles(pluginRoot, "*.wasm", SearchOption.TopDirectoryOnly)
+            .Concat(Directory.EnumerateFiles(pluginRoot, "*.cwasm", SearchOption.TopDirectoryOnly))
+            .Where(IsWasmComponentBinary)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (wildcard.Count == 1)
+        {
+            componentPath = wildcard[0];
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsWasmComponentBinary(string path)
+    {
+        var extension = Path.GetExtension(path);
+        using var stream = File.OpenRead(path);
+        Span<byte> header = stackalloc byte[8];
+        if (stream.Read(header) != header.Length)
+        {
+            return false;
+        }
+
+        if (string.Equals(extension, ".cwasm", StringComparison.OrdinalIgnoreCase))
+        {
+            return IsWasmComponentHeader(header)
+                || IsElfHeader(header)
+                || IsMachOHeader(header);
+        }
+
+        return IsWasmComponentHeader(header);
+    }
+
+    private static bool IsWasmComponentHeader(ReadOnlySpan<byte> header)
+    {
+        return header[0] == 0x00
+            && header[1] == 0x61
+            && header[2] == 0x73
+            && header[3] == 0x6D
+            && header[4] == 0x0D
+            && header[5] == 0x00
+            && header[6] == 0x01
+            && header[7] == 0x00;
+    }
+
+    private static bool IsElfHeader(ReadOnlySpan<byte> header)
+    {
+        return header[0] == 0x7F
+            && header[1] == 0x45
+            && header[2] == 0x4C
+            && header[3] == 0x46;
+    }
+
+    private static bool IsMachOHeader(ReadOnlySpan<byte> header)
+    {
+        var magic = (uint)(header[0] << 24 | header[1] << 16 | header[2] << 8 | header[3]);
+        return magic is 0xFEEDFACE or 0xFEEDFACF or 0xCEFAEDFE or 0xCFFAEDFE or 0xCAFEBABE or 0xBEBAFECA;
+    }
+
+    private static string ResolveDefaultEntrypoint(string pluginRoot, PluginManifest manifest)
+    {
         var candidates = BuildNameCandidates(manifest);
         foreach (var name in candidates)
         {
@@ -56,12 +127,34 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             }
         }
 
-        if (OperatingSystem.IsMacOS())
+        throw new InvalidOperationException("Plugin executable not found; no matching binary was found.");
+    }
+
+    private static IEnumerable<string> BuildWasmComponentCandidates(string pluginRoot, PluginManifest manifest)
+    {
+        var names = new List<string> { "plugin" };
+        if (!string.IsNullOrWhiteSpace(manifest.Id))
         {
-            throw new InvalidOperationException("Plugin executable not found; no .app bundle was found.");
+            names.Add(manifest.Id);
         }
 
-        throw new InvalidOperationException("Plugin executable not found; no matching binary was found.");
+        if (!string.IsNullOrWhiteSpace(manifest.Name))
+        {
+            names.Add(RemoveSpaces(manifest.Name));
+        }
+
+        var uniqueNames = names
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var name in uniqueNames)
+        {
+            yield return Path.Combine(pluginRoot, name + ".wasm");
+            yield return Path.Combine(pluginRoot, name + ".cwasm");
+            yield return Path.Combine(pluginRoot, "wasm", name + ".wasm");
+            yield return Path.Combine(pluginRoot, "wasm", name + ".cwasm");
+        }
     }
 
     private static List<string> BuildNameCandidates(PluginManifest manifest)
@@ -93,25 +186,12 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
             return false;
         }
 
-        if (OperatingSystem.IsMacOS())
-        {
-            var bundlePath = Path.Combine(pluginRoot, name + ".app");
-            if (Directory.Exists(bundlePath))
-            {
-                resolved = ResolveAppBundle(bundlePath, Path.GetFileName(bundlePath));
-                return true;
-            }
-        }
-
         var candidate = Path.Combine(pluginRoot, name);
-        if (OperatingSystem.IsWindows())
+        var exeCandidate = candidate + ".exe";
+        if (File.Exists(exeCandidate))
         {
-            var exeCandidate = candidate + ".exe";
-            if (File.Exists(exeCandidate))
-            {
-                resolved = exeCandidate;
-                return true;
-            }
+            resolved = exeCandidate;
+            return true;
         }
 
         if (File.Exists(candidate))
@@ -121,65 +201,5 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         }
 
         return false;
-    }
-
-    private static string ResolveAppBundle(string bundlePath, string entrypoint)
-    {
-        if (!Directory.Exists(bundlePath))
-        {
-            throw new InvalidOperationException("Plugin app bundle not found.");
-        }
-
-        var infoPlist = Path.Combine(bundlePath, "Contents", "Info.plist");
-        if (!File.Exists(infoPlist))
-        {
-            throw new InvalidOperationException("Plugin app bundle is missing Info.plist.");
-        }
-
-        var executable = ReadBundleExecutable(infoPlist)
-            ?? Path.GetFileNameWithoutExtension(entrypoint);
-
-        var candidate = Path.Combine(bundlePath, "Contents", "MacOS", executable);
-        if (!File.Exists(candidate))
-        {
-            throw new InvalidOperationException("Plugin app bundle executable not found.");
-        }
-
-        return candidate;
-    }
-
-    private static string? ReadBundleExecutable(string infoPlist)
-    {
-        try
-        {
-            var document = XDocument.Load(infoPlist);
-            var dict = document.Root?.Element("dict");
-            if (dict is null)
-            {
-                return null;
-            }
-
-            string? key = null;
-            foreach (var node in dict.Elements())
-            {
-                if (node.Name.LocalName == "key")
-                {
-                    key = node.Value;
-                    continue;
-                }
-
-                if (key == "CFBundleExecutable")
-                {
-                    return node.Value;
-                }
-
-                key = null;
-            }
-        }
-        catch
-        {
-        }
-
-        return null;
     }
 }

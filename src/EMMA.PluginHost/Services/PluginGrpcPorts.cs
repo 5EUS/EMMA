@@ -64,8 +64,14 @@ internal sealed class PluginSearchPort(
         var source = result.Source ?? string.Empty;
         var title = result.Title ?? string.Empty;
         var mediaType = ParseMediaType(result.MediaType);
+        var thumbnailUrl = string.IsNullOrWhiteSpace(result.ThumbnailUrl)
+            ? null
+            : result.ThumbnailUrl;
+        var description = string.IsNullOrWhiteSpace(result.Description)
+            ? null
+            : result.Description;
 
-        return new MediaSummary(mediaId, source, title, mediaType);
+        return new MediaSummary(mediaId, source, title, mediaType, thumbnailUrl, description);
     }
 
     private static MediaType ParseMediaType(string? value)
@@ -168,6 +174,54 @@ internal sealed class PluginPageProviderPort(
             pageIndex);
 
         return page;
+    }
+
+    public async Task<MediaPagesResult> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        var (cts, deadlineUtc) = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        using var ctsScope = cts;
+        using var lease = await PluginGrpcHelpers.AcquireLeaseAsync(
+            _endpoint.Record.Manifest.Id,
+            _options.Value,
+            cts.Token);
+
+        using var httpClient = PluginGrpcHelpers.CreateHttpClient(_endpoint.Address);
+        using var channel = GrpcChannel.ForAddress(_endpoint.Address, new GrpcChannelOptions
+        {
+            HttpClient = httpClient
+        });
+
+        var client = new PluginContracts.PageProvider.PageProviderClient(channel);
+        var response = await client.GetPagesAsync(new PluginContracts.PagesRequest
+        {
+            MediaId = mediaId.Value,
+            ChapterId = chapterId,
+            StartIndex = startIndex,
+            Count = count,
+            Context = PluginGrpcHelpers.CreateRequestContext(_endpoint.CorrelationId, deadlineUtc)
+        }, headers: PluginGrpcHelpers.CreateHeaders(_endpoint.CorrelationId), cancellationToken: cts.Token);
+
+        var pages = response.Pages
+            .Select(MapPage)
+            .ToList();
+
+        _logger.LogInformation(
+            "Pipeline pages {CorrelationId} pluginId={PluginId} mediaId={MediaId} chapterId={ChapterId} startIndex={StartIndex} count={Count} resultCount={ResultCount} reachedEnd={ReachedEnd}",
+            _endpoint.CorrelationId,
+            _endpoint.Record.Manifest.Id,
+            mediaId.Value,
+            chapterId,
+            startIndex,
+            count,
+            pages.Count,
+            response.ReachedEnd);
+
+        return new MediaPagesResult(pages, response.ReachedEnd);
     }
 
     private static MediaChapter MapChapter(PluginContracts.MediaChapter chapter)

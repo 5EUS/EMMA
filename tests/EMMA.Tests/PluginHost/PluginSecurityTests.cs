@@ -12,7 +12,10 @@ public sealed class PluginSecurityTests
     [Fact]
     public async Task EnsureStartedAsync_DisablesUnsignedPlugin_WhenRequired()
     {
-        var hostOptions = Options.Create(new PluginHostOptions());
+        var hostOptions = Options.Create(new PluginHostOptions
+        {
+            EnableProcessPlugins = true
+        });
         var signatureOptions = Options.Create(new PluginSignatureOptions
         {
             RequireSignedPlugins = true,
@@ -56,7 +59,8 @@ public sealed class PluginSecurityTests
         var sandboxRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"), "sandbox");
         var hostOptions = Options.Create(new PluginHostOptions
         {
-            SandboxRootDirectory = sandboxRoot
+            SandboxRootDirectory = sandboxRoot,
+            EnableProcessPlugins = true
         });
         var signatureOptions = Options.Create(new PluginSignatureOptions());
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);

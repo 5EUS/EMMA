@@ -4,6 +4,7 @@ using EMMA.PluginHost.Configuration;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
 using EMMA.PluginHost.Sandboxing;
+using EMMA.PluginHost.Services;
 using Grpc.Core;
 
 namespace EMMA.PluginHost.Plugins;
@@ -16,17 +17,18 @@ public sealed class PluginHandshakeService(
     PluginRegistry registry,
     IPluginSandboxManager sandboxManager,
     PluginProcessManager processManager,
-    PluginPermissionSanitizer permissionSanitizer,
     PluginEndpointAllocator endpointAllocator,
+    IWasmPluginRuntimeHost wasmRuntimeHost,
     IOptions<PluginHostOptions> options,
     ILogger<PluginHandshakeService> logger)
 {
+    private const string HostAuthHeader = "x-emma-plugin-host-auth";
     private readonly PluginManifestLoader _loader = loader;
     private readonly PluginRegistry _registry = registry;
     private readonly IPluginSandboxManager _sandboxManager = sandboxManager;
     private readonly PluginProcessManager _processManager = processManager;
-    private readonly PluginPermissionSanitizer _permissionSanitizer = permissionSanitizer;
     private readonly PluginEndpointAllocator _endpointAllocator = endpointAllocator;
+    private readonly IWasmPluginRuntimeHost _wasmRuntimeHost = wasmRuntimeHost;
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginHandshakeService> _logger = logger;
 
@@ -38,7 +40,7 @@ public sealed class PluginHandshakeService(
         var manifests = await _loader.LoadManifestsAsync(cancellationToken);
         foreach (var manifest in manifests)
         {
-            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            var updated = ResolveEndpointIfNeeded(manifest);
             _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
         }
 
@@ -50,7 +52,7 @@ public sealed class PluginHandshakeService(
 
         foreach (var manifest in manifests)
         {
-            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            var updated = ResolveEndpointIfNeeded(manifest);
             await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
                 updated,
@@ -61,11 +63,17 @@ public sealed class PluginHandshakeService(
             var status = await HandshakeAsync(updated, runtime, cancellationToken);
             runtime = _registry.GetRuntime(updated);
             _registry.Upsert(updated, status, runtime);
+
+            if (status.Success)
+            {
+                await _wasmRuntimeHost.WarmupAsync(updated, cancellationToken);
+            }
         }
     }
 
     /// <summary>
-    /// Reloads manifests and performs a handshake regardless of startup settings.
+    /// Reloads manifests and refreshes registry state.
+    /// When handshake-on-startup is enabled, this also performs startup and handshake.
     /// </summary>
     public async Task RescanAsync(CancellationToken cancellationToken)
     {
@@ -84,7 +92,31 @@ public sealed class PluginHandshakeService(
 
         foreach (var manifest in manifests)
         {
-            var updated = _endpointAllocator.EnsureEndpoint(manifest);
+            var existing = snapshot.FirstOrDefault(record =>
+                string.Equals(record.Manifest.Id, manifest.Id, StringComparison.OrdinalIgnoreCase));
+
+            var resolved = manifest;
+            if (existing is not null
+                && string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(manifest.Endpoint)
+                && !string.IsNullOrWhiteSpace(existing.Manifest.Endpoint))
+            {
+                resolved = manifest with { Endpoint = existing.Manifest.Endpoint };
+            }
+
+            var updated = ResolveEndpointIfNeeded(resolved);
+            _registry.Upsert(updated, PluginHandshakeDefaults.NotChecked(), _registry.GetRuntime(updated));
+        }
+
+        if (!_options.HandshakeOnStartup)
+        {
+            _logger.LogInformation("Plugin handshake is disabled by configuration; rescan updated manifests without eager startup.");
+            return;
+        }
+
+        foreach (var manifest in manifests)
+        {
+            var updated = ResolveEndpointIfNeeded(manifest);
             await _sandboxManager.PrepareAsync(updated, cancellationToken);
             var runtime = await _processManager.EnsureStartedAsync(
                 updated,
@@ -95,6 +127,11 @@ public sealed class PluginHandshakeService(
             var status = await HandshakeAsync(updated, runtime, cancellationToken);
             runtime = _registry.GetRuntime(updated);
             _registry.Upsert(updated, status, runtime);
+
+            if (status.Success)
+            {
+                await _wasmRuntimeHost.WarmupAsync(updated, cancellationToken);
+            }
         }
     }
 
@@ -102,12 +139,26 @@ public sealed class PluginHandshakeService(
         PluginManifest manifest,
         CancellationToken cancellationToken)
     {
-        var updated = _endpointAllocator.EnsureEndpoint(manifest);
+        var updated = ResolveEndpointIfNeeded(manifest);
         var runtime = _registry.GetRuntime(updated);
         var status = await HandshakeAsync(updated, runtime, cancellationToken);
         runtime = _registry.GetRuntime(updated);
         _registry.Upsert(updated, status, runtime);
+        if (status.Success)
+        {
+            await _wasmRuntimeHost.WarmupAsync(updated, cancellationToken);
+        }
         return status;
+    }
+
+    private PluginManifest ResolveEndpointIfNeeded(PluginManifest manifest)
+    {
+        if (_wasmRuntimeHost.IsWasmPlugin(manifest))
+        {
+            return manifest;
+        }
+
+        return _endpointAllocator.EnsureEndpoint(manifest);
     }
 
     private async Task<PluginHandshakeStatus> HandshakeAsync(
@@ -123,6 +174,23 @@ public sealed class PluginHandshakeService(
         if (string.IsNullOrWhiteSpace(manifest.Protocol))
         {
             return Failed("Missing protocol.");
+        }
+
+        if (_wasmRuntimeHost.IsWasmPlugin(manifest))
+        {
+            try
+            {
+                return await _wasmRuntimeHost.HandshakeAsync(manifest, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                if (_logger.IsEnabled(LogLevel.Warning))
+                {
+                    _logger.LogWarning(ex, "WASM component handshake failed for plugin {PluginId}", manifest.Id);
+                }
+
+                return Failed(ex.Message);
+            }
         }
 
         if (!string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
@@ -151,27 +219,18 @@ public sealed class PluginHandshakeService(
             var correlationId = CreateCorrelationId();
             var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(_options.HandshakeTimeoutSeconds);
             var headers = CreateHeaders(correlationId);
+            var hostAuthToken = _processManager.GetHostAuthToken(manifest.Id);
+            if (!string.IsNullOrWhiteSpace(hostAuthToken))
+            {
+                headers.Add(HostAuthHeader, hostAuthToken);
+            }
             var context = CreateRequestContext(correlationId, deadlineUtc);
             var health = await client.GetHealthAsync(new HealthRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
             var capabilities = await client.GetCapabilitiesAsync(new CapabilitiesRequest { Context = context }, headers: headers, cancellationToken: cts.Token);
 
             var caps = capabilities.Capabilities.ToArray();
-            var budgets = capabilities.Budgets;
-            var permissions = capabilities.Permissions;
             var manifestCaps = manifest.Capabilities;
             var manifestPermissions = manifest.Permissions;
-            IReadOnlyList<string> effectivePaths;
-            if (manifestPermissions?.Paths is not null)
-            {
-                effectivePaths = manifestPermissions.Paths;
-            }
-            else
-            {
-                effectivePaths = _permissionSanitizer.SanitizePaths(
-                    manifest.Id,
-                    permissions?.Paths.ToArray() ?? [],
-                    "grpc") ?? [];
-            }
             var message = string.IsNullOrWhiteSpace(health.Message) ? "Handshake ok" : health.Message;
 
             return new PluginHandshakeStatus(
@@ -180,10 +239,10 @@ public sealed class PluginHandshakeService(
                 health.Version,
                 DateTimeOffset.UtcNow,
                 caps,
-                manifestCaps?.CpuBudgetMs ?? budgets?.CpuBudgetMs ?? 0,
-                manifestCaps?.MemoryMb ?? budgets?.MemoryMb ?? 0,
-                manifestPermissions?.Domains?.ToArray() ?? permissions?.Domains.ToArray() ?? [],
-                [.. effectivePaths]);
+                manifestCaps?.CpuBudgetMs ?? 0,
+                manifestCaps?.MemoryMb ?? 0,
+                manifestPermissions?.Domains?.ToArray() ?? [],
+                manifestPermissions?.Paths?.ToArray() ?? []);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

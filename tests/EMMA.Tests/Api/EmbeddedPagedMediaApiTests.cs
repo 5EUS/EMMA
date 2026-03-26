@@ -69,5 +69,18 @@ public sealed class EmbeddedPagedMediaApiTests
         {
             return Task.FromResult(new MediaPage("page-1", pageIndex, new Uri("https://example.invalid/page.jpg")));
         }
+
+        public Task<MediaPagesResult> GetPagesAsync(
+            MediaId mediaId,
+            string chapterId,
+            int startIndex,
+            int count,
+            CancellationToken cancellationToken)
+        {
+            var pages = Enumerable.Range(startIndex, Math.Max(0, count))
+                .Select(index => new MediaPage($"page-{index}", index, new Uri($"https://example.invalid/page-{index}.jpg")))
+                .ToList();
+            return Task.FromResult(new MediaPagesResult(pages, true));
+        }
     }
 }

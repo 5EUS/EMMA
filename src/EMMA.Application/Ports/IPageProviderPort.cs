@@ -24,4 +24,20 @@ public interface IPageProviderPort
     /// <param name="cancellationToken"></param>
     /// <returns></returns>
     Task<MediaPage> GetPageAsync(MediaId mediaId, string chapterId, int pageIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets a batch of pages within a chapter.
+    /// </summary>
+    /// <param name="mediaId"></param>
+    /// <param name="chapterId"></param>
+    /// <param name="startIndex"></param>
+    /// <param name="count"></param>
+    /// <param name="cancellationToken"></param>
+    /// <returns></returns>
+    Task<MediaPagesResult> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken);
 }

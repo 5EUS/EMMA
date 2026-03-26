@@ -33,4 +33,45 @@ public sealed class InMemoryPageProvider(InMemoryMediaStore store) : IPageProvid
         var page = _store.GetPage(mediaId, chapterId, pageIndex) ?? throw new KeyNotFoundException($"Page {pageIndex} not found for chapter {chapterId}.");
         return Task.FromResult(page);
     }
+
+    /// <summary>
+    /// Gets a page batch from the in-memory store.
+    /// </summary>
+    public Task<MediaPagesResult> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (startIndex < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(startIndex));
+        }
+
+        if (count <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        var pages = new List<MediaPage>(count);
+        var reachedEnd = false;
+
+        for (var offset = 0; offset < count; offset++)
+        {
+            var index = startIndex + offset;
+            var page = _store.GetPage(mediaId, chapterId, index);
+            if (page is null)
+            {
+                reachedEnd = true;
+                break;
+            }
+
+            pages.Add(page);
+        }
+
+        return Task.FromResult(new MediaPagesResult(pages, reachedEnd));
+    }
 }

@@ -101,25 +101,53 @@ public sealed class StorageInitializer(StorageOptions options)
         (string Name, string Sql) migration,
         CancellationToken cancellationToken)
     {
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken) as SqliteTransaction
-            ?? throw new InvalidOperationException("Failed to start SQLite transaction.");
+        await ExecuteNonQueryAsync(connection, "BEGIN IMMEDIATE;", cancellationToken);
 
-        await using (var command = connection.CreateCommand())
+        try
         {
-            command.Transaction = transaction;
-            command.CommandText = migration.Sql;
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
+            if (await IsAppliedInCurrentTransactionAsync(connection, migration.Name, cancellationToken))
+            {
+                await ExecuteNonQueryAsync(connection, "COMMIT;", cancellationToken);
+                return;
+            }
 
-        await using (var command = connection.CreateCommand())
-        {
-            command.Transaction = transaction;
-            command.CommandText = "INSERT INTO __emma_migrations (name, applied_at) VALUES ($name, $appliedAt);";
+            await ExecuteNonQueryAsync(connection, migration.Sql, cancellationToken);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "INSERT OR IGNORE INTO __emma_migrations (name, applied_at) VALUES ($name, $appliedAt);";
             command.Parameters.AddWithValue("$name", migration.Name);
             command.Parameters.AddWithValue("$appliedAt", DateTimeOffset.UtcNow.ToString("O"));
             await command.ExecuteNonQueryAsync(cancellationToken);
-        }
 
-        await transaction.CommitAsync(cancellationToken);
+            await ExecuteNonQueryAsync(connection, "COMMIT;", cancellationToken);
+        }
+        catch
+        {
+            await ExecuteNonQueryAsync(connection, "ROLLBACK;", cancellationToken);
+            throw;
+        }
+    }
+
+    private static async Task<bool> IsAppliedInCurrentTransactionAsync(
+        SqliteConnection connection,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM __emma_migrations WHERE name = $name LIMIT 1;";
+        command.Parameters.AddWithValue("$name", name);
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is not null;
+    }
+
+    private static async Task ExecuteNonQueryAsync(
+        SqliteConnection connection,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

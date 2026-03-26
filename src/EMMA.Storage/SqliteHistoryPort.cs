@@ -94,4 +94,27 @@ public sealed class SqliteHistoryPort(StorageOptions options) : IHistoryPort
 
         return results;
     }
+
+    public async Task DeleteForMediaAsync(
+        MediaId mediaId,
+        string pluginId,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM history
+            WHERE media_id = $mediaId
+              AND plugin_id = $pluginId
+              AND user_id = $userId;
+            """;
+        command.Parameters.AddWithValue("$mediaId", mediaId.Value);
+        command.Parameters.AddWithValue("$pluginId", pluginId ?? string.Empty);
+        command.Parameters.AddWithValue("$userId", userId ?? string.Empty);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
 }

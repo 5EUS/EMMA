@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using EMMA.Application.Ports;
 using EMMA.Domain;
 
@@ -12,10 +11,6 @@ namespace EMMA.Storage;
 public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCachePort
 {
     private readonly StorageOptions _options = options;
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
 
     public async Task<MediaPageAsset?> GetAsync(string key, CancellationToken cancellationToken)
     {
@@ -33,7 +28,9 @@ public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCa
         try
         {
             var metadataJson = await File.ReadAllTextAsync(metadataPath, cancellationToken);
-            var metadata = JsonSerializer.Deserialize<PageAssetMetadata>(metadataJson, JsonOptions);
+            var metadata = System.Text.Json.JsonSerializer.Deserialize(
+                metadataJson,
+                StorageJsonContext.Default.PageAssetMetadata);
             if (metadata is null)
             {
                 return null;
@@ -73,7 +70,9 @@ public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCa
         try
         {
             await File.WriteAllBytesAsync(payloadPath, payload, cancellationToken);
-            var json = JsonSerializer.Serialize(metadata, JsonOptions);
+            var json = System.Text.Json.JsonSerializer.Serialize(
+                metadata,
+                StorageJsonContext.Default.PageAssetMetadata);
             await File.WriteAllTextAsync(metadataPath, json, cancellationToken);
         }
         catch
@@ -94,5 +93,5 @@ public sealed class PageAssetStorageCache(StorageOptions options) : IPageAssetCa
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
-    private sealed record PageAssetMetadata(string ContentType, DateTimeOffset FetchedAtUtc);
+    public sealed record PageAssetMetadata(string ContentType, DateTimeOffset FetchedAtUtc);
 }

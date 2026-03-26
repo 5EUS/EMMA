@@ -7,4 +7,6 @@ public sealed record MediaSummary(
     MediaId Id,
     string SourceId,
     string Title,
-    MediaType MediaType);
+    MediaType MediaType,
+    string? ThumbnailUrl = null,
+    string? Description = null);

@@ -10,13 +10,8 @@ namespace EMMA.Infrastructure.Http;
 /// <summary>
 /// Plugin-host-backed port for paged media operations.
 /// </summary>
-public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginHostClientOptions> options) : IMediaSearchPort, IPageProviderPort
+public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginHostClientOptions> options) : IMediaSearchPort, IPageProviderPort
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private readonly HttpClient _client = client;
     private readonly PluginHostClientOptions _options = options.Value;
 
@@ -31,13 +26,18 @@ public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginH
         await EnsureSuccessAsync(response, cancellationToken);
 
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        var results = JsonSerializer.Deserialize<List<SearchResultDto>>(payload, JsonOptions) ?? [];
+        var results = JsonSerializer.Deserialize(
+            payload,
+            typeof(List<SearchResultDto>),
+            PluginHostPagedMediaPortJsonContext.Default) as List<SearchResultDto> ?? [];
 
         return [.. results.Select(item => new MediaSummary(
             MediaId.Create(item.Id ?? string.Empty),
             item.Source ?? string.Empty,
             item.Title ?? string.Empty,
-            ParseMediaType(item.MediaType)))];
+            ParseMediaType(item.MediaType),
+            string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+            string.IsNullOrWhiteSpace(item.Description) ? null : item.Description))];
     }
 
     public async Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(MediaId mediaId, CancellationToken cancellationToken)
@@ -51,7 +51,10 @@ public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginH
         await EnsureSuccessAsync(response, cancellationToken);
 
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        var results = JsonSerializer.Deserialize<List<ChapterDto>>(payload, JsonOptions) ?? [];
+        var results = JsonSerializer.Deserialize(
+            payload,
+            typeof(List<ChapterDto>),
+            PluginHostPagedMediaPortJsonContext.Default) as List<ChapterDto> ?? [];
 
         return [.. results.Select(item => new MediaChapter(
             item.Id ?? string.Empty,
@@ -76,7 +79,10 @@ public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginH
         await EnsureSuccessAsync(response, cancellationToken);
 
         var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        var result = JsonSerializer.Deserialize<PageDto>(payload, JsonOptions)
+        var result = JsonSerializer.Deserialize(
+            payload,
+            typeof(PageDto),
+            PluginHostPagedMediaPortJsonContext.Default) as PageDto
             ?? throw new InvalidOperationException("Plugin host returned an empty page payload.");
 
         if (!Uri.TryCreate(result.ContentUri, UriKind.Absolute, out var contentUri))
@@ -85,6 +91,46 @@ public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginH
         }
 
         return new MediaPage(result.Id ?? string.Empty, result.Index, contentUri);
+    }
+
+    public async Task<MediaPagesResult> GetPagesAsync(
+        MediaId mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        CancellationToken cancellationToken)
+    {
+        var url = BuildUrl("/pipeline/paged/pages", new Dictionary<string, string?>
+        {
+            ["mediaId"] = mediaId.Value,
+            ["chapterId"] = chapterId,
+            ["startIndex"] = startIndex.ToString(),
+            ["count"] = count.ToString()
+        });
+
+        var response = await _client.GetAsync(url, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        var result = JsonSerializer.Deserialize(
+            payload,
+            typeof(PagesResultDto),
+            PluginHostPagedMediaPortJsonContext.Default) as PagesResultDto
+            ?? new PagesResultDto();
+
+        var pages = (result.Pages ?? [])
+            .Select(item =>
+            {
+                if (!Uri.TryCreate(item.ContentUri, UriKind.Absolute, out var contentUri))
+                {
+                    throw new InvalidOperationException("Plugin host returned an invalid page URI.");
+                }
+
+                return new MediaPage(item.Id ?? string.Empty, item.Index, contentUri);
+            })
+            .ToList();
+
+        return new MediaPagesResult(pages, result.ReachedEnd);
     }
 
     public async Task<MediaPageAsset> GetPageAssetAsync(
@@ -160,6 +206,12 @@ public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginH
 
         [JsonPropertyName("mediaType")]
         public string? MediaType { get; init; }
+
+        [JsonPropertyName("thumbnailUrl")]
+        public string? ThumbnailUrl { get; init; }
+
+        [JsonPropertyName("description")]
+        public string? Description { get; init; }
     }
 
     private sealed record ChapterDto
@@ -185,4 +237,20 @@ public sealed class PluginHostPagedMediaPort(HttpClient client, IOptions<PluginH
         [JsonPropertyName("contentUri")]
         public string? ContentUri { get; init; }
     }
+
+    private sealed record PagesResultDto
+    {
+        [JsonPropertyName("pages")]
+        public List<PageDto>? Pages { get; init; }
+
+        [JsonPropertyName("reachedEnd")]
+        public bool ReachedEnd { get; init; }
+    }
+
+    [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+    [JsonSerializable(typeof(List<SearchResultDto>))]
+    [JsonSerializable(typeof(List<ChapterDto>))]
+    [JsonSerializable(typeof(PageDto))]
+    [JsonSerializable(typeof(PagesResultDto))]
+    private sealed partial class PluginHostPagedMediaPortJsonContext : JsonSerializerContext;
 }

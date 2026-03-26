@@ -16,7 +16,8 @@ public sealed class PluginBudgetWatcherTests
         {
             BudgetWatchIntervalSeconds = 1,
             MaxCpuBudgetMs = 100,
-            MaxMemoryMb = 100
+            MaxMemoryMb = 100,
+            AllowNoSandboxFallback = true
         });
 
         var registry = new PluginRegistry();
@@ -75,7 +76,8 @@ public sealed class PluginBudgetWatcherTests
         {
             BudgetWatchIntervalSeconds = 1,
             MaxCpuBudgetMs = 500,
-            MaxMemoryMb = 500
+            MaxMemoryMb = 500,
+            AllowNoSandboxFallback = true
         });
 
         var registry = new PluginRegistry();

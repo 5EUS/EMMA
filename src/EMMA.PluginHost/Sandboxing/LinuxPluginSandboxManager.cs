@@ -66,27 +66,28 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         IReadOnlyList<string>? allowedPaths)
     {
         var builder = new StringBuilder();
-        // --unshare-all disables host namespaces, including network.
-        builder.Append("--unshare-all --die-with-parent --new-session ");
+        // Use namespace isolation but share host networking so PluginHost can
+        // reach plugin endpoints bound on localhost.
+        builder.Append("--unshare-all --share-net --die-with-parent --new-session ");
         builder.Append("--proc /proc --dev /dev --tmpfs /tmp ");
-        builder.Append("--ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /etc /etc ");
-        if (Directory.Exists("/sbin"))
-        {
-            builder.Append("--ro-bind /sbin /sbin ");
-        }
-        if (Directory.Exists("/lib"))
-        {
-            builder.Append("--ro-bind /lib /lib ");
-        }
-        if (Directory.Exists("/lib64"))
-        {
-            builder.Append("--ro-bind /lib64 /lib64 ");
-        }
+
+        AppendReadOnlyBindIfExists(builder, "/usr");
+        AppendReadOnlyBindIfExists(builder, "/bin");
+        AppendReadOnlyBindIfExists(builder, "/lib");
+        AppendReadOnlyBindIfExists(builder, "/lib64");
+        AppendReadOnlyBindIfExists(builder, "/etc/ssl");
+        AppendReadOnlyBindIfExists(builder, "/etc/resolv.conf");
+        AppendReadOnlyBindIfExists(builder, "/etc/hosts");
+        AppendReadOnlyBindIfExists(builder, "/etc/nsswitch.conf");
+        AppendReadOnlyBindIfExists(builder, "/etc/localtime");
+        AppendReadOnlyBindIfExists(builder, "/usr/share/zoneinfo");
+
         if (allowedPaths is not null)
         {
             foreach (var path in allowedPaths)
             {
-                if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+                if (!string.IsNullOrWhiteSpace(path)
+                    && (Directory.Exists(path) || File.Exists(path)))
                 {
                     builder.Append($"--ro-bind {Quote(path)} {Quote(path)} ");
                 }
@@ -95,7 +96,7 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         builder.Append($"--bind {Quote(pluginRoot)} /sandbox ");
         builder.Append("--chdir /sandbox ");
         builder.Append("-- ");
-        builder.Append(Quote(fileName));
+        builder.Append(Quote(ToSandboxEntrypoint(pluginRoot, fileName)));
         if (!string.IsNullOrWhiteSpace(args))
         {
             builder.Append(' ');
@@ -123,6 +124,44 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         }
 
         return null;
+    }
+
+    private static string ToSandboxEntrypoint(string pluginRoot, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return fileName;
+        }
+
+        if (!Path.IsPathRooted(fileName))
+        {
+            return fileName;
+        }
+
+        var fullPluginRoot = Path.GetFullPath(pluginRoot);
+        var fullFileName = Path.GetFullPath(fileName);
+        var pluginPrefix = fullPluginRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? fullPluginRoot
+            : fullPluginRoot + Path.DirectorySeparatorChar;
+
+        if (!fullFileName.StartsWith(pluginPrefix, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(fullFileName, fullPluginRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return fileName;
+        }
+
+        var relative = Path.GetRelativePath(fullPluginRoot, fullFileName)
+            .Replace(Path.DirectorySeparatorChar, '/');
+
+        return relative == "." ? "/sandbox" : $"/sandbox/{relative}";
+    }
+
+    private static void AppendReadOnlyBindIfExists(StringBuilder builder, string path)
+    {
+        if (Directory.Exists(path) || File.Exists(path))
+        {
+            builder.Append($"--ro-bind {Quote(path)} {Quote(path)} ");
+        }
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"")}\"";

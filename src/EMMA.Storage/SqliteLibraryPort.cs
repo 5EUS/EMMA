@@ -10,10 +10,67 @@ public sealed class SqliteLibraryPort(StorageOptions options) : ILibraryPort
 {
     private readonly SqliteConnectionFactory _connectionFactory = new(options);
 
+    public async Task CreateLibraryAsync(string userId, string libraryName, CancellationToken cancellationToken)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT OR IGNORE INTO libraries (id, name, created_at)
+            VALUES ($id, $name, $createdAt);
+            """;
+        command.Parameters.AddWithValue("$id", userId);
+        command.Parameters.AddWithValue("$name", libraryName);
+        command.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task DeleteLibraryAsync(string userId, CancellationToken cancellationToken)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using (var deleteLibraryEntries = connection.CreateCommand())
+        {
+            deleteLibraryEntries.CommandText = "DELETE FROM library WHERE user_id = $userId;";
+            deleteLibraryEntries.Parameters.AddWithValue("$userId", userId);
+            await deleteLibraryEntries.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var deleteLibraryRow = connection.CreateCommand())
+        {
+            deleteLibraryRow.CommandText = "DELETE FROM libraries WHERE id = $id;";
+            deleteLibraryRow.Parameters.AddWithValue("$id", userId);
+            await deleteLibraryRow.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    public async Task NormalizeLegacyDefaultLibraryAsync(
+        string canonicalUserId,
+        CancellationToken cancellationToken)
+    {
+        _ = canonicalUserId;
+        _ = cancellationToken;
+        await Task.CompletedTask;
+    }
+
     public async Task UpsertAsync(LibraryEntry entry, CancellationToken cancellationToken)
     {
         await using var connection = _connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
+
+        await using (var createLibraryCommand = connection.CreateCommand())
+        {
+            createLibraryCommand.CommandText = """
+                INSERT OR IGNORE INTO libraries (id, name, created_at)
+                VALUES ($id, $name, $createdAt);
+                """;
+            createLibraryCommand.Parameters.AddWithValue("$id", entry.UserId);
+            createLibraryCommand.Parameters.AddWithValue("$name", entry.UserId);
+            createLibraryCommand.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
+            await createLibraryCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -70,6 +127,33 @@ public sealed class SqliteLibraryPort(StorageOptions options) : ILibraryPort
                 reader.GetString(2),
                 DateTimeOffset.Parse(reader.GetString(3)),
                 reader.GetString(4)));
+        }
+
+        return results;
+    }
+
+    public async Task<IReadOnlyList<string>> ListLibrariesAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = _connectionFactory.CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id FROM libraries
+            UNION
+            SELECT DISTINCT user_id FROM library
+            ORDER BY 1;
+            """;
+
+        var results = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var value = reader.GetString(0);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                results.Add(value);
+            }
         }
 
         return results;

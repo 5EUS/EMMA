@@ -17,7 +17,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         await using var connection = _connectionFactory.CreateConnection();
         await connection.OpenAsync(cancellationToken);
 
-        var tagsJson = JsonSerializer.Serialize(media.Tags ?? Array.Empty<string>());
+        var tagsJson = JsonSerializer.Serialize(media.Tags ?? Array.Empty<string>(), StorageJsonContext.Default.IReadOnlyListString);
 
         await using var command = connection.CreateCommand();
         command.CommandText = """
@@ -146,6 +146,8 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken) as SqliteTransaction
             ?? throw new InvalidOperationException("Failed to start SQLite transaction.");
 
+        await EnsureMediaRowExistsAsync(connection, transaction, mediaId, cancellationToken);
+
         await using (var deleteCommand = connection.CreateCommand())
         {
             deleteCommand.Transaction = transaction;
@@ -226,6 +228,8 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken) as SqliteTransaction
             ?? throw new InvalidOperationException("Failed to start SQLite transaction.");
+
+        await EnsureMediaRowExistsAsync(connection, transaction, mediaId, cancellationToken);
 
         await using (var deleteCommand = connection.CreateCommand())
         {
@@ -308,8 +312,8 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
     private static MediaMetadata ReadMedia(SqliteDataReader reader)
     {
         var tagsJson = reader.GetString(7);
-        var tags = JsonSerializer.Deserialize<IReadOnlyList<string>>(tagsJson)
-            ?? Array.Empty<string>();
+        var tags = JsonSerializer.Deserialize(tagsJson, StorageJsonContext.Default.IReadOnlyListString)
+                    ?? Array.Empty<string>();
 
         return new MediaMetadata(
             MediaId.Create(reader.GetString(0)),
@@ -354,5 +358,51 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         return string.Equals(value, "video", StringComparison.OrdinalIgnoreCase)
             ? MediaType.Video
             : MediaType.Paged;
+    }
+
+    private static async Task EnsureMediaRowExistsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MediaId mediaId,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow.ToString("O");
+
+        await using var ensureCommand = connection.CreateCommand();
+        ensureCommand.Transaction = transaction;
+        ensureCommand.CommandText = """
+            INSERT OR IGNORE INTO media (
+                id,
+                source_id,
+                title,
+                media_type,
+                rating,
+                synopsis,
+                language,
+                tags,
+                created_at,
+                updated_at
+            ) VALUES (
+                $id,
+                $sourceId,
+                $title,
+                $mediaType,
+                NULL,
+                NULL,
+                NULL,
+                $tags,
+                $createdAt,
+                $updatedAt
+            );
+            """;
+        ensureCommand.Parameters.AddWithValue("$id", mediaId.Value);
+        ensureCommand.Parameters.AddWithValue("$sourceId", "unknown");
+        ensureCommand.Parameters.AddWithValue("$title", mediaId.Value);
+        ensureCommand.Parameters.AddWithValue("$mediaType", "paged");
+        ensureCommand.Parameters.AddWithValue("$tags", "[]");
+        ensureCommand.Parameters.AddWithValue("$createdAt", now);
+        ensureCommand.Parameters.AddWithValue("$updatedAt", now);
+
+        await ensureCommand.ExecuteNonQueryAsync(cancellationToken);
     }
 }
