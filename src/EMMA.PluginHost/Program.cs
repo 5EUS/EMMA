@@ -35,6 +35,10 @@ builder.Services.AddSingleton<IPluginEntrypointResolver, PluginEntrypointResolve
 builder.Services.AddSingleton<PluginProcessManager>();
 builder.Services.AddSingleton<PluginEndpointAllocator>();
 builder.Services.AddSingleton<PluginResolutionService>();
+builder.Services.AddSingleton<PluginRepositoryStore>();
+builder.Services.AddSingleton<PluginRepositoryCatalogClient>();
+builder.Services.AddSingleton<PluginRepositoryService>();
+builder.Services.AddSingleton<PluginRepositoryInstallOrchestrator>();
 builder.Services.AddSingleton<IWasmComponentInvoker, NativeInProcessWasmComponentInvoker>();
 builder.Services.AddSingleton<IWasmPluginRuntimeHost, WasmPluginRuntimeHost>();
 builder.Services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();

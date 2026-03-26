@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EMMA.Domain;
 using EMMA.PluginHost.Plugins;
+using EMMA.PluginHost.Services;
 
 namespace EMMA.PluginHost.Library;
 
@@ -37,6 +38,14 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(HistoryEntryResponse))]
 [JsonSerializable(typeof(IReadOnlyList<HistoryEntryResponse>))]
 [JsonSerializable(typeof(List<HistoryEntryResponse>))]
+[JsonSerializable(typeof(PluginRepositoryRecord))]
+[JsonSerializable(typeof(IReadOnlyList<PluginRepositoryRecord>))]
+[JsonSerializable(typeof(List<PluginRepositoryRecord>))]
+[JsonSerializable(typeof(PluginRepositoryPluginView))]
+[JsonSerializable(typeof(IReadOnlyList<PluginRepositoryPluginView>))]
+[JsonSerializable(typeof(List<PluginRepositoryPluginView>))]
+[JsonSerializable(typeof(RepositoryPluginsResponse))]
+[JsonSerializable(typeof(PluginRepositoryInstallResult))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(List<string>))]
 public partial class PluginHostExportsJsonContext : JsonSerializerContext

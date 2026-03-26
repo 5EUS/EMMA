@@ -112,6 +112,10 @@ public static class PluginHostExports
                 services.AddSingleton<PluginPermissionSanitizer>();
                 services.AddSingleton<IPluginEntrypointResolver, PluginEntrypointResolver>();
                 services.AddSingleton<PluginResolutionService>();
+                services.AddSingleton<PluginRepositoryStore>();
+                services.AddSingleton<PluginRepositoryCatalogClient>();
+                services.AddSingleton<PluginRepositoryService>();
+                services.AddSingleton<PluginRepositoryInstallOrchestrator>();
                 services.AddSingleton<PluginEndpointAllocator>();
                 services.AddSingleton<PluginProcessManager>();
                 services.AddSingleton<IWasmComponentInvoker, NativeInProcessWasmComponentInvoker>();
@@ -391,6 +395,164 @@ public static class PluginHostExports
         {
             SetLastError(ex);
             return -1;
+        }
+    }
+
+    public static string? ListPluginRepositoriesJsonManaged()
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var repositoryService = _serviceProvider!.GetRequiredService<PluginRepositoryService>();
+            var repositories = repositoryService.ListRepositoriesAsync(CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return JsonSerializer.Serialize(
+                repositories,
+                PluginHostExportsJsonContext.Default.IReadOnlyListPluginRepositoryRecord);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static int AddPluginRepositoryManaged(
+        string catalogUrl,
+        string? repositoryId,
+        string? name,
+        string? sourceRepositoryUrl)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var repositoryService = _serviceProvider!.GetRequiredService<PluginRepositoryService>();
+            repositoryService.AddRepositoryAsync(
+                    new AddPluginRepositoryRequest(
+                        CatalogUrl: catalogUrl,
+                        RepositoryId: repositoryId,
+                        Name: name,
+                        SourceRepositoryUrl: sourceRepositoryUrl),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    public static int RemovePluginRepositoryManaged(string repositoryId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var repositoryService = _serviceProvider!.GetRequiredService<PluginRepositoryService>();
+            var removed = repositoryService.RemoveRepositoryAsync(repositoryId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            if (!removed)
+            {
+                SetLastError($"Repository '{repositoryId}' was not found.");
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    public static string? ListRepositoryPluginsJsonManaged(string repositoryId, bool refreshCatalog)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var repositoryService = _serviceProvider!.GetRequiredService<PluginRepositoryService>();
+            var result = repositoryService.GetRepositoryPluginsAsync(repositoryId, refreshCatalog, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return JsonSerializer.Serialize(result, PluginHostExportsJsonContext.Default.RepositoryPluginsResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? ListAllRepositoryPluginsJsonManaged(bool refreshCatalog)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var repositoryService = _serviceProvider!.GetRequiredService<PluginRepositoryService>();
+            var plugins = repositoryService.GetAllRepositoryPluginsAsync(refreshCatalog, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return JsonSerializer.Serialize(
+                plugins,
+                PluginHostExportsJsonContext.Default.IReadOnlyListPluginRepositoryPluginView);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? InstallFromRepositoryJsonManaged(
+        string repositoryId,
+        string pluginId,
+        string? version,
+        bool refreshCatalog,
+        bool rescanAfterInstall)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var orchestrator = _serviceProvider!.GetRequiredService<PluginRepositoryInstallOrchestrator>();
+            var result = orchestrator.InstallFromRepositoryAsync(
+                    new InstallPluginFromRepositoryRequest(
+                        RepositoryId: repositoryId,
+                        PluginId: pluginId,
+                        Version: version,
+                        RefreshCatalog: refreshCatalog,
+                        RescanAfterInstall: rescanAfterInstall),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return JsonSerializer.Serialize(result, PluginHostExportsJsonContext.Default.PluginRepositoryInstallResult);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
         }
     }
 

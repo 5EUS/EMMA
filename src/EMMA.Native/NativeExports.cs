@@ -423,6 +423,191 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_plugin_repositories_json")]
+    public static IntPtr RuntimeListPluginRepositoriesJson()
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ListPluginRepositoriesJsonManaged();
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list plugin repositories.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_plugin_repository")]
+    public static int RuntimeAddPluginRepository(
+        IntPtr catalogUrlUtf8,
+        IntPtr repositoryIdUtf8,
+        IntPtr nameUtf8,
+        IntPtr sourceRepositoryUrlUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsurePluginHostInitialized();
+
+            var catalogUrl = PtrToString(catalogUrlUtf8);
+            var repositoryId = PtrToString(repositoryIdUtf8);
+            var name = PtrToString(nameUtf8);
+            var sourceRepositoryUrl = PtrToString(sourceRepositoryUrlUtf8);
+
+            var result = PluginHostExports.AddPluginRepositoryManaged(
+                catalogUrl ?? string.Empty,
+                repositoryId,
+                name,
+                sourceRepositoryUrl);
+
+            if (result == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add plugin repository.";
+                SetLastError(error);
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_remove_plugin_repository")]
+    public static int RuntimeRemovePluginRepository(IntPtr repositoryIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsurePluginHostInitialized();
+
+            var repositoryId = PtrToString(repositoryIdUtf8) ?? string.Empty;
+            var result = PluginHostExports.RemovePluginRepositoryManaged(repositoryId);
+
+            if (result == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to remove plugin repository.";
+                SetLastError(error);
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_repository_plugins_json")]
+    public static IntPtr RuntimeListRepositoryPluginsJson(IntPtr repositoryIdUtf8, int refreshCatalog)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsurePluginHostInitialized();
+
+            var repositoryId = PtrToString(repositoryIdUtf8) ?? string.Empty;
+            var json = PluginHostExports.ListRepositoryPluginsJsonManaged(repositoryId, refreshCatalog == 1);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list repository plugins.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_all_repository_plugins_json")]
+    public static IntPtr RuntimeListAllRepositoryPluginsJson(int refreshCatalog)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsurePluginHostInitialized();
+
+            var json = PluginHostExports.ListAllRepositoryPluginsJsonManaged(refreshCatalog == 1);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list repository plugins.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_install_plugin_from_repository_json")]
+    public static IntPtr RuntimeInstallPluginFromRepositoryJson(
+        IntPtr repositoryIdUtf8,
+        IntPtr pluginIdUtf8,
+        IntPtr versionUtf8,
+        int refreshCatalog,
+        int rescanAfterInstall)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsurePluginHostInitialized();
+
+            var repositoryId = PtrToString(repositoryIdUtf8) ?? string.Empty;
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            var version = PtrToString(versionUtf8);
+
+            var json = PluginHostExports.InstallFromRepositoryJsonManaged(
+                repositoryId,
+                pluginId,
+                version,
+                refreshCatalog == 1,
+                rescanAfterInstall == 1);
+
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to install plugin from repository.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_configure_paths")]
     public static int RuntimeConfigurePaths(IntPtr manifestsDirUtf8, IntPtr pluginsDirUtf8)
     {

@@ -13,6 +13,7 @@ public enum NativeWasmLibraryMode
 public sealed class PluginHostOptions
 {
     public string ManifestDirectory { get; init; } = "manifests";
+    public string RepositoryDirectory { get; init; } = "repositories";
     public int HandshakeTimeoutSeconds { get; init; } = 5;
     public bool HandshakeOnStartup { get; init; } = true;
     public string SandboxRootDirectory { get; init; } = "sandbox";
@@ -35,4 +36,9 @@ public sealed class PluginHostOptions
     public int PluginIdleTimeoutSeconds { get; init; } = 120;
     public int PluginIdleSweepSeconds { get; init; } = 30;
     public int WasmOperationTimeoutSeconds { get; init; } = 15;
+    public int RepositoryRequestTimeoutSeconds { get; init; } = 30;
+    public int RepositoryMaxCatalogBytes { get; init; } = 2 * 1024 * 1024;
+    public int RepositoryMaxArtifactBytes { get; init; } = 512 * 1024 * 1024;
+    public bool AllowInsecureRepositoryHttp { get; init; } = false;
+    public string RepositoryHttpUserAgent { get; init; } = "EMMA.PluginHost/1.0";
 }
