@@ -80,6 +80,61 @@ public sealed class PluginRepositoryInstallOrchestratorTests
     }
 
     [Fact]
+    public async Task InstallFromRepositoryAsync_AllowsSignedManifestWhenSignaturesAreOptional()
+    {
+        var tempRoot = CreateTempRoot();
+        await using var server = BuildRepositoryServer();
+
+        try
+        {
+            await server.App.StartAsync();
+            var address = GetServerAddress(server.App);
+
+            const string repositoryId = "demo-repo";
+            const string pluginId = "demo.plugin";
+            const string version = "1.2.4";
+
+            var payloadBytes = Encoding.UTF8.GetBytes("wasm-payload");
+            var archiveBytes = CreatePluginArchive(
+                pluginId,
+                version,
+                payloadBytes,
+                signatureAlgorithm: "hmac-sha256",
+                signatureValue: "ZmFrZS1zaWduYXR1cmU=");
+            server.CatalogPayload =
+                BuildCatalogJson(repositoryId, pluginId, version, $"{address}/artifacts/plugin.zip", ComputeSha256Hex(archiveBytes));
+            server.ArtifactBytes = archiveBytes;
+
+            var harness = CreateHarness(tempRoot);
+            await harness.RepositoryService.AddRepositoryAsync(
+                new AddPluginRepositoryRequest(
+                    CatalogUrl: $"{address}/catalog.json",
+                    RepositoryId: repositoryId,
+                    Name: "Demo Repo"),
+                CancellationToken.None);
+
+            var result = await harness.Orchestrator.InstallFromRepositoryAsync(
+                new InstallPluginFromRepositoryRequest(
+                    RepositoryId: repositoryId,
+                    PluginId: pluginId,
+                    Version: version,
+                    RefreshCatalog: false,
+                    RescanAfterInstall: false),
+                CancellationToken.None);
+
+            Assert.True(result.Success);
+
+            var installedManifestPath = Path.Combine(harness.Options.Value.ManifestDirectory, $"{pluginId}.plugin.json");
+            Assert.True(File.Exists(installedManifestPath));
+        }
+        finally
+        {
+            await server.App.StopAsync();
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
     public async Task InstallFromRepositoryAsync_RejectsWhenArtifactHashMismatches()
     {
         var tempRoot = CreateTempRoot();
@@ -420,16 +475,32 @@ public sealed class PluginRepositoryInstallOrchestratorTests
         return JsonSerializer.Serialize(catalog, PluginRepositoryJsonContext.Default.PluginRepositoryCatalog);
     }
 
-    private static byte[] CreatePluginArchive(string pluginId, string version, byte[] payloadBytes)
+    private static byte[] CreatePluginArchive(
+        string pluginId,
+        string version,
+        byte[] payloadBytes,
+        string? signatureAlgorithm = null,
+        string? signatureValue = null)
     {
-        var manifestJson = JsonSerializer.Serialize(new
+        var manifest = new Dictionary<string, object?>
         {
-            id = pluginId,
-            name = "Demo Plugin",
-            version,
-            protocol = "grpc",
-            endpoint = "http://127.0.0.1:50099"
-        });
+            ["id"] = pluginId,
+            ["name"] = "Demo Plugin",
+            ["version"] = version,
+            ["protocol"] = "grpc",
+            ["endpoint"] = "http://127.0.0.1:50099"
+        };
+
+        if (!string.IsNullOrWhiteSpace(signatureAlgorithm) && !string.IsNullOrWhiteSpace(signatureValue))
+        {
+            manifest["signature"] = new
+            {
+                algorithm = signatureAlgorithm,
+                value = signatureValue
+            };
+        }
+
+        var manifestJson = JsonSerializer.Serialize(manifest);
 
         using var memory = new MemoryStream();
         using (var archive = new ZipArchive(memory, ZipArchiveMode.Create, leaveOpen: true))

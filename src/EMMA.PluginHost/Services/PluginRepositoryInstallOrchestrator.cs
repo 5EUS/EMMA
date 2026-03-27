@@ -330,14 +330,14 @@ public sealed class PluginRepositoryInstallOrchestrator(
 
     private void ValidateSignaturePolicy(PluginManifest manifest)
     {
+        if (!_signatureOptions.RequireSignedPlugins)
+        {
+            return;
+        }
+
         if (manifest.Signature is null)
         {
-            if (_signatureOptions.RequireSignedPlugins)
-            {
-                throw new InvalidDataException("Plugin manifest signature is required for installation.");
-            }
-
-            return;
+            throw new InvalidDataException("Plugin manifest signature is required for installation.");
         }
 
         if (!_signatureVerifier.Verify(manifest, out var reason))

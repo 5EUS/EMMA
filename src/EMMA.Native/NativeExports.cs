@@ -17,6 +17,11 @@ public static class NativeExports
 {
     private const string NativeConsoleLogLevelEnvVar = "EMMA_NATIVE_LOG_LEVEL";
     private const string NativeVerboseTimingEnvVar = "EMMA_NATIVE_VERBOSE_TIMING";
+    private const string RequireSignedPluginsEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS";
+    private const string PluginSignatureRequireSignedEnvVar = "PluginSignature__RequireSignedPlugins";
+    private const string RequireSignedPluginsFileEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS_FILE";
+    private const string RequireSignedPluginsManifestFileName = ".plugin-signature-require-signed";
+    private const string RequireSignedPluginsAppFileName = "plugin-signature-require-signed";
     private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
     private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
     private const string PluginSignatureHmacKeyFileEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_FILE";
@@ -630,18 +635,37 @@ public static class NativeExports
                 {
                     if (_pluginHostInitialized)
                     {
+                        var currentManifestDirectory = ResolveManifestDirectory() ?? string.Empty;
                         var pathsChanged = !SameConfiguredPath(previousConfiguration.ManifestsDirectory, _pluginPathConfiguration.ManifestsDirectory)
                             || !SameConfiguredPath(previousConfiguration.PluginsDirectory, _pluginPathConfiguration.PluginsDirectory);
+                        var signaturePolicyChanged = EnsureRequireSignedPluginsConfigured(currentManifestDirectory);
+                        var signatureKeyChanged = EnsurePluginSignatureKeyConfigured(currentManifestDirectory);
 
-                        if (pathsChanged)
+                        if (pathsChanged || signaturePolicyChanged || signatureKeyChanged)
                         {
                             ShutdownPluginHost();
                             EnsurePluginHostInitialized();
-                            LogInfo("plugin-host", "Plugin host reconfigured with updated manifests/plugins paths.");
+                            var reasons = new List<string>();
+                            if (pathsChanged)
+                            {
+                                reasons.Add("path change");
+                            }
+
+                            if (signaturePolicyChanged)
+                            {
+                                reasons.Add("signature policy change");
+                            }
+
+                            if (signatureKeyChanged)
+                            {
+                                reasons.Add("signature key change");
+                            }
+
+                            LogInfo("plugin-host", $"Plugin host reconfigured ({string.Join(", ", reasons)}).");
                         }
                         else
                         {
-                            LogDebug("plugin-host", "Configure paths called with unchanged values; skipping rescan.");
+                            LogDebug("plugin-host", "Configure paths called with no effective plugin-host changes; skipping rescan.");
                         }
                     }
                 }
@@ -2111,6 +2135,7 @@ public static class NativeExports
             var manifestDirectory = ResolveManifestDirectory() ?? string.Empty;
             var sandboxDirectory = ResolvePluginSandboxDirectory() ?? string.Empty;
 
+            EnsureRequireSignedPluginsConfigured(manifestDirectory);
             EnsurePluginSignatureKeyConfigured(manifestDirectory);
 
             var resultCode = PluginHostExports.InitializeManaged(manifestDirectory, sandboxDirectory);
@@ -2127,24 +2152,132 @@ public static class NativeExports
         }
     }
 
-    private static void EnsurePluginSignatureKeyConfigured(string? manifestDirectory)
+    private static bool EnsurePluginSignatureKeyConfigured(string? manifestDirectory)
     {
         var existingKey = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
             ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
-        if (!string.IsNullOrWhiteSpace(existingKey))
-        {
-            return;
-        }
 
         var resolvedKey = ResolvePluginSignatureKeyFromFiles(manifestDirectory);
         if (string.IsNullOrWhiteSpace(resolvedKey))
         {
-            return;
+            if (string.IsNullOrWhiteSpace(existingKey))
+            {
+                return false;
+            }
+
+            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, null);
+            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, null);
+            LogInfo("plugin-host", "Cleared plugin signature key because no key file is present.");
+            return true;
+        }
+
+        if (string.Equals(existingKey?.Trim(), resolvedKey, StringComparison.Ordinal))
+        {
+            return false;
         }
 
         Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, resolvedKey);
         Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, resolvedKey);
         LogInfo("plugin-host", "Loaded plugin signature key from configured key file.");
+        return true;
+    }
+
+    private static bool EnsureRequireSignedPluginsConfigured(string? manifestDirectory)
+    {
+        var existing = Environment.GetEnvironmentVariable(RequireSignedPluginsEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureRequireSignedEnvVar);
+
+        var resolved = ResolveRequireSignedPluginsFromFiles(manifestDirectory);
+        if (!resolved.HasValue)
+        {
+            return false;
+        }
+
+        var normalized = resolved.Value ? "true" : "false";
+        if (string.Equals(existing?.Trim(), normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        Environment.SetEnvironmentVariable(RequireSignedPluginsEnvVar, normalized);
+        Environment.SetEnvironmentVariable(PluginSignatureRequireSignedEnvVar, normalized);
+        LogInfo("plugin-host", $"Loaded require-signed-plugins policy from file: {normalized}.");
+        return true;
+    }
+
+    private static bool? ResolveRequireSignedPluginsFromFiles(string? manifestDirectory)
+    {
+        var candidatePaths = new List<string>();
+
+        var explicitPath = Environment.GetEnvironmentVariable(RequireSignedPluginsFileEnvVar);
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            candidatePaths.Add(explicitPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifestDirectory))
+        {
+            candidatePaths.Add(Path.Combine(manifestDirectory, RequireSignedPluginsManifestFileName));
+        }
+
+        var support = GetApplicationSupportDirectories().FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(support))
+        {
+            candidatePaths.Add(Path.Combine(support, "emmaui", RequireSignedPluginsAppFileName));
+        }
+
+        foreach (var path in candidatePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var value = File.ReadAllText(path).Trim();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                if (TryParseBooleanLike(value, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryParseBooleanLike(string value, out bool parsed)
+    {
+        if (bool.TryParse(value, out parsed))
+        {
+            return true;
+        }
+
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "1":
+            case "yes":
+            case "on":
+                parsed = true;
+                return true;
+            case "0":
+            case "no":
+            case "off":
+                parsed = false;
+                return true;
+            default:
+                parsed = false;
+                return false;
+        }
     }
 
     private static string? ResolvePluginSignatureKeyFromFiles(string? manifestDirectory)
