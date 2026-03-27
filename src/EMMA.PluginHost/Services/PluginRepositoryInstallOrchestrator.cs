@@ -441,12 +441,42 @@ public sealed class PluginRepositoryInstallOrchestrator(
         if (names.Any(name =>
                 name.Contains("/linux/", StringComparison.Ordinal)
                 || name.EndsWith(".so", StringComparison.Ordinal)
-                || name.EndsWith("/createdump", StringComparison.Ordinal)))
+            || name.EndsWith("/createdump", StringComparison.Ordinal)
+            || IsLikelyLinuxNativeExecutablePath(name)))
         {
             return "native-linux-bundle";
         }
 
         return "unknown";
+    }
+
+    private static bool IsLikelyLinuxNativeExecutablePath(string normalizedPath)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedPath)
+            || normalizedPath.EndsWith("/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var fileName = Path.GetFileName(normalizedPath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        if (fileName.Contains('.', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (string.Equals(fileName, "readme", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fileName, "license", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fileName, "notice", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static void ApplyUnixPermissions(ZipArchiveEntry entry, string destinationPath)
