@@ -48,6 +48,13 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(PluginRepositoryInstallResult))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(LibraryMediaRefreshFailure))]
+[JsonSerializable(typeof(IReadOnlyList<LibraryMediaRefreshFailure>))]
+[JsonSerializable(typeof(List<LibraryMediaRefreshFailure>))]
+[JsonSerializable(typeof(LibraryMediaDiscoveredUpdate))]
+[JsonSerializable(typeof(IReadOnlyList<LibraryMediaDiscoveredUpdate>))]
+[JsonSerializable(typeof(List<LibraryMediaDiscoveredUpdate>))]
+[JsonSerializable(typeof(LibraryMediaRefreshResponse))]
 public partial class PluginHostExportsJsonContext : JsonSerializerContext
 {
 }

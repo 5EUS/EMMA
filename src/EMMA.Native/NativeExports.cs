@@ -411,6 +411,39 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_refresh_library_media_json")]
+    public static IntPtr RuntimeRefreshLibraryMediaJson(int handle, IntPtr libraryNameUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.RefreshLibraryMediaJsonManaged(libraryName);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to refresh library media.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_plugins_json")]
     public static IntPtr RuntimeListPluginsJson()
     {

@@ -879,95 +879,10 @@ public static class PluginHostExports
 
         try
         {
-            if (string.IsNullOrWhiteSpace(mediaId))
-            {
-                SetLastError("Media ID is required");
-                return null;
-            }
-
-            EnsureInitialized();
-            var catalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
-            var mediaKey = MediaId.Create(mediaId);
-            var cachedRecords = catalog.GetChaptersAsync(mediaKey, CancellationToken.None)
-                .GetAwaiter()
-                .GetResult();
-
-            if (cachedRecords.Count > 0)
-            {
-                var cachedChapters = cachedRecords
-                    .Select(chapter => new MediaChapter(
-                        chapter.ChapterId,
-                        chapter.Number,
-                        chapter.Title))
-                    .ToList();
-                return JsonSerializer.Serialize(cachedChapters, PluginHostExportsJsonContext.Default.IReadOnlyListMediaChapter);
-            }
-
-            if (!TryResolvePlugin(pluginId, out var record, out var address))
+            var chapters = GetChaptersManagedInternal(pluginId, mediaId, forceRefresh: false);
+            if (chapters is null)
             {
                 return null;
-            }
-
-            IReadOnlyList<MediaChapter> chapters;
-            if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
-            {
-                chapters = _wasmRuntime.GetChaptersAsync(record, MediaId.Create(mediaId), CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            else
-            {
-                if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
-                {
-                    SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
-                    return null;
-                }
-
-                if (address is null)
-                {
-                    SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
-                    return null;
-                }
-
-                var channel = GetOrCreateChannel(address);
-                var client = new PluginContracts.PageProvider.PageProviderClient(channel);
-                var correlationId = Guid.NewGuid().ToString("n");
-                var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
-                var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
-                var response = client.GetChaptersAsync(new PluginContracts.ChaptersRequest
-                {
-                    MediaId = mediaId,
-                    Context = new PluginContracts.RequestContext
-                    {
-                        CorrelationId = correlationId,
-                        DeadlineUtc = deadlineUtc.ToString("O")
-                    }
-                }, headers: headers, cancellationToken: CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
-
-                chapters = response.Chapters
-                    .Select(chapter => new MediaChapter(
-                        chapter.Id ?? string.Empty,
-                        chapter.Number,
-                        chapter.Title ?? string.Empty))
-                    .ToList();
-            }
-
-            if (chapters.Count > 0)
-            {
-                var chapterRecords = chapters
-                    .Select(chapter => new MediaChapterRecord(
-                        chapter.ChapterId,
-                        mediaKey,
-                        chapter.Number,
-                        chapter.Title,
-                        null))
-                    .ToList();
-
-                catalog.UpsertChaptersAsync(mediaKey, chapterRecords, CancellationToken.None)
-                    .GetAwaiter()
-                    .GetResult();
             }
 
             return JsonSerializer.Serialize(chapters, PluginHostExportsJsonContext.Default.IReadOnlyListMediaChapter);
@@ -977,6 +892,105 @@ public static class PluginHostExports
             SetLastError(ex);
             return null;
         }
+    }
+
+    private static IReadOnlyList<MediaChapter>? GetChaptersManagedInternal(
+        string pluginId,
+        string mediaId,
+        bool forceRefresh)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId))
+        {
+            SetLastError("Media ID is required");
+            return null;
+        }
+
+        EnsureInitialized();
+        var catalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
+        var mediaKey = MediaId.Create(mediaId);
+
+        if (!forceRefresh)
+        {
+            var cachedRecords = catalog.GetChaptersAsync(mediaKey, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            if (cachedRecords.Count > 0)
+            {
+                return cachedRecords
+                    .Select(chapter => new MediaChapter(
+                        chapter.ChapterId,
+                        chapter.Number,
+                        chapter.Title))
+                    .ToList();
+            }
+        }
+
+        if (!TryResolvePlugin(pluginId, out var record, out var address))
+        {
+            return null;
+        }
+
+        IReadOnlyList<MediaChapter> chapters;
+        if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+        {
+            chapters = _wasmRuntime.GetChaptersAsync(record, MediaId.Create(mediaId), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+        else
+        {
+            if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+                return null;
+            }
+
+            if (address is null)
+            {
+                SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+                return null;
+            }
+
+            var channel = GetOrCreateChannel(address);
+            var client = new PluginContracts.PageProvider.PageProviderClient(channel);
+            var correlationId = Guid.NewGuid().ToString("n");
+            var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
+            var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+            var response = client.GetChaptersAsync(new PluginContracts.ChaptersRequest
+            {
+                MediaId = mediaId,
+                Context = new PluginContracts.RequestContext
+                {
+                    CorrelationId = correlationId,
+                    DeadlineUtc = deadlineUtc.ToString("O")
+                }
+            }, headers: headers, cancellationToken: CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            chapters = response.Chapters
+                .Select(chapter => new MediaChapter(
+                    chapter.Id ?? string.Empty,
+                    chapter.Number,
+                    chapter.Title ?? string.Empty))
+                .ToList();
+        }
+
+        var chapterRecords = chapters
+            .Select(chapter => new MediaChapterRecord(
+                chapter.ChapterId,
+                mediaKey,
+                chapter.Number,
+                chapter.Title,
+                null))
+            .ToList();
+
+        catalog.UpsertChaptersAsync(mediaKey, chapterRecords, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        return chapters;
     }
 
     public static string? GetPageJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
@@ -1170,6 +1184,138 @@ public static class PluginHostExports
             }
 
             return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? RefreshLibraryMediaJsonManaged(string libraryName = "Library")
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            var normalizedLibraryName = NormalizeLibraryDisplayName(libraryName);
+            var normalizedUserId = ToLibraryStorageKey(normalizedLibraryName);
+
+            var library = _serviceProvider!.GetRequiredService<ILibraryPort>();
+            var catalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
+            var entries = library.GetLibraryAsync(normalizedUserId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var failures = new List<LibraryMediaRefreshFailure>();
+            var updates = new List<LibraryMediaDiscoveredUpdate>();
+            var refreshedItems = 0;
+            var refreshedPagedItems = 0;
+            var refreshedChapters = 0;
+            var skippedItems = 0;
+
+            foreach (var entry in entries)
+            {
+                var mediaId = entry.MediaId.Value;
+                var metadata = catalog.GetMediaAsync(entry.MediaId, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                var sourceId = !string.IsNullOrWhiteSpace(metadata?.SourceId)
+                    ? metadata!.SourceId
+                    : entry.SourceId;
+
+                if (string.IsNullOrWhiteSpace(sourceId))
+                {
+                    failures.Add(new LibraryMediaRefreshFailure(mediaId, null, "Missing source/plugin ID."));
+                    continue;
+                }
+
+                var mediaType = metadata?.MediaType ?? MediaType.Paged;
+                var refreshFailed = false;
+                if (mediaType == MediaType.Paged)
+                {
+                    var knownChapterIds = catalog.GetChaptersAsync(entry.MediaId, CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult()
+                        .Select(chapter => chapter.ChapterId)
+                        .Where(chapterId => !string.IsNullOrWhiteSpace(chapterId))
+                        .ToHashSet(StringComparer.Ordinal);
+
+                    var chapters = GetChaptersManagedInternal(sourceId, mediaId, forceRefresh: true);
+                    if (chapters is null)
+                    {
+                        var reason = GetLastErrorManaged() ?? "Failed to refresh chapters.";
+                        failures.Add(new LibraryMediaRefreshFailure(mediaId, sourceId, reason));
+                        refreshFailed = true;
+                    }
+                    else
+                    {
+                        refreshedPagedItems++;
+                        refreshedChapters += chapters.Count;
+
+                        var newItemsCount = chapters.Count(chapter => !knownChapterIds.Contains(chapter.ChapterId));
+                        if (newItemsCount > 0)
+                        {
+                            var mediaTypeText = mediaType == MediaType.Video ? "video" : "paged";
+                            var title = !string.IsNullOrWhiteSpace(metadata?.Title)
+                                ? metadata!.Title
+                                : mediaId;
+                            updates.Add(new LibraryMediaDiscoveredUpdate(
+                                mediaId,
+                                sourceId,
+                                title,
+                                mediaTypeText,
+                                newItemsCount));
+                        }
+                    }
+                }
+                else
+                {
+                    skippedItems++;
+                }
+
+                if (refreshFailed)
+                {
+                    continue;
+                }
+
+                var now = DateTimeOffset.UtcNow;
+                var metadataToPersist = metadata is null
+                    ? new MediaMetadata(
+                        entry.MediaId,
+                        sourceId,
+                        mediaId,
+                        mediaType,
+                        null,
+                        null,
+                        null,
+                        [],
+                        now,
+                        now)
+                    : metadata with { UpdatedAtUtc = now };
+
+                catalog.UpsertMediaAsync(metadataToPersist, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                refreshedItems++;
+            }
+
+            var response = new LibraryMediaRefreshResponse(
+                normalizedLibraryName,
+                entries.Count,
+                refreshedItems,
+                refreshedPagedItems,
+                refreshedChapters,
+                skippedItems,
+                failures.Count,
+                failures,
+                updates);
+
+            return JsonSerializer.Serialize(response, PluginHostExportsJsonContext.Default.LibraryMediaRefreshResponse);
         }
         catch (Exception ex)
         {
