@@ -4,6 +4,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::{CStr, CString};
+use std::fs;
 use std::os::raw::c_char;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -160,10 +161,24 @@ fn resolve_runtime_target() -> Option<String> {
     }
 }
 
-fn load_component(engine: &Engine, component_path: &str) -> Result<Arc<Component>> {
-    let component_path_abs = std::fs::canonicalize(component_path)
-        .unwrap_or_else(|_| Path::new(component_path).to_path_buf());
-    let cache_key = component_path_abs.to_string_lossy().to_string();
+fn build_component_cache_key(component_path_abs: &Path) -> String {
+    let base = component_path_abs.to_string_lossy().to_string();
+    match fs::metadata(component_path_abs) {
+        Ok(metadata) => {
+            let len = metadata.len();
+            let modified_ns = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0);
+            format!("{base}|len={len}|mtime_ns={modified_ns}")
+        }
+        Err(_) => base,
+    }
+}
+
+fn load_component(engine: &Engine, component_path_abs: &Path, cache_key: &str) -> Result<Arc<Component>> {
 
     let cache = COMPONENT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
 
@@ -171,7 +186,7 @@ fn load_component(engine: &Engine, component_path: &str) -> Result<Arc<Component
         let guard = cache
             .lock()
             .map_err(|_| anyhow!("component cache lock poisoned"))?;
-        if let Some(existing) = guard.get(&cache_key) {
+        if let Some(existing) = guard.get(cache_key) {
             return Ok(existing.clone());
         }
     }
@@ -196,7 +211,7 @@ fn load_component(engine: &Engine, component_path: &str) -> Result<Arc<Component
         .lock()
         .map_err(|_| anyhow!("component cache lock poisoned"))?;
     let entry = guard
-        .entry(cache_key)
+        .entry(cache_key.to_string())
         .or_insert_with(|| component.clone())
         .clone();
 
@@ -217,7 +232,7 @@ fn get_or_create_worker(component_path: &str) -> Result<(String, Arc<WorkerHandl
     let engine = get_engine()?;
     let component_path_abs = std::fs::canonicalize(component_path)
         .unwrap_or_else(|_| Path::new(component_path).to_path_buf());
-    let cache_key = component_path_abs.to_string_lossy().to_string();
+    let cache_key = build_component_cache_key(&component_path_abs);
 
     if let Some(existing) = WORKER_CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))
@@ -228,7 +243,7 @@ fn get_or_create_worker(component_path: &str) -> Result<(String, Arc<WorkerHandl
         return Ok((cache_key, existing));
     }
 
-    let component = load_component(engine, component_path)?;
+    let component = load_component(engine, &component_path_abs, &cache_key)?;
     let mut linker = create_linker(engine)?;
     typed_bindings::Library::add_to_linker::<
         RunnerState,
@@ -272,6 +287,15 @@ fn get_or_create_worker(component_path: &str) -> Result<(String, Arc<WorkerHandl
 
 fn invalidate_worker(cache_key: &str) {
     if let Ok(mut guard) = WORKER_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        guard.remove(cache_key);
+    }
+}
+
+fn invalidate_component(cache_key: &str) {
+    if let Ok(mut guard) = COMPONENT_CACHE
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
     {
@@ -885,6 +909,7 @@ pub extern "C" fn emma_wasm_plugin_close(handle: u64) {
 
     if let Some(key) = cache_key {
         invalidate_worker(&key);
+        invalidate_component(&key);
     }
 }
 

@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -198,6 +199,168 @@ public sealed class PluginRepositoryInstallOrchestratorTests
         }
     }
 
+    [Fact]
+    public async Task InstallFromRepositoryAsync_AllowsWasmTaggedReleasePlatforms()
+    {
+        var tempRoot = CreateTempRoot();
+        await using var server = BuildRepositoryServer();
+
+        try
+        {
+            await server.App.StartAsync();
+            var address = GetServerAddress(server.App);
+
+            const string repositoryId = "demo-repo";
+            const string pluginId = "demo.plugin";
+            const string version = "4.0.0-wasm";
+            const string manifestVersion = "4.0.0";
+
+            var payloadBytes = Encoding.UTF8.GetBytes("wasm-payload");
+            var archiveBytes = CreatePluginArchive(pluginId, manifestVersion, payloadBytes);
+            server.CatalogPayload = BuildCatalogJson(
+                repositoryId,
+                pluginId,
+                version,
+                $"{address}/artifacts/plugin.zip",
+                ComputeSha256Hex(archiveBytes),
+                ["wasm"]);
+            server.ArtifactBytes = archiveBytes;
+
+            var harness = CreateHarness(tempRoot);
+            await harness.RepositoryService.AddRepositoryAsync(
+                new AddPluginRepositoryRequest(
+                    CatalogUrl: $"{address}/catalog.json",
+                    RepositoryId: repositoryId,
+                    Name: "Demo Repo"),
+                CancellationToken.None);
+
+            var result = await harness.Orchestrator.InstallFromRepositoryAsync(
+                new InstallPluginFromRepositoryRequest(
+                    RepositoryId: repositoryId,
+                    PluginId: pluginId,
+                    Version: version,
+                    RefreshCatalog: false,
+                    RescanAfterInstall: false),
+                CancellationToken.None);
+
+            Assert.True(result.Success);
+            Assert.Equal(manifestVersion, result.Version);
+            Assert.Equal("wasm", result.PayloadType);
+        }
+        finally
+        {
+            await server.App.StopAsync();
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task InstallFromRepositoryAsync_RejectsReleaseAliasWhenSuffixIsNotPlatform()
+    {
+        var tempRoot = CreateTempRoot();
+        await using var server = BuildRepositoryServer();
+
+        try
+        {
+            await server.App.StartAsync();
+            var address = GetServerAddress(server.App);
+
+            const string repositoryId = "demo-repo";
+            const string pluginId = "demo.plugin";
+            const string releaseVersion = "4.1.0-experimental";
+            const string manifestVersion = "4.1.0";
+
+            var payloadBytes = Encoding.UTF8.GetBytes("wasm-payload");
+            var archiveBytes = CreatePluginArchive(pluginId, manifestVersion, payloadBytes);
+            server.CatalogPayload = BuildCatalogJson(
+                repositoryId,
+                pluginId,
+                releaseVersion,
+                $"{address}/artifacts/plugin.zip",
+                ComputeSha256Hex(archiveBytes),
+                ["wasm"]);
+            server.ArtifactBytes = archiveBytes;
+
+            var harness = CreateHarness(tempRoot);
+            await harness.RepositoryService.AddRepositoryAsync(
+                new AddPluginRepositoryRequest(
+                    CatalogUrl: $"{address}/catalog.json",
+                    RepositoryId: repositoryId,
+                    Name: "Demo Repo"),
+                CancellationToken.None);
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                harness.Orchestrator.InstallFromRepositoryAsync(
+                    new InstallPluginFromRepositoryRequest(
+                        RepositoryId: repositoryId,
+                        PluginId: pluginId,
+                        Version: releaseVersion,
+                        RefreshCatalog: false,
+                        RescanAfterInstall: false),
+                    CancellationToken.None));
+
+            Assert.Contains("Plugin version mismatch", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await server.App.StopAsync();
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    [Fact]
+    public async Task InstallFromRepositoryAsync_RejectsMismatchedOsPlatformTag()
+    {
+        var tempRoot = CreateTempRoot();
+        await using var server = BuildRepositoryServer();
+
+        try
+        {
+            await server.App.StartAsync();
+            var address = GetServerAddress(server.App);
+
+            const string repositoryId = "demo-repo";
+            const string pluginId = "demo.plugin";
+            const string version = "5.0.0";
+
+            var payloadBytes = Encoding.UTF8.GetBytes("wasm-payload");
+            var archiveBytes = CreatePluginArchive(pluginId, version, payloadBytes);
+            server.CatalogPayload = BuildCatalogJson(
+                repositoryId,
+                pluginId,
+                version,
+                $"{address}/artifacts/plugin.zip",
+                ComputeSha256Hex(archiveBytes),
+                [GetMismatchedPlatformTag()]);
+            server.ArtifactBytes = archiveBytes;
+
+            var harness = CreateHarness(tempRoot);
+            await harness.RepositoryService.AddRepositoryAsync(
+                new AddPluginRepositoryRequest(
+                    CatalogUrl: $"{address}/catalog.json",
+                    RepositoryId: repositoryId,
+                    Name: "Demo Repo"),
+                CancellationToken.None);
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+                harness.Orchestrator.InstallFromRepositoryAsync(
+                    new InstallPluginFromRepositoryRequest(
+                        RepositoryId: repositoryId,
+                        PluginId: pluginId,
+                        Version: version,
+                        RefreshCatalog: false,
+                        RescanAfterInstall: false),
+                    CancellationToken.None));
+
+            Assert.Contains("does not target platform", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await server.App.StopAsync();
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
     private static string CreateTempRoot()
     {
         var path = Path.Combine(Path.GetTempPath(), "emma-plugin-install-tests", Guid.NewGuid().ToString("N"));
@@ -227,7 +390,8 @@ public sealed class PluginRepositoryInstallOrchestratorTests
         string pluginId,
         string version,
         string assetUrl,
-        string sha256)
+        string sha256,
+        IReadOnlyList<string>? platforms = null)
     {
         var catalog = new PluginRepositoryCatalog(
             RepositoryId: repositoryId,
@@ -246,7 +410,7 @@ public sealed class PluginRepositoryInstallOrchestratorTests
                             Version: version,
                             AssetUrl: assetUrl,
                             Sha256: sha256,
-                            Platforms: null,
+                            Platforms: platforms,
                             PublishedAtUtc: null,
                             IsPrerelease: false,
                             Notes: null)
@@ -271,7 +435,7 @@ public sealed class PluginRepositoryInstallOrchestratorTests
         using (var archive = new ZipArchive(memory, ZipArchiveMode.Create, leaveOpen: true))
         {
             var manifestEntry = archive.CreateEntry($"manifest/{pluginId}.json", CompressionLevel.NoCompression);
-            using (var writer = new StreamWriter(manifestEntry.Open(), Encoding.UTF8))
+            using (var writer = new StreamWriter(manifestEntry.Open(), new UTF8Encoding(false)))
             {
                 writer.Write(manifestJson);
             }
@@ -288,6 +452,26 @@ public sealed class PluginRepositoryInstallOrchestratorTests
     {
         var hash = SHA256.HashData(bytes);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string GetMismatchedPlatformTag()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return "linux";
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return "windows";
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return "linux";
+        }
+
+        return "windows";
     }
 
     private static string GetServerAddress(IApplicationBuilder app)
