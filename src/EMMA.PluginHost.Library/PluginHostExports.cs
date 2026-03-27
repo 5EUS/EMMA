@@ -1099,6 +1099,50 @@ public static class PluginHostExports
         }
     }
 
+    public static string? GetVideoStreamsJsonManaged(string pluginId, string mediaId)
+    {
+        ClearLastError();
+
+        try
+        {
+            var streams = GetVideoStreamsManagedInternal(pluginId, mediaId);
+            if (streams is null)
+            {
+                return null;
+            }
+
+            return JsonSerializer.Serialize(
+                new VideoStreamsResponse(streams),
+                PluginHostExportsJsonContext.Default.VideoStreamsResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? GetVideoSegmentJsonManaged(string pluginId, string mediaId, string streamId, int sequence)
+    {
+        ClearLastError();
+
+        try
+        {
+            var segment = GetVideoSegmentManagedInternal(pluginId, mediaId, streamId, sequence);
+            if (segment is null)
+            {
+                return null;
+            }
+
+            return JsonSerializer.Serialize(segment, PluginHostExportsJsonContext.Default.VideoSegmentAssetResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
     /// <summary>
     /// Get the last error message, or null if no error.
     /// </summary>
@@ -2191,6 +2235,168 @@ public static class PluginHostExports
         }
 
         return new MediaPagesResult(pages, response.ReachedEnd);
+    }
+
+    private static IReadOnlyList<VideoStreamResponse>? GetVideoStreamsManagedInternal(string pluginId, string mediaId)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId))
+        {
+            SetLastError("Media ID is required");
+            return null;
+        }
+
+        if (!TryResolvePlugin(pluginId, out var record, out var address))
+        {
+            return null;
+        }
+
+        if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+        {
+            var wasmStreams = _wasmRuntime.GetVideoStreamsAsync(record, MediaId.Create(mediaId), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return wasmStreams
+                .Select(stream => new VideoStreamResponse(
+                    stream.Id ?? string.Empty,
+                    stream.Label ?? string.Empty,
+                    stream.PlaylistUri ?? string.Empty))
+                .ToList();
+        }
+
+        if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        {
+            SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+            return null;
+        }
+
+        if (address is null)
+        {
+            SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+            return null;
+        }
+
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
+        var correlationId = Guid.NewGuid().ToString("n");
+        var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+
+        var response = client.GetStreamsAsync(new PluginContracts.StreamRequest
+        {
+            MediaId = mediaId,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        }, headers: headers, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        return response.Streams
+            .Select(stream => new VideoStreamResponse(
+                stream.Id ?? string.Empty,
+                stream.Label ?? string.Empty,
+                stream.PlaylistUri ?? string.Empty))
+            .ToList();
+    }
+
+    private static VideoSegmentAssetResponse? GetVideoSegmentManagedInternal(string pluginId, string mediaId, string streamId, int sequence)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(streamId))
+        {
+            SetLastError("Media ID and stream ID are required");
+            return null;
+        }
+
+        if (sequence < 0)
+        {
+            SetLastError("sequence must be >= 0");
+            return null;
+        }
+
+        if (!TryResolvePlugin(pluginId, out var record, out var address))
+        {
+            return null;
+        }
+
+        if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+        {
+            var wasmSegment = _wasmRuntime.GetVideoSegmentAsync(
+                    record,
+                    MediaId.Create(mediaId),
+                    streamId,
+                    sequence,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            if (wasmSegment is null)
+            {
+                SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
+                return null;
+            }
+
+            if (wasmSegment.Payload.Length == 0 && string.IsNullOrWhiteSpace(wasmSegment.ContentType))
+            {
+                SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
+                return null;
+            }
+
+            return new VideoSegmentAssetResponse(
+                string.IsNullOrWhiteSpace(wasmSegment.ContentType)
+                    ? "application/octet-stream"
+                    : wasmSegment.ContentType,
+                wasmSegment.Payload,
+                DateTimeOffset.UtcNow.ToString("O"));
+        }
+
+        if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        {
+            SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+            return null;
+        }
+
+        if (address is null)
+        {
+            SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+            return null;
+        }
+
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
+        var correlationId = Guid.NewGuid().ToString("n");
+        var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+
+        var response = client.GetSegmentAsync(new PluginContracts.SegmentRequest
+        {
+            MediaId = mediaId,
+            StreamId = streamId,
+            Sequence = sequence,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        }, headers: headers, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        var payload = response.Payload.ToByteArray();
+        if (payload.Length == 0 && string.IsNullOrWhiteSpace(response.ContentType))
+        {
+            SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
+            return null;
+        }
+
+        return new VideoSegmentAssetResponse(
+            string.IsNullOrWhiteSpace(response.ContentType)
+                ? "application/octet-stream"
+                : response.ContentType,
+            payload,
+            DateTimeOffset.UtcNow.ToString("O"));
     }
 
     private static string BuildPageCacheKey(string pluginId, string mediaId, string chapterId, int pageIndex)

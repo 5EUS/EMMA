@@ -32,6 +32,7 @@
 
     <Compile Remove="..\EMMA.PluginHost\Services\PluginHostEndpoints.cs" />
     <Compile Remove="..\EMMA.PluginHost\Services\PagedPipelineEndpoints.cs" />
+    <Compile Remove="..\EMMA.PluginHost\Services\VideoPipelineEndpoints.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -23,6 +23,11 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(IReadOnlyList<WasmPageItem>))]
 [JsonSerializable(typeof(List<WasmPageItem>))]
 [JsonSerializable(typeof(WasmOperationResult))]
+[JsonSerializable(typeof(WasmVideoStreamItem))]
+[JsonSerializable(typeof(IReadOnlyList<WasmVideoStreamItem>))]
+[JsonSerializable(typeof(List<WasmVideoStreamItem>))]
+[JsonSerializable(typeof(WasmVideoSegmentWire))]
+[JsonSerializable(typeof(WasmVideoSegmentArgs))]
 [JsonSerializable(typeof(WasmCapabilityItem))]
 [JsonSerializable(typeof(IReadOnlyList<WasmCapabilityItem>))]
 [JsonSerializable(typeof(List<WasmCapabilityItem>))]
@@ -64,6 +69,14 @@ public sealed record WasmPageItem(string Id, int Index, string ContentUri);
 /// Generic operation result returned from invoke envelope.
 /// </summary>
 public sealed record WasmOperationResult(bool IsError, string? Error, string? ContentType, string? PayloadJson);
+
+public sealed record WasmVideoStreamItem(string Id, string Label, string PlaylistUri);
+
+public sealed record WasmVideoSegmentWire(
+	[property: JsonPropertyName("contentType")] string ContentType,
+	[property: JsonPropertyName("payload")] string PayloadBase64);
+
+public sealed record WasmVideoSegmentResult(string ContentType, byte[] Payload);
 
 /// <summary>
 /// Structured capability item returned by typed WASM components.
@@ -114,3 +127,7 @@ public sealed record WasmPagesArgs(
 	[property: JsonPropertyName("chapterId")] string ChapterId,
 	[property: JsonPropertyName("startIndex")] int StartIndex,
 	[property: JsonPropertyName("count")] int Count);
+
+public sealed record WasmVideoSegmentArgs(
+	[property: JsonPropertyName("streamId")] string StreamId,
+	[property: JsonPropertyName("sequence")] int Sequence);

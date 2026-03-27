@@ -35,6 +35,7 @@ public static class NativeExports
     private sealed record PluginSummary(
         string Id,
         string Title,
+        string Version,
         string BuildType,
         double? ThumbnailAspectRatio = null,
         string? ThumbnailFit = null,
@@ -1230,6 +1231,137 @@ public static class NativeExports
                 "get-page-asset",
                 stopwatch.ElapsedMilliseconds,
                 $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, chapterId={chapterIdForLog}, pageIndex={pageIndex}, success={success}");
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_video_streams_json")]
+    public static IntPtr RuntimeGetVideoStreamsJson(int handle, IntPtr mediaIdUtf8)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string mediaIdForLog = "<unset>";
+        string pluginIdForLog = "<none>";
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            mediaIdForLog = mediaIdValue ?? "<null>";
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            var json = PluginHostExports.GetVideoStreamsJsonManaged(activePluginId, mediaIdValue);
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host video streams call returned null";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            success = true;
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "get-video-streams",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, success={success}");
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_video_segment_json")]
+    public static IntPtr RuntimeGetVideoSegmentJson(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr streamIdUtf8,
+        int sequence)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string mediaIdForLog = "<unset>";
+        string streamIdForLog = "<unset>";
+        string pluginIdForLog = "<none>";
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            var streamId = PtrToString(streamIdUtf8);
+            mediaIdForLog = mediaIdValue ?? "<null>";
+            streamIdForLog = streamId ?? "<null>";
+            if (string.IsNullOrWhiteSpace(mediaIdValue) || string.IsNullOrWhiteSpace(streamId))
+            {
+                SetLastError("mediaId and streamId are required.");
+                return IntPtr.Zero;
+            }
+
+            if (sequence < 0)
+            {
+                SetLastError("sequence must be >= 0.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            var json = PluginHostExports.GetVideoSegmentJsonManaged(activePluginId, mediaIdValue, streamId, sequence);
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host video segment call returned null";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            success = true;
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "get-video-segment",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, streamId={streamIdForLog}, sequence={sequence}, success={success}");
         }
     }
 
@@ -2541,6 +2673,8 @@ public static class NativeExports
             sb.Append(',');
             AppendJsonProperty(sb, "title", plugin.Title);
             sb.Append(',');
+            AppendJsonProperty(sb, "version", plugin.Version);
+            sb.Append(',');
             AppendJsonProperty(sb, "buildType", plugin.BuildType);
             if (plugin.ThumbnailAspectRatio is { } aspectRatio && aspectRatio > 0)
             {
@@ -2639,7 +2773,7 @@ public static class NativeExports
                     continue;
                 }
 
-                byId[id] = new PluginSummary(id, id, ResolvePluginBuildType(id));
+                byId[id] = new PluginSummary(id, id, string.Empty, ResolvePluginBuildType(id));
             }
         }
 
@@ -2665,6 +2799,7 @@ public static class NativeExports
             var title = GetStringProperty(root, "name")
                         ?? GetStringProperty(root, "title")
                         ?? id;
+            var version = GetStringProperty(root, "version") ?? string.Empty;
 
             double? thumbnailAspectRatio = null;
             string? thumbnailFit = null;
@@ -2695,7 +2830,16 @@ public static class NativeExports
                 searchExperienceJson = searchExperience.GetRawText();
             }
 
-            return new PluginSummary(id, title, "csharp", thumbnailAspectRatio, thumbnailFit, thumbnailWidth, thumbnailHeight, searchExperienceJson);
+            return new PluginSummary(
+                id,
+                title,
+                version,
+                "csharp",
+                thumbnailAspectRatio,
+                thumbnailFit,
+                thumbnailWidth,
+                thumbnailHeight,
+                searchExperienceJson);
         }
         catch
         {

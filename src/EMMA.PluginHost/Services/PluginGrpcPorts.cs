@@ -242,6 +242,104 @@ internal sealed class PluginPageProviderPort(
     }
 }
 
+internal sealed record VideoStreamResult(string Id, string Label, string PlaylistUri);
+
+internal sealed record VideoSegmentResult(string ContentType, byte[] Payload);
+
+internal sealed class PluginVideoProviderPort(
+    PluginGrpcEndpoint endpoint,
+    IOptions<PluginHostOptions> options,
+    ILogger<PluginVideoProviderPort> logger)
+{
+    private readonly PluginGrpcEndpoint _endpoint = endpoint;
+    private readonly IOptions<PluginHostOptions> _options = options;
+    private readonly ILogger<PluginVideoProviderPort> _logger = logger;
+
+    public async Task<IReadOnlyList<VideoStreamResult>> GetStreamsAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        var (cts, deadlineUtc) = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        using var ctsScope = cts;
+        using var lease = await PluginGrpcHelpers.AcquireLeaseAsync(
+            _endpoint.Record.Manifest.Id,
+            _options.Value,
+            cts.Token);
+
+        using var httpClient = PluginGrpcHelpers.CreateHttpClient(_endpoint.Address);
+        using var channel = GrpcChannel.ForAddress(_endpoint.Address, new GrpcChannelOptions
+        {
+            HttpClient = httpClient
+        });
+
+        var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
+        var response = await client.GetStreamsAsync(new PluginContracts.StreamRequest
+        {
+            MediaId = mediaId,
+            Context = PluginGrpcHelpers.CreateRequestContext(_endpoint.CorrelationId, deadlineUtc)
+        }, headers: PluginGrpcHelpers.CreateHeaders(_endpoint.CorrelationId), cancellationToken: cts.Token);
+
+        var results = response.Streams
+            .Select(stream => new VideoStreamResult(
+                stream.Id ?? string.Empty,
+                stream.Label ?? string.Empty,
+                stream.PlaylistUri ?? string.Empty))
+            .ToList();
+
+        _logger.LogInformation(
+            "Pipeline video streams {CorrelationId} pluginId={PluginId} mediaId={MediaId} count={Count}",
+            _endpoint.CorrelationId,
+            _endpoint.Record.Manifest.Id,
+            mediaId,
+            results.Count);
+
+        return results;
+    }
+
+    public async Task<VideoSegmentResult> GetSegmentAsync(
+        string mediaId,
+        string streamId,
+        int sequence,
+        CancellationToken cancellationToken)
+    {
+        var (cts, deadlineUtc) = PluginGrpcHelpers.CreateCallTimeout(_options, cancellationToken);
+        using var ctsScope = cts;
+        using var lease = await PluginGrpcHelpers.AcquireLeaseAsync(
+            _endpoint.Record.Manifest.Id,
+            _options.Value,
+            cts.Token);
+
+        using var httpClient = PluginGrpcHelpers.CreateHttpClient(_endpoint.Address);
+        using var channel = GrpcChannel.ForAddress(_endpoint.Address, new GrpcChannelOptions
+        {
+            HttpClient = httpClient
+        });
+
+        var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
+        var response = await client.GetSegmentAsync(new PluginContracts.SegmentRequest
+        {
+            MediaId = mediaId,
+            StreamId = streamId,
+            Sequence = sequence,
+            Context = PluginGrpcHelpers.CreateRequestContext(_endpoint.CorrelationId, deadlineUtc)
+        }, headers: PluginGrpcHelpers.CreateHeaders(_endpoint.CorrelationId), cancellationToken: cts.Token);
+
+        var payload = response.Payload.ToByteArray();
+        _logger.LogInformation(
+            "Pipeline video segment {CorrelationId} pluginId={PluginId} mediaId={MediaId} streamId={StreamId} sequence={Sequence} bytes={Size}",
+            _endpoint.CorrelationId,
+            _endpoint.Record.Manifest.Id,
+            mediaId,
+            streamId,
+            sequence,
+            payload.Length);
+
+        return new VideoSegmentResult(
+            string.IsNullOrWhiteSpace(response.ContentType)
+                ? "application/octet-stream"
+                : response.ContentType,
+            payload);
+    }
+}
+
 internal static class PluginGrpcHelpers
 {
     private const string CorrelationIdHeader = "x-correlation-id";
