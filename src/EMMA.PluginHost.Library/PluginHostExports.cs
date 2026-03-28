@@ -917,13 +917,26 @@ public static class PluginHostExports
 
             if (cachedRecords.Count > 0)
             {
-                return cachedRecords
-                    .Select(chapter => new MediaChapter(
-                        chapter.ChapterId,
-                        chapter.Number,
-                        chapter.Title,
-                        chapter.UploaderGroups ?? []))
-                    .ToList();
+                var hasAnyUploaderGroups = cachedRecords.Any(chapter =>
+                    chapter.UploaderGroups is { Count: > 0 }
+                    && chapter.UploaderGroups.Any(group => !string.IsNullOrWhiteSpace(group)));
+
+                var hasNonGuidUploaderGroup = cachedRecords.Any(chapter =>
+                    chapter.UploaderGroups is { Count: > 0 }
+                    && chapter.UploaderGroups.Any(group =>
+                        !string.IsNullOrWhiteSpace(group)
+                        && !Guid.TryParse(group.Trim(), out _)));
+
+                if (hasAnyUploaderGroups && hasNonGuidUploaderGroup)
+                {
+                    return cachedRecords
+                        .Select(chapter => new MediaChapter(
+                            chapter.ChapterId,
+                            chapter.Number,
+                            chapter.Title,
+                            chapter.UploaderGroups ?? []))
+                        .ToList();
+                }
             }
         }
 

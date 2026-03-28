@@ -135,6 +135,11 @@ public sealed class WasmPluginRuntimeHostTests
                     "[{\"name\":\"search\",\"mediaTypes\":[\"paged\"],\"operations\":[\"search\",\"chapters\",\"page\",\"pages\",\"invoke\"]}]");
             }
 
+            if (operation == "chapters")
+            {
+                return Task.FromResult("[{\"id\":\"ch-1\",\"number\":1,\"title\":\"Chapter 1\",\"uploaderGroups\":[\"Team A\"]}]");
+            }
+
             if (operation == "invoke")
             {
                 var requestedOperation = operationArgs.Count > 0 ? operationArgs[0] : string.Empty;
@@ -143,7 +148,6 @@ public sealed class WasmPluginRuntimeHostTests
                 return Task.FromResult(requestedOperation switch
                 {
                     "search" => Success("[{\"id\":\"demo-1\",\"source\":\"demo\",\"title\":\"Demo Manga\",\"mediaType\":\"paged\"}]"),
-                    "chapters" => Success("[{\"id\":\"ch-1\",\"number\":1,\"title\":\"Chapter 1\",\"uploaderGroups\":[\"Team A\"]}]"),
                     "page" => BuildPageResult(argsJson),
                     "pages" => BuildPagesResult(argsJson),
                     _ => Error($"unsupported-operation:{requestedOperation}")

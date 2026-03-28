@@ -46,7 +46,7 @@ public sealed record BenchmarkResult(int iterations, long checksum, int generate
 
 public sealed record NetworkBenchmarkResult(string query, int payloadBytes, int itemCount, long elapsedMs);
 
-public sealed record ChapterOperationItem(string id, int number, string title, IReadOnlyList<string> uploaderGroups);
+public sealed record ChapterOperationItem(string id, int number, string title, string[] uploaderGroups);
 
 public sealed record VideoStreamOperationItem(string id, string label, string playlistUri);
 
