@@ -58,7 +58,7 @@ public sealed record WasmHealth(string? Version, string? Message);
 /// <summary>
 /// Chapter item returned from WASM component.
 /// </summary>
-public sealed record WasmChapterItem(string Id, int Number, string Title);
+public sealed record WasmChapterItem(string Id, int Number, string Title, IReadOnlyList<string>? UploaderGroups = null);
 
 /// <summary>
 /// Page item returned from WASM component.

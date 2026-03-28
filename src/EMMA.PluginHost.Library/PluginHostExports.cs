@@ -921,7 +921,8 @@ public static class PluginHostExports
                     .Select(chapter => new MediaChapter(
                         chapter.ChapterId,
                         chapter.Number,
-                        chapter.Title))
+                        chapter.Title,
+                        chapter.UploaderGroups ?? []))
                     .ToList();
             }
         }
@@ -973,7 +974,12 @@ public static class PluginHostExports
                 .Select(chapter => new MediaChapter(
                     chapter.Id ?? string.Empty,
                     chapter.Number,
-                    chapter.Title ?? string.Empty))
+                    chapter.Title ?? string.Empty,
+                    chapter.UploaderGroups
+                        .Where(group => !string.IsNullOrWhiteSpace(group))
+                        .Select(group => group.Trim())
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray()))
                 .ToList();
         }
 
@@ -983,7 +989,8 @@ public static class PluginHostExports
                 mediaKey,
                 chapter.Number,
                 chapter.Title,
-                null))
+                null,
+                chapter.UploaderGroups ?? []))
             .ToList();
 
         catalog.UpsertChaptersAsync(mediaKey, chapterRecords, CancellationToken.None)

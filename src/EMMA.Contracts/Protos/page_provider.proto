@@ -49,6 +49,7 @@ message MediaChapter {
   string id = 1;
   int32 number = 2;
   string title = 3;
+  repeated string uploader_groups = 4;
 }
 
 message MediaPage {

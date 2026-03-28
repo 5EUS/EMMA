@@ -45,19 +45,25 @@ public sealed class PagedPipelineIntegrationTests
     private sealed class PipelineHarness : IAsyncDisposable
     {
         private readonly WebApplicationFactory<global::Program> _factory;
+        private readonly EnvironmentVariableScope _signedPluginsScope;
+        private readonly EnvironmentVariableScope _signedPluginsCompatScope;
 
         private PipelineHarness(
             WebApplicationFactory<global::Program> factory,
             HttpClient client,
             WebApplication pluginApp,
             string tempRoot,
-            CallCounters counters)
+            CallCounters counters,
+            EnvironmentVariableScope signedPluginsScope,
+            EnvironmentVariableScope signedPluginsCompatScope)
         {
             _factory = factory;
             Client = client;
             PluginApp = pluginApp;
             TempRoot = tempRoot;
             Counters = counters;
+            _signedPluginsScope = signedPluginsScope;
+            _signedPluginsCompatScope = signedPluginsCompatScope;
         }
 
         public HttpClient Client { get; }
@@ -68,6 +74,9 @@ public sealed class PagedPipelineIntegrationTests
         public static async Task<PipelineHarness> CreateAsync()
         {
             AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+            var signedPluginsScope = new EnvironmentVariableScope("EMMA_REQUIRE_SIGNED_PLUGINS", "false");
+            var signedPluginsCompatScope = new EnvironmentVariableScope("PluginSignature__RequireSignedPlugins", "false");
 
             var counters = new CallCounters();
             var tempRoot = Path.Combine(Path.GetTempPath(), "emma-pipeline-tests", Guid.NewGuid().ToString("N"));
@@ -89,7 +98,8 @@ public sealed class PagedPipelineIntegrationTests
                         {
                             ["PluginHost:ManifestDirectory"] = tempRoot,
                             ["PluginHost:HandshakeOnStartup"] = "false",
-                            ["PluginHost:HandshakeTimeoutSeconds"] = "5"
+                            ["PluginHost:HandshakeTimeoutSeconds"] = "5",
+                            ["PluginSignature:RequireSignedPlugins"] = "false"
                         };
 
                         config.AddInMemoryCollection(settings);
@@ -101,14 +111,41 @@ public sealed class PagedPipelineIntegrationTests
 
             var client = factory.CreateClient();
 
-            return new PipelineHarness(factory, client, pluginApp, tempRoot, counters);
+            return new PipelineHarness(
+                factory,
+                client,
+                pluginApp,
+                tempRoot,
+                counters,
+                signedPluginsScope,
+                signedPluginsCompatScope);
         }
 
         public async ValueTask DisposeAsync()
         {
             await PluginApp.StopAsync();
             _factory.Dispose();
+            _signedPluginsCompatScope.Dispose();
+            _signedPluginsScope.Dispose();
             TryDelete(TempRoot);
+        }
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly string _name;
+        private readonly string? _originalValue;
+
+        public EnvironmentVariableScope(string name, string? value)
+        {
+            _name = name;
+            _originalValue = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, value);
+        }
+
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable(_name, _originalValue);
         }
     }
 

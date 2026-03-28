@@ -395,7 +395,16 @@ public sealed class WasmPluginRuntimeHost(
             return [];
         }
 
-        return [.. chapters.Select(chapter => new MediaChapter(chapter.Id, chapter.Number, chapter.Title))];
+        return [.. chapters.Select(chapter => new MediaChapter(
+            chapter.Id,
+            chapter.Number,
+            chapter.Title,
+            chapter.UploaderGroups
+                ?.Where(group => !string.IsNullOrWhiteSpace(group))
+                .Select(group => group.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+                ?? []))];
     }
 
     public async Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(

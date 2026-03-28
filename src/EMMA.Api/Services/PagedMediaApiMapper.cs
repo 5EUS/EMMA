@@ -19,11 +19,19 @@ internal static class PagedMediaApiMapper
 
     public static ApiMediaChapter MapChapter(MediaChapter chapter)
     {
+        var uploaderGroups = chapter.UploaderGroups
+            ?.Where(group => !string.IsNullOrWhiteSpace(group))
+            .Select(group => group.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray()
+            ?? [];
+
         return new ApiMediaChapter
         {
             Id = chapter.ChapterId,
             Number = chapter.Number,
-            Title = chapter.Title
+            Title = chapter.Title,
+            UploaderGroups = { uploaderGroups }
         };
     }
 

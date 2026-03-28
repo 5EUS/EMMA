@@ -228,7 +228,12 @@ internal sealed class PluginPageProviderPort(
     {
         var chapterId = chapter.Id ?? string.Empty;
         var title = chapter.Title ?? string.Empty;
-        return new MediaChapter(chapterId, chapter.Number, title);
+        var uploaderGroups = chapter.UploaderGroups
+            .Where(group => !string.IsNullOrWhiteSpace(group))
+            .Select(group => group.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return new MediaChapter(chapterId, chapter.Number, title, uploaderGroups);
     }
 
     private static MediaPage MapPage(PluginContracts.MediaPage page)

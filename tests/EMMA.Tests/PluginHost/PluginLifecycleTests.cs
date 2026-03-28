@@ -158,18 +158,29 @@ public sealed class PluginLifecycleTests
             var solution = Path.Combine(dir.FullName, "EMMA.sln");
             if (File.Exists(solution))
             {
-                var path = Path.Combine(
+                var legacyInRepoPath = Path.Combine(
                     dir.FullName,
                     "src",
                     "EMMA.TestPlugin",
                     "EMMA.TestPlugin.csproj");
-
-                if (!File.Exists(path))
+                if (File.Exists(legacyInRepoPath))
                 {
-                    throw new FileNotFoundException("Test plugin project not found.", path);
+                    return legacyInRepoPath;
                 }
 
-                return path;
+                var siblingRepoPath = Path.GetFullPath(Path.Combine(
+                    dir.FullName,
+                    "..",
+                    "emma-test-plugin",
+                    "EMMA.TestPlugin.csproj"));
+                if (File.Exists(siblingRepoPath))
+                {
+                    return siblingRepoPath;
+                }
+
+                throw new FileNotFoundException(
+                    "Test plugin project not found.",
+                    string.Join(Environment.NewLine, legacyInRepoPath, siblingRepoPath));
             }
 
             dir = dir.Parent;
