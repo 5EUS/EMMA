@@ -404,14 +404,24 @@ public sealed class WasmPluginRuntimeHost(
         CancellationToken cancellationToken)
     {
         var componentPath = ResolveComponentPath(record.Manifest);
-        var streamsJson = await RunInvokeOperationAsync(
-            componentPath,
-            operation: VideoStreamsOperation,
-            mediaId: mediaId.Value,
-            mediaType: VideoMediaType,
-            argsJson: null,
-            permittedDomains: record.Manifest.Permissions?.Domains,
-            cancellationToken: cancellationToken);
+        string streamsJson;
+        try
+        {
+            streamsJson = await RunInvokeOperationAsync(
+                componentPath,
+                operation: VideoStreamsOperation,
+                mediaId: mediaId.Value,
+                mediaType: VideoMediaType,
+                argsJson: null,
+                permittedDomains: record.Manifest.Permissions?.Domains,
+                cancellationToken: cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+            when (ex.Message.Contains("unsupported-operation:video-streams", StringComparison.OrdinalIgnoreCase))
+        {
+            // Some plugins only implement paged operations; treat missing video-streams as no streams.
+            return [];
+        }
 
         var streams = DeserializeJson<IReadOnlyList<WasmVideoStreamItem>>(streamsJson);
         if (streams is null || streams.Count == 0)
