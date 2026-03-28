@@ -151,14 +151,14 @@ public sealed class PluginRepositoryInstallOrchestratorTests
 
             var payloadBytes = Encoding.UTF8.GetBytes("tampered");
             var archiveBytes = CreatePluginArchive(pluginId, version, payloadBytes);
-                server.CatalogPayload =
-                BuildCatalogJson(
-                    repositoryId,
-                    pluginId,
-                    version,
-                    $"{address}/artifacts/plugin.zip",
-                    new string('f', 64));
-                server.ArtifactBytes = archiveBytes;
+            server.CatalogPayload =
+            BuildCatalogJson(
+                repositoryId,
+                pluginId,
+                version,
+                $"{address}/artifacts/plugin.zip",
+                new string('f', 64));
+            server.ArtifactBytes = archiveBytes;
 
             var harness = CreateHarness(tempRoot);
             await harness.RepositoryService.AddRepositoryAsync(

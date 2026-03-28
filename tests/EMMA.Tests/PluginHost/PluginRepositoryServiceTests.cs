@@ -38,7 +38,7 @@ public sealed class PluginRepositoryServiceTests
                             Version: "1.0.0",
                             AssetUrl: "http://localhost/assets/demo-plugin-1.0.0.zip",
                             Sha256: new string('a', 64),
-                            Platforms: ["linux"]) 
+                            Platforms: ["linux"])
                     ])
             ]);
 

@@ -73,8 +73,8 @@ public sealed record WasmOperationResult(bool IsError, string? Error, string? Co
 public sealed record WasmVideoStreamItem(string Id, string Label, string PlaylistUri);
 
 public sealed record WasmVideoSegmentWire(
-	[property: JsonPropertyName("contentType")] string ContentType,
-	[property: JsonPropertyName("payload")] string PayloadBase64);
+    [property: JsonPropertyName("contentType")] string ContentType,
+    [property: JsonPropertyName("payload")] string PayloadBase64);
 
 public sealed record WasmVideoSegmentResult(string ContentType, byte[] Payload);
 
@@ -82,31 +82,31 @@ public sealed record WasmVideoSegmentResult(string ContentType, byte[] Payload);
 /// Structured capability item returned by typed WASM components.
 /// </summary>
 public sealed record WasmCapabilityItem(
-	[property: JsonPropertyName("name")] string Name,
-	[property: JsonPropertyName("mediaTypes")] IReadOnlyList<string> MediaTypes,
-	[property: JsonPropertyName("operations")] IReadOnlyList<string> Operations);
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("mediaTypes")] IReadOnlyList<string> MediaTypes,
+    [property: JsonPropertyName("operations")] IReadOnlyList<string> Operations);
 
 /// <summary>
 /// Query args for invoke operations.
 /// </summary>
 public sealed record WasmQueryArgs(
-	[property: JsonPropertyName("query")] string Query,
-	[property: JsonPropertyName("mediaTypes")] IReadOnlyList<string>? MediaTypes = null,
-	[property: JsonPropertyName("filters")] IReadOnlyList<WasmSearchFilterArg>? Filters = null,
-	[property: JsonPropertyName("queryAdditions")] IReadOnlyList<WasmSearchQueryAdditionArg>? QueryAdditions = null,
-	[property: JsonPropertyName("sort")] string? Sort = null,
-	[property: JsonPropertyName("page")] int? Page = null,
-	[property: JsonPropertyName("pageSize")] int? PageSize = null);
+    [property: JsonPropertyName("query")] string Query,
+    [property: JsonPropertyName("mediaTypes")] IReadOnlyList<string>? MediaTypes = null,
+    [property: JsonPropertyName("filters")] IReadOnlyList<WasmSearchFilterArg>? Filters = null,
+    [property: JsonPropertyName("queryAdditions")] IReadOnlyList<WasmSearchQueryAdditionArg>? QueryAdditions = null,
+    [property: JsonPropertyName("sort")] string? Sort = null,
+    [property: JsonPropertyName("page")] int? Page = null,
+    [property: JsonPropertyName("pageSize")] int? PageSize = null);
 
 public sealed record WasmSearchFilterArg(
-	[property: JsonPropertyName("id")] string Id,
-	[property: JsonPropertyName("values")] IReadOnlyList<string> Values,
-	[property: JsonPropertyName("operation")] string? Operation = null);
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("values")] IReadOnlyList<string> Values,
+    [property: JsonPropertyName("operation")] string? Operation = null);
 
 public sealed record WasmSearchQueryAdditionArg(
-	[property: JsonPropertyName("id")] string Id,
-	[property: JsonPropertyName("value")] string Value,
-	[property: JsonPropertyName("type")] string? Type = null);
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("value")] string Value,
+    [property: JsonPropertyName("type")] string? Type = null);
 
 /// <summary>
 /// Benchmark args for invoke operations.
@@ -117,17 +117,17 @@ public sealed record WasmBenchmarkArgs([property: JsonPropertyName("iterations")
 /// Single page args for invoke operations.
 /// </summary>
 public sealed record WasmPageArgs(
-	[property: JsonPropertyName("chapterId")] string ChapterId,
-	[property: JsonPropertyName("pageIndex")] int PageIndex);
+    [property: JsonPropertyName("chapterId")] string ChapterId,
+    [property: JsonPropertyName("pageIndex")] int PageIndex);
 
 /// <summary>
 /// Batch pages args for invoke operations.
 /// </summary>
 public sealed record WasmPagesArgs(
-	[property: JsonPropertyName("chapterId")] string ChapterId,
-	[property: JsonPropertyName("startIndex")] int StartIndex,
-	[property: JsonPropertyName("count")] int Count);
+    [property: JsonPropertyName("chapterId")] string ChapterId,
+    [property: JsonPropertyName("startIndex")] int StartIndex,
+    [property: JsonPropertyName("count")] int Count);
 
 public sealed record WasmVideoSegmentArgs(
-	[property: JsonPropertyName("streamId")] string StreamId,
-	[property: JsonPropertyName("sequence")] int Sequence);
+    [property: JsonPropertyName("streamId")] string StreamId,
+    [property: JsonPropertyName("sequence")] int Sequence);
