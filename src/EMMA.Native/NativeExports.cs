@@ -17,6 +17,11 @@ public static class NativeExports
 {
     private const string NativeConsoleLogLevelEnvVar = "EMMA_NATIVE_LOG_LEVEL";
     private const string NativeVerboseTimingEnvVar = "EMMA_NATIVE_VERBOSE_TIMING";
+    private const string RequireSignedPluginsEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS";
+    private const string PluginSignatureRequireSignedEnvVar = "PluginSignature__RequireSignedPlugins";
+    private const string RequireSignedPluginsFileEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS_FILE";
+    private const string RequireSignedPluginsManifestFileName = ".plugin-signature-require-signed";
+    private const string RequireSignedPluginsAppFileName = "plugin-signature-require-signed";
     private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
     private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
     private const string PluginSignatureHmacKeyFileEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_FILE";
@@ -30,6 +35,7 @@ public static class NativeExports
     private sealed record PluginSummary(
         string Id,
         string Title,
+        string Version,
         string BuildType,
         double? ThumbnailAspectRatio = null,
         string? ThumbnailFit = null,
@@ -406,6 +412,39 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_refresh_library_media_json")]
+    public static IntPtr RuntimeRefreshLibraryMediaJson(int handle, IntPtr libraryNameUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.RefreshLibraryMediaJsonManaged(libraryName);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to refresh library media.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_plugins_json")]
     public static IntPtr RuntimeListPluginsJson()
     {
@@ -630,18 +669,37 @@ public static class NativeExports
                 {
                     if (_pluginHostInitialized)
                     {
+                        var currentManifestDirectory = ResolveManifestDirectory() ?? string.Empty;
                         var pathsChanged = !SameConfiguredPath(previousConfiguration.ManifestsDirectory, _pluginPathConfiguration.ManifestsDirectory)
                             || !SameConfiguredPath(previousConfiguration.PluginsDirectory, _pluginPathConfiguration.PluginsDirectory);
+                        var signaturePolicyChanged = EnsureRequireSignedPluginsConfigured(currentManifestDirectory);
+                        var signatureKeyChanged = EnsurePluginSignatureKeyConfigured(currentManifestDirectory);
 
-                        if (pathsChanged)
+                        if (pathsChanged || signaturePolicyChanged || signatureKeyChanged)
                         {
                             ShutdownPluginHost();
                             EnsurePluginHostInitialized();
-                            LogInfo("plugin-host", "Plugin host reconfigured with updated manifests/plugins paths.");
+                            var reasons = new List<string>();
+                            if (pathsChanged)
+                            {
+                                reasons.Add("path change");
+                            }
+
+                            if (signaturePolicyChanged)
+                            {
+                                reasons.Add("signature policy change");
+                            }
+
+                            if (signatureKeyChanged)
+                            {
+                                reasons.Add("signature key change");
+                            }
+
+                            LogInfo("plugin-host", $"Plugin host reconfigured ({string.Join(", ", reasons)}).");
                         }
                         else
                         {
-                            LogDebug("plugin-host", "Configure paths called with unchanged values; skipping rescan.");
+                            LogDebug("plugin-host", "Configure paths called with no effective plugin-host changes; skipping rescan.");
                         }
                     }
                 }
@@ -1173,6 +1231,137 @@ public static class NativeExports
                 "get-page-asset",
                 stopwatch.ElapsedMilliseconds,
                 $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, chapterId={chapterIdForLog}, pageIndex={pageIndex}, success={success}");
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_video_streams_json")]
+    public static IntPtr RuntimeGetVideoStreamsJson(int handle, IntPtr mediaIdUtf8)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string mediaIdForLog = "<unset>";
+        string pluginIdForLog = "<none>";
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            mediaIdForLog = mediaIdValue ?? "<null>";
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            var json = PluginHostExports.GetVideoStreamsJsonManaged(activePluginId, mediaIdValue);
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host video streams call returned null";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            success = true;
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "get-video-streams",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, success={success}");
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_video_segment_json")]
+    public static IntPtr RuntimeGetVideoSegmentJson(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr streamIdUtf8,
+        int sequence)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string mediaIdForLog = "<unset>";
+        string streamIdForLog = "<unset>";
+        string pluginIdForLog = "<none>";
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            var streamId = PtrToString(streamIdUtf8);
+            mediaIdForLog = mediaIdValue ?? "<null>";
+            streamIdForLog = streamId ?? "<null>";
+            if (string.IsNullOrWhiteSpace(mediaIdValue) || string.IsNullOrWhiteSpace(streamId))
+            {
+                SetLastError("mediaId and streamId are required.");
+                return IntPtr.Zero;
+            }
+
+            if (sequence < 0)
+            {
+                SetLastError("sequence must be >= 0.");
+                return IntPtr.Zero;
+            }
+
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            var json = PluginHostExports.GetVideoSegmentJsonManaged(activePluginId, mediaIdValue, streamId, sequence);
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host video segment call returned null";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            success = true;
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "get-video-segment",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, streamId={streamIdForLog}, sequence={sequence}, success={success}");
         }
     }
 
@@ -2111,6 +2300,7 @@ public static class NativeExports
             var manifestDirectory = ResolveManifestDirectory() ?? string.Empty;
             var sandboxDirectory = ResolvePluginSandboxDirectory() ?? string.Empty;
 
+            EnsureRequireSignedPluginsConfigured(manifestDirectory);
             EnsurePluginSignatureKeyConfigured(manifestDirectory);
 
             var resultCode = PluginHostExports.InitializeManaged(manifestDirectory, sandboxDirectory);
@@ -2127,24 +2317,132 @@ public static class NativeExports
         }
     }
 
-    private static void EnsurePluginSignatureKeyConfigured(string? manifestDirectory)
+    private static bool EnsurePluginSignatureKeyConfigured(string? manifestDirectory)
     {
         var existingKey = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
             ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
-        if (!string.IsNullOrWhiteSpace(existingKey))
-        {
-            return;
-        }
 
         var resolvedKey = ResolvePluginSignatureKeyFromFiles(manifestDirectory);
         if (string.IsNullOrWhiteSpace(resolvedKey))
         {
-            return;
+            if (string.IsNullOrWhiteSpace(existingKey))
+            {
+                return false;
+            }
+
+            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, null);
+            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, null);
+            LogInfo("plugin-host", "Cleared plugin signature key because no key file is present.");
+            return true;
+        }
+
+        if (string.Equals(existingKey?.Trim(), resolvedKey, StringComparison.Ordinal))
+        {
+            return false;
         }
 
         Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, resolvedKey);
         Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, resolvedKey);
         LogInfo("plugin-host", "Loaded plugin signature key from configured key file.");
+        return true;
+    }
+
+    private static bool EnsureRequireSignedPluginsConfigured(string? manifestDirectory)
+    {
+        var existing = Environment.GetEnvironmentVariable(RequireSignedPluginsEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureRequireSignedEnvVar);
+
+        var resolved = ResolveRequireSignedPluginsFromFiles(manifestDirectory);
+        if (!resolved.HasValue)
+        {
+            return false;
+        }
+
+        var normalized = resolved.Value ? "true" : "false";
+        if (string.Equals(existing?.Trim(), normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        Environment.SetEnvironmentVariable(RequireSignedPluginsEnvVar, normalized);
+        Environment.SetEnvironmentVariable(PluginSignatureRequireSignedEnvVar, normalized);
+        LogInfo("plugin-host", $"Loaded require-signed-plugins policy from file: {normalized}.");
+        return true;
+    }
+
+    private static bool? ResolveRequireSignedPluginsFromFiles(string? manifestDirectory)
+    {
+        var candidatePaths = new List<string>();
+
+        var explicitPath = Environment.GetEnvironmentVariable(RequireSignedPluginsFileEnvVar);
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            candidatePaths.Add(explicitPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifestDirectory))
+        {
+            candidatePaths.Add(Path.Combine(manifestDirectory, RequireSignedPluginsManifestFileName));
+        }
+
+        var support = GetApplicationSupportDirectories().FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(support))
+        {
+            candidatePaths.Add(Path.Combine(support, "emmaui", RequireSignedPluginsAppFileName));
+        }
+
+        foreach (var path in candidatePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var value = File.ReadAllText(path).Trim();
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                if (TryParseBooleanLike(value, out var parsed))
+                {
+                    return parsed;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryParseBooleanLike(string value, out bool parsed)
+    {
+        if (bool.TryParse(value, out parsed))
+        {
+            return true;
+        }
+
+        switch (value.Trim().ToLowerInvariant())
+        {
+            case "1":
+            case "yes":
+            case "on":
+                parsed = true;
+                return true;
+            case "0":
+            case "no":
+            case "off":
+                parsed = false;
+                return true;
+            default:
+                parsed = false;
+                return false;
+        }
     }
 
     private static string? ResolvePluginSignatureKeyFromFiles(string? manifestDirectory)
@@ -2375,6 +2673,8 @@ public static class NativeExports
             sb.Append(',');
             AppendJsonProperty(sb, "title", plugin.Title);
             sb.Append(',');
+            AppendJsonProperty(sb, "version", plugin.Version);
+            sb.Append(',');
             AppendJsonProperty(sb, "buildType", plugin.BuildType);
             if (plugin.ThumbnailAspectRatio is { } aspectRatio && aspectRatio > 0)
             {
@@ -2473,7 +2773,7 @@ public static class NativeExports
                     continue;
                 }
 
-                byId[id] = new PluginSummary(id, id, ResolvePluginBuildType(id));
+                byId[id] = new PluginSummary(id, id, string.Empty, ResolvePluginBuildType(id));
             }
         }
 
@@ -2499,6 +2799,7 @@ public static class NativeExports
             var title = GetStringProperty(root, "name")
                         ?? GetStringProperty(root, "title")
                         ?? id;
+            var version = GetStringProperty(root, "version") ?? string.Empty;
 
             double? thumbnailAspectRatio = null;
             string? thumbnailFit = null;
@@ -2529,7 +2830,16 @@ public static class NativeExports
                 searchExperienceJson = searchExperience.GetRawText();
             }
 
-            return new PluginSummary(id, title, "csharp", thumbnailAspectRatio, thumbnailFit, thumbnailWidth, thumbnailHeight, searchExperienceJson);
+            return new PluginSummary(
+                id,
+                title,
+                version,
+                "csharp",
+                thumbnailAspectRatio,
+                thumbnailFit,
+                thumbnailWidth,
+                thumbnailHeight,
+                searchExperienceJson);
         }
         catch
         {

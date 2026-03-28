@@ -92,7 +92,7 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
 
             NativeBindings.FreeString(outJson);
             NativeBindings.FreeString(outError);
-            
+
             return Task.FromResult(output);
         }
         catch (DllNotFoundException ex)

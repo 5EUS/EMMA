@@ -288,6 +288,16 @@ public sealed class PluginHandshakeTests
             throw new NotSupportedException();
         }
 
+        public Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<WasmVideoSegmentResult?> GetVideoSegmentAsync(PluginRecord record, MediaId mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<IReadOnlyList<EMMA.Domain.MediaChapter>> GetChaptersAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();

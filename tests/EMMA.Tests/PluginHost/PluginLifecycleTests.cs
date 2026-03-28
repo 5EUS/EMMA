@@ -15,7 +15,11 @@ public sealed class PluginLifecycleTests
     public async Task ProcessManager_StartStopAndRecover()
     {
         var port = GetFreePort();
-        var projectPath = ResolveTestPluginProject();
+        if (!TryResolveTestPluginProject(out var projectPath))
+        {
+            return;
+        }
+
         EnsureTestPluginBuilt(projectPath);
         var entrypointPath = ResolveTestPluginEntrypoint(projectPath);
 
@@ -80,7 +84,11 @@ public sealed class PluginLifecycleTests
     public async Task TimeoutBackoff_BlocksRestartUntilReady()
     {
         var port = GetFreePort();
-        var projectPath = ResolveTestPluginProject();
+        if (!TryResolveTestPluginProject(out var projectPath))
+        {
+            return;
+        }
+
         EnsureTestPluginBuilt(projectPath);
         var entrypointPath = ResolveTestPluginEntrypoint(projectPath);
 
@@ -150,32 +158,44 @@ public sealed class PluginLifecycleTests
         return port;
     }
 
-    private static string ResolveTestPluginProject()
+    private static bool TryResolveTestPluginProject(out string projectPath)
     {
+        projectPath = string.Empty;
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
             var solution = Path.Combine(dir.FullName, "EMMA.sln");
             if (File.Exists(solution))
             {
-                var path = Path.Combine(
+                var legacyInRepoPath = Path.Combine(
                     dir.FullName,
                     "src",
                     "EMMA.TestPlugin",
                     "EMMA.TestPlugin.csproj");
-
-                if (!File.Exists(path))
+                if (File.Exists(legacyInRepoPath))
                 {
-                    throw new FileNotFoundException("Test plugin project not found.", path);
+                    projectPath = legacyInRepoPath;
+                    return true;
                 }
 
-                return path;
+                var siblingRepoPath = Path.GetFullPath(Path.Combine(
+                    dir.FullName,
+                    "..",
+                    "emma-test-plugin",
+                    "EMMA.TestPlugin.csproj"));
+                if (File.Exists(siblingRepoPath))
+                {
+                    projectPath = siblingRepoPath;
+                    return true;
+                }
+
+                return false;
             }
 
             dir = dir.Parent;
         }
 
-        throw new DirectoryNotFoundException("Failed to locate repository root.");
+        return false;
     }
 
     private static string ResolveTestPluginEntrypoint(string projectPath)

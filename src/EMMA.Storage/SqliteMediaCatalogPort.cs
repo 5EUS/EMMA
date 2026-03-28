@@ -166,13 +166,15 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                     media_id,
                     chapter_number,
                     title,
-                    published_at
+                    published_at,
+                    uploader_groups
                 ) VALUES (
                     $id,
                     $mediaId,
                     $number,
                     $title,
-                    $publishedAt
+                    $publishedAt,
+                    $uploaderGroups
                 );
                 """;
             insertCommand.Parameters.AddWithValue("$id", chapter.ChapterId);
@@ -182,6 +184,10 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
             insertCommand.Parameters.AddWithValue(
                 "$publishedAt",
                 chapter.PublishedAtUtc?.ToString("O") ?? (object)DBNull.Value);
+            var uploaderGroupsJson = JsonSerializer.Serialize(
+                chapter.UploaderGroups ?? Array.Empty<string>(),
+                StorageJsonContext.Default.IReadOnlyListString);
+            insertCommand.Parameters.AddWithValue("$uploaderGroups", uploaderGroupsJson);
 
             await insertCommand.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -201,7 +207,8 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 media_id,
                 chapter_number,
                 title,
-                published_at
+                published_at,
+                uploader_groups
             FROM media_chapters
             WHERE media_id = $mediaId
             ORDER BY chapter_number;
@@ -333,13 +340,20 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         var publishedAt = reader.IsDBNull(4)
             ? (DateTimeOffset?)null
             : DateTimeOffset.Parse(reader.GetString(4));
+        var uploaderGroups = reader.IsDBNull(5)
+            ? Array.Empty<string>()
+            : JsonSerializer.Deserialize(
+                reader.GetString(5),
+                StorageJsonContext.Default.IReadOnlyListString)
+                ?? Array.Empty<string>();
 
         return new MediaChapterRecord(
             reader.GetString(0),
             MediaId.Create(reader.GetString(1)),
             reader.GetInt32(2),
             reader.GetString(3),
-            publishedAt);
+            publishedAt,
+            uploaderGroups);
     }
 
     private static MediaPageRecord ReadPage(SqliteDataReader reader)

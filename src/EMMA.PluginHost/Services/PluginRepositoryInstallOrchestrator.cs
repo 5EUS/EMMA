@@ -28,6 +28,11 @@ public sealed class PluginRepositoryInstallOrchestrator(
             [HostPlatform.Windows] = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "wasm", "cwasm" },
             [HostPlatform.Linux] = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "wasm", "cwasm", "native-linux-bundle" }
         };
+    private static readonly HashSet<string> PayloadPlatformTags = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "wasm",
+        "cwasm"
+    };
 
     private readonly PluginRepositoryService _repositoryService = repositoryService;
     private readonly PluginRepositoryCatalogClient _catalogClient = catalogClient;
@@ -88,7 +93,7 @@ public sealed class PluginRepositoryInstallOrchestrator(
             var parsed = await ParseAndValidateArchiveAsync(
                 archivePath,
                 selection.Plugin.PluginId,
-                selection.Release.Version,
+                selection.Release,
                 cancellationToken);
 
             await _installGate.WaitAsync(cancellationToken);
@@ -148,7 +153,7 @@ public sealed class PluginRepositoryInstallOrchestrator(
     private async Task<ParsedInstallPayload> ParseAndValidateArchiveAsync(
         string archivePath,
         string expectedPluginId,
-        string expectedVersion,
+        PluginRepositoryCatalogRelease expectedRelease,
         CancellationToken cancellationToken)
     {
         await using var stream = File.OpenRead(archivePath);
@@ -176,10 +181,10 @@ public sealed class PluginRepositoryInstallOrchestrator(
                 $"Plugin id mismatch. Expected '{expectedPluginId}', archive manifest reports '{manifest.Id}'.");
         }
 
-        if (!string.Equals(manifest.Version, expectedVersion, StringComparison.OrdinalIgnoreCase))
+        if (!IsReleaseVersionCompatible(expectedRelease.Version, expectedRelease.Platforms, manifest.Version))
         {
             throw new InvalidDataException(
-                $"Plugin version mismatch. Expected '{expectedVersion}', archive manifest reports '{manifest.Version}'.");
+            $"Plugin version mismatch. Expected '{expectedRelease.Version}', archive manifest reports '{manifest.Version}'.");
         }
 
         ValidateSignaturePolicy(manifest);
@@ -278,18 +283,18 @@ public sealed class PluginRepositoryInstallOrchestrator(
 
             if (Directory.Exists(payload.PluginDestination))
             {
-                Directory.Move(payload.PluginDestination, backupPluginPath);
+                MoveDirectoryWithFallback(payload.PluginDestination, backupPluginPath);
                 pluginMovedToBackup = true;
             }
 
             if (File.Exists(payload.ManifestDestination))
             {
-                File.Move(payload.ManifestDestination, backupManifestPath);
+                MoveFileWithFallback(payload.ManifestDestination, backupManifestPath);
                 manifestMovedToBackup = true;
             }
 
-            Directory.Move(payload.StagedPluginPath, payload.PluginDestination);
-            File.Move(payload.StagedManifestPath, payload.ManifestDestination);
+            MoveDirectoryWithFallback(payload.StagedPluginPath, payload.PluginDestination);
+            MoveFileWithFallback(payload.StagedManifestPath, payload.ManifestDestination);
 
             TryDeleteDirectory(backupRoot);
             TryDeleteDirectory(payload.StagingRoot);
@@ -301,12 +306,12 @@ public sealed class PluginRepositoryInstallOrchestrator(
 
             if (pluginMovedToBackup && Directory.Exists(backupPluginPath))
             {
-                Directory.Move(backupPluginPath, payload.PluginDestination);
+                MoveDirectoryWithFallback(backupPluginPath, payload.PluginDestination);
             }
 
             if (manifestMovedToBackup && File.Exists(backupManifestPath))
             {
-                File.Move(backupManifestPath, payload.ManifestDestination);
+                MoveFileWithFallback(backupManifestPath, payload.ManifestDestination);
             }
 
             TryDeleteDirectory(backupRoot);
@@ -325,14 +330,14 @@ public sealed class PluginRepositoryInstallOrchestrator(
 
     private void ValidateSignaturePolicy(PluginManifest manifest)
     {
+        if (!_signatureOptions.RequireSignedPlugins)
+        {
+            return;
+        }
+
         if (manifest.Signature is null)
         {
-            if (_signatureOptions.RequireSignedPlugins)
-            {
-                throw new InvalidDataException("Plugin manifest signature is required for installation.");
-            }
-
-            return;
+            throw new InvalidDataException("Plugin manifest signature is required for installation.");
         }
 
         if (!_signatureVerifier.Verify(manifest, out var reason))
@@ -355,11 +360,41 @@ public sealed class PluginRepositoryInstallOrchestrator(
         }
 
         var current = GetCurrentPlatformKey();
+        if (platformTags.Contains(current))
+        {
+            return;
+        }
+
+        if (platformTags.Contains("all") || platformTags.Contains("any") || platformTags.Contains("*"))
+        {
+            return;
+        }
+
+        var payloadTags = platformTags
+            .Where(PayloadPlatformTags.Contains)
+            .ToList();
+
+        if (payloadTags.Count > 0 && payloadTags.Any(IsPayloadSupportedOnCurrentPlatform))
+        {
+            return;
+        }
+
         if (!platformTags.Contains(current))
         {
             throw new InvalidDataException(
                 $"Release '{release.Version}' does not target platform '{current}'.");
         }
+    }
+
+    private bool IsPayloadSupportedOnCurrentPlatform(string payloadType)
+    {
+        var platform = HostPlatformPolicy.Current;
+        if (!SupportedPayloadTypesByPlatform.TryGetValue(platform, out var allowed))
+        {
+            return false;
+        }
+
+        return allowed.Contains(payloadType);
     }
 
     private void EnsurePayloadSupportedForCurrentPlatform(string payloadType)
@@ -406,12 +441,42 @@ public sealed class PluginRepositoryInstallOrchestrator(
         if (names.Any(name =>
                 name.Contains("/linux/", StringComparison.Ordinal)
                 || name.EndsWith(".so", StringComparison.Ordinal)
-                || name.EndsWith("/createdump", StringComparison.Ordinal)))
+            || name.EndsWith("/createdump", StringComparison.Ordinal)
+            || IsLikelyLinuxNativeExecutablePath(name)))
         {
             return "native-linux-bundle";
         }
 
         return "unknown";
+    }
+
+    private static bool IsLikelyLinuxNativeExecutablePath(string normalizedPath)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedPath)
+            || normalizedPath.EndsWith("/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var fileName = Path.GetFileName(normalizedPath);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        if (fileName.Contains('.', StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (string.Equals(fileName, "readme", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fileName, "license", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fileName, "notice", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static void ApplyUnixPermissions(ZipArchiveEntry entry, string destinationPath)
@@ -458,6 +523,52 @@ public sealed class PluginRepositoryInstallOrchestrator(
         return normalized;
     }
 
+    private static bool IsReleaseVersionCompatible(
+        string releaseVersion,
+        IReadOnlyList<string>? releasePlatforms,
+        string manifestVersion)
+    {
+        if (string.Equals(releaseVersion, manifestVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var normalizedRelease = NormalizeVersionWithPlatformSuffix(releaseVersion, releasePlatforms);
+        if (normalizedRelease is null)
+        {
+            return false;
+        }
+
+        return string.Equals(normalizedRelease, manifestVersion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? NormalizeVersionWithPlatformSuffix(string releaseVersion, IReadOnlyList<string>? releasePlatforms)
+    {
+        if (string.IsNullOrWhiteSpace(releaseVersion) || releasePlatforms is null || releasePlatforms.Count == 0)
+        {
+            return null;
+        }
+
+        var normalizedVersion = releaseVersion.Trim();
+        foreach (var rawPlatform in releasePlatforms)
+        {
+            var platform = rawPlatform?.Trim();
+            if (string.IsNullOrWhiteSpace(platform))
+            {
+                continue;
+            }
+
+            var suffix = "-" + platform.ToLowerInvariant();
+            if (normalizedVersion.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                && normalizedVersion.Length > suffix.Length)
+            {
+                return normalizedVersion[..^suffix.Length];
+            }
+        }
+
+        return null;
+    }
+
     private static string GetCurrentPlatformKey()
     {
         return HostPlatformPolicy.Current switch
@@ -469,6 +580,53 @@ public sealed class PluginRepositoryInstallOrchestrator(
             HostPlatform.MacOS => "macos",
             _ => "unknown"
         };
+    }
+
+    private static void MoveDirectoryWithFallback(string sourcePath, string destinationPath)
+    {
+        try
+        {
+            Directory.Move(sourcePath, destinationPath);
+        }
+        catch (IOException) when (Directory.Exists(sourcePath) && !Directory.Exists(destinationPath))
+        {
+            CopyDirectory(sourcePath, destinationPath);
+            Directory.Delete(sourcePath, recursive: true);
+        }
+    }
+
+    private static void MoveFileWithFallback(string sourcePath, string destinationPath)
+    {
+        try
+        {
+            File.Move(sourcePath, destinationPath);
+        }
+        catch (IOException) when (File.Exists(sourcePath) && !File.Exists(destinationPath))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(sourcePath, destinationPath, overwrite: false);
+            File.Delete(sourcePath);
+        }
+    }
+
+    private static void CopyDirectory(string sourcePath, string destinationPath)
+    {
+        Directory.CreateDirectory(destinationPath);
+
+        foreach (var directory in Directory.GetDirectories(sourcePath, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourcePath, directory);
+            var targetDirectory = Path.Combine(destinationPath, relative);
+            Directory.CreateDirectory(targetDirectory);
+        }
+
+        foreach (var file in Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourcePath, file);
+            var targetFile = Path.Combine(destinationPath, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+            File.Copy(file, targetFile, overwrite: false);
+        }
     }
 
     private static void TryDeleteDirectory(string path)

@@ -59,7 +59,8 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
         return [.. results.Select(item => new MediaChapter(
             item.Id ?? string.Empty,
             item.Number,
-            item.Title ?? string.Empty))];
+            item.Title ?? string.Empty,
+            item.UploaderGroups ?? []))];
     }
 
     public async Task<MediaPage> GetPageAsync(
@@ -224,6 +225,9 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
 
         [JsonPropertyName("title")]
         public string? Title { get; init; }
+
+        [JsonPropertyName("uploaderGroups")]
+        public List<string>? UploaderGroups { get; init; }
     }
 
     private sealed record PageDto

@@ -95,4 +95,67 @@ public static class PluginJsonArgs
 
         return null;
     }
+
+    public static bool? GetBool(string? argsJson, string key)
+    {
+        if (string.IsNullOrWhiteSpace(argsJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(argsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty(key, out var prop))
+            {
+                return null;
+            }
+
+            if (prop.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                return prop.GetBoolean();
+            }
+
+            if (prop.ValueKind == JsonValueKind.String
+                && bool.TryParse(prop.GetString(), out var parsed))
+            {
+                return parsed;
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    public static IReadOnlyList<string> GetStringArray(string? argsJson, string key)
+    {
+        if (string.IsNullOrWhiteSpace(argsJson))
+        {
+            return [];
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(argsJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty(key, out var prop)
+                || prop.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            return [.. prop.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!.Trim())];
+        }
+        catch
+        {
+            return [];
+        }
+    }
 }

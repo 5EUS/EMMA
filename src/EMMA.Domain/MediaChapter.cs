@@ -6,4 +6,5 @@ namespace EMMA.Domain;
 public sealed record MediaChapter(
     string ChapterId,
     int Number,
-    string Title);
+    string Title,
+    IReadOnlyList<string>? UploaderGroups = null);
