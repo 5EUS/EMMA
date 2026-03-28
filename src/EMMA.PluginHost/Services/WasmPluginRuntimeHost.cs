@@ -18,6 +18,8 @@ public interface IWasmPluginRuntimeHost
     Task<string> BenchmarkNetworkAsync(PluginRecord record, string query, CancellationToken cancellationToken);
     Task<string> SearchJsonAsync(PluginRecord record, string query, CancellationToken cancellationToken);
     Task<IReadOnlyList<MediaSummary>> SearchAsync(PluginRecord record, string query, CancellationToken cancellationToken);
+    Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken);
+    Task<WasmVideoSegmentResult?> GetVideoSegmentAsync(PluginRecord record, MediaId mediaId, string streamId, int sequence, CancellationToken cancellationToken);
     Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken);
     Task<MediaPage> GetPageAsync(PluginRecord record, MediaId mediaId, string chapterId, int pageIndex, CancellationToken cancellationToken);
     Task<MediaPagesResult> GetPagesAsync(PluginRecord record, MediaId mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken);
@@ -52,6 +54,9 @@ public sealed class WasmPluginRuntimeHost(
     private const string InvokeOperation = "invoke";
     private const string BenchmarkNetworkOperation = "benchmark-network";
     private const string PagedMediaType = "paged";
+    private const string VideoMediaType = "video";
+    private const string VideoStreamsOperation = "video-streams";
+    private const string VideoSegmentOperation = "video-segment";
 
     private readonly IPluginEntrypointResolver _entrypointResolver = entrypointResolver;
     private readonly IWasmComponentInvoker _invoker = invoker;
@@ -390,7 +395,95 @@ public sealed class WasmPluginRuntimeHost(
             return [];
         }
 
-        return [.. chapters.Select(chapter => new MediaChapter(chapter.Id, chapter.Number, chapter.Title))];
+        return [.. chapters.Select(chapter => new MediaChapter(
+            chapter.Id,
+            chapter.Number,
+            chapter.Title,
+            chapter.UploaderGroups
+                ?.Where(group => !string.IsNullOrWhiteSpace(group))
+                .Select(group => group.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+                ?? []))];
+    }
+
+    public async Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(
+        PluginRecord record,
+        MediaId mediaId,
+        CancellationToken cancellationToken)
+    {
+        var componentPath = ResolveComponentPath(record.Manifest);
+        string streamsJson;
+        try
+        {
+            streamsJson = await RunInvokeOperationAsync(
+                componentPath,
+                operation: VideoStreamsOperation,
+                mediaId: mediaId.Value,
+                mediaType: VideoMediaType,
+                argsJson: null,
+                permittedDomains: record.Manifest.Permissions?.Domains,
+                cancellationToken: cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+            when (ex.Message.Contains("unsupported-operation:video-streams", StringComparison.OrdinalIgnoreCase))
+        {
+            // Some plugins only implement paged operations; treat missing video-streams as no streams.
+            return [];
+        }
+
+        var streams = DeserializeJson<IReadOnlyList<WasmVideoStreamItem>>(streamsJson);
+        if (streams is null || streams.Count == 0)
+        {
+            return [];
+        }
+
+        return streams;
+    }
+
+    public async Task<WasmVideoSegmentResult?> GetVideoSegmentAsync(
+        PluginRecord record,
+        MediaId mediaId,
+        string streamId,
+        int sequence,
+        CancellationToken cancellationToken)
+    {
+        var componentPath = ResolveComponentPath(record.Manifest);
+        var segmentJson = await RunInvokeOperationAsync(
+            componentPath,
+            operation: VideoSegmentOperation,
+            mediaId: mediaId.Value,
+            mediaType: VideoMediaType,
+            argsJson: SerializeJson(new WasmVideoSegmentArgs(streamId, sequence)),
+            permittedDomains: record.Manifest.Permissions?.Domains,
+            cancellationToken: cancellationToken);
+
+        var segment = DeserializeJson<WasmVideoSegmentWire>(segmentJson);
+        if (segment is null)
+        {
+            return null;
+        }
+
+        if (string.IsNullOrWhiteSpace(segment.PayloadBase64))
+        {
+            return new WasmVideoSegmentResult(
+                string.IsNullOrWhiteSpace(segment.ContentType) ? "application/octet-stream" : segment.ContentType,
+                []);
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromBase64String(segment.PayloadBase64);
+        }
+        catch (FormatException ex)
+        {
+            throw new InvalidOperationException("WASM video segment payload is not valid base64.", ex);
+        }
+
+        return new WasmVideoSegmentResult(
+            string.IsNullOrWhiteSpace(segment.ContentType) ? "application/octet-stream" : segment.ContentType,
+            bytes);
     }
 
     public async Task<MediaPage> GetPageAsync(

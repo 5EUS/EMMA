@@ -1,9 +1,6 @@
 using System.Net;
 using System.Net.Http;
-using System.Text;
 using EMMA.Contracts.Plugins;
-using EMMA.Plugin.AspNetCore;
-using EMMA.TestPlugin.Services;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -127,31 +124,13 @@ public sealed class PluginProviderTests
         });
 
         builder.Services.AddGrpc();
-        builder.Services.AddScoped<ITestPluginRuntime, TestPluginRuntime>();
-        builder.Services.Configure<PluginSdkControlOptions>(options =>
-        {
-            options.Message = "EMMA test plugin ready";
-            options.CpuBudgetMs = 150;
-            options.MemoryMb = 128;
-            options.Capabilities.Add("test-plugin");
-            options.Capabilities.Add("search");
-            options.Capabilities.Add("pages");
-            options.Capabilities.Add("video");
-            options.Domains.Add("api.mangadex.org");
-            options.Domains.Add("uploads.mangadex.org");
-            options.Paths.Add("/plugin-data");
-        });
-        builder.Services.AddHttpClient<MangadexClient>(client =>
-            {
-                client.BaseAddress = new Uri("https://api.mangadex.org");
-            })
-            .ConfigurePrimaryHttpMessageHandler(() => new FakeMangadexHandler());
+        builder.Services.AddSingleton(new PluginFixture("https://api.example.local/data/hash-1/page-1.jpg"));
 
         var app = builder.Build();
-        app.MapGrpcService<PluginDefaultControlService>();
-        app.MapGrpcService<TestSearchProviderService>();
-        app.MapGrpcService<TestPageProviderService>();
-        app.MapGrpcService<TestVideoProviderService>();
+        app.MapGrpcService<PluginControlService>();
+        app.MapGrpcService<SearchProviderService>();
+        app.MapGrpcService<PageProviderService>();
+        app.MapGrpcService<VideoProviderService>();
 
         return app;
     }
@@ -190,58 +169,112 @@ public sealed class PluginProviderTests
         });
     }
 
-    private sealed class FakeMangadexHandler : HttpMessageHandler
+    private sealed record PluginFixture(string AssetUrl);
+
+    private sealed class PluginControlService : PluginControl.PluginControlBase
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public override Task<HealthResponse> GetHealth(HealthRequest request, Grpc.Core.ServerCallContext context)
         {
-            if (request.RequestUri is null)
+            return Task.FromResult(new HealthResponse
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
-            }
-
-            var path = request.RequestUri.AbsolutePath;
-            if (path == "/manga")
-            {
-                return Task.FromResult(JsonResponse("""
-                {
-                  "data": [
-                    { "id": "demo-1", "attributes": { "title": { "en": "Demo Paged Media" } } },
-                    { "id": "demo-2", "attributes": { "title": { "en": "Demo Paged Media Two" } } }
-                  ]
-                }
-                """));
-            }
-
-            if (path == "/manga/demo-1/feed")
-            {
-                return Task.FromResult(JsonResponse("""
-                {
-                  "data": [
-                    { "id": "ch-1", "attributes": { "chapter": "1", "title": "Chapter One" } }
-                  ]
-                }
-                """));
-            }
-
-            if (path == "/at-home/server/ch-1")
-            {
-                return Task.FromResult(JsonResponse("""
-                {
-                  "baseUrl": "https://api.example.local",
-                  "chapter": { "hash": "hash-1", "data": ["page-1.jpg"] }
-                }
-                """));
-            }
-
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+                Status = "ok",
+                Version = "1.0.0",
+                Message = "ok"
+            });
         }
 
-        private static HttpResponseMessage JsonResponse(string json)
+        public override Task<CapabilitiesResponse> GetCapabilities(CapabilitiesRequest request, Grpc.Core.ServerCallContext context)
         {
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            var response = new CapabilitiesResponse
             {
-                Content = new StringContent(json, Encoding.UTF8, "application/json")
+                Budgets = new CapabilityBudgets { CpuBudgetMs = 150, MemoryMb = 128 },
+                Permissions = new CapabilityPermissions()
             };
+            response.Capabilities.Add("health");
+            response.Capabilities.Add("capabilities");
+            response.Capabilities.Add("search");
+            response.Capabilities.Add("pages");
+            response.Capabilities.Add("video");
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class SearchProviderService : SearchProvider.SearchProviderBase
+    {
+        public override Task<SearchResponse> Search(SearchRequest request, Grpc.Core.ServerCallContext context)
+        {
+            var response = new SearchResponse();
+            response.Results.Add(new MediaSummary
+            {
+                Id = "demo-1",
+                Source = "demo",
+                Title = "Demo Paged Media",
+                MediaType = "paged"
+            });
+            response.Results.Add(new MediaSummary
+            {
+                Id = "demo-2",
+                Source = "demo",
+                Title = "Demo Paged Media Two",
+                MediaType = "paged"
+            });
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class PageProviderService(PluginFixture fixture) : PageProvider.PageProviderBase
+    {
+        private readonly PluginFixture _fixture = fixture;
+
+        public override Task<ChaptersResponse> GetChapters(ChaptersRequest request, Grpc.Core.ServerCallContext context)
+        {
+            var response = new ChaptersResponse();
+            response.Chapters.Add(new MediaChapter
+            {
+                Id = "ch-1",
+                Number = 1,
+                Title = "Chapter One"
+            });
+            return Task.FromResult(response);
+        }
+
+        public override Task<PageResponse> GetPage(PageRequest request, Grpc.Core.ServerCallContext context)
+        {
+            var response = new PageResponse
+            {
+                Page = new MediaPage
+                {
+                    Id = "page-1",
+                    Index = request.Index,
+                    ContentUri = _fixture.AssetUrl
+                }
+            };
+
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class VideoProviderService : VideoProvider.VideoProviderBase
+    {
+        public override Task<StreamResponse> GetStreams(StreamRequest request, Grpc.Core.ServerCallContext context)
+        {
+            var response = new StreamResponse();
+            response.Streams.Add(new StreamInfo
+            {
+                Id = "stream-1",
+                Label = "Main",
+                PlaylistUri = "https://api.example.local/video/master.m3u8"
+            });
+            return Task.FromResult(response);
+        }
+
+        public override Task<SegmentResponse> GetSegment(SegmentRequest request, Grpc.Core.ServerCallContext context)
+        {
+            return Task.FromResult(new SegmentResponse
+            {
+                ContentType = "video/mp2t",
+                Payload = Google.Protobuf.ByteString.CopyFrom(new byte[] { 1, 2, 3, 4 })
+            });
         }
     }
 }

@@ -4,6 +4,7 @@ using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 
 namespace EMMA.Tests.PluginHost;
 
@@ -123,19 +124,80 @@ public sealed class WasmPluginRuntimeHostTests
             IReadOnlyList<string>? permittedDomains,
             CancellationToken cancellationToken)
         {
-            var pageIndex = operationArgs.Count >= 3 && int.TryParse(operationArgs[2], out var parsedPageIndex)
-                ? parsedPageIndex
-                : 0;
-
-            return Task.FromResult(operation switch
+            if (operation == "handshake")
             {
-                "handshake" => "{\"version\":\"0.1.0\",\"message\":\"ok\"}",
-                "capabilities" => "[\"health\",\"search\",\"paged\"]",
-                "search" => "[{\"id\":\"demo-1\",\"source\":\"demo\",\"title\":\"Demo Manga\",\"mediaType\":\"paged\"}]",
-                "chapters" => "[{\"id\":\"ch-1\",\"number\":1,\"title\":\"Chapter 1\"}]",
-                "page" => $"{{\"id\":\"p-{pageIndex + 1}\",\"index\":{pageIndex},\"contentUri\":\"https://example.com/p{pageIndex + 1}.jpg\"}}",
-                _ => throw new InvalidOperationException($"Unknown operation '{operation}'.")
-            });
+                return Task.FromResult("{\"version\":\"0.1.0\",\"message\":\"ok\"}");
+            }
+
+            if (operation == "capabilities")
+            {
+                return Task.FromResult(
+                    "[{\"name\":\"search\",\"mediaTypes\":[\"paged\"],\"operations\":[\"search\",\"chapters\",\"page\",\"pages\",\"invoke\"]}]");
+            }
+
+            if (operation == "invoke")
+            {
+                var requestedOperation = operationArgs.Count > 0 ? operationArgs[0] : string.Empty;
+                var argsJson = operationArgs.Count > 3 ? operationArgs[3] : string.Empty;
+
+                return Task.FromResult(requestedOperation switch
+                {
+                    "search" => Success("[{\"id\":\"demo-1\",\"source\":\"demo\",\"title\":\"Demo Manga\",\"mediaType\":\"paged\"}]"),
+                    "chapters" => Success("[{\"id\":\"ch-1\",\"number\":1,\"title\":\"Chapter 1\",\"uploaderGroups\":[\"Team A\"]}]"),
+                    "page" => BuildPageResult(argsJson),
+                    "pages" => BuildPagesResult(argsJson),
+                    _ => Error($"unsupported-operation:{requestedOperation}")
+                });
+            }
+
+            throw new InvalidOperationException($"Unknown operation '{operation}'.");
         }
+
+        private static string BuildPageResult(string argsJson)
+        {
+            var pageIndex = ReadInt(argsJson, "pageIndex", 0);
+            return Success($"{{\"id\":\"p-{pageIndex + 1}\",\"index\":{pageIndex},\"contentUri\":\"https://example.com/p{pageIndex + 1}.jpg\"}}");
+        }
+
+        private static string BuildPagesResult(string argsJson)
+        {
+            var startIndex = ReadInt(argsJson, "startIndex", 0);
+            var count = ReadInt(argsJson, "count", 1);
+            var pages = Enumerable.Range(startIndex, count)
+                .Select(index => $"{{\"id\":\"p-{index + 1}\",\"index\":{index},\"contentUri\":\"https://example.com/p{index + 1}.jpg\"}}")
+                .ToArray();
+            return Success($"[{string.Join(',', pages)}]");
+        }
+
+        private static int ReadInt(string json, string property, int fallback)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object
+                    && doc.RootElement.TryGetProperty(property, out var value)
+                    && value.ValueKind == JsonValueKind.Number
+                    && value.TryGetInt32(out var parsed))
+                {
+                    return parsed;
+                }
+            }
+            catch
+            {
+            }
+
+            return fallback;
+        }
+
+        private static string Success(string payloadJson)
+            => $"{{\"isError\":false,\"error\":null,\"contentType\":\"application/json\",\"payloadJson\":{JsonSerializer.Serialize(payloadJson)}}}";
+
+        private static string Error(string message)
+            => $"{{\"isError\":true,\"error\":{JsonSerializer.Serialize(message)},\"contentType\":\"application/problem+json\",\"payloadJson\":\"\"}}";
     }
 }

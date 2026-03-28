@@ -183,7 +183,8 @@ public static class PagedPipelineEndpoints
             {
                 Id = chapter.ChapterId,
                 chapter.Number,
-                chapter.Title
+                chapter.Title,
+                UploaderGroups = chapter.UploaderGroups ?? []
             }));
         });
 

@@ -23,6 +23,11 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(MediaPage))]
 [JsonSerializable(typeof(MediaPagesResult))]
 [JsonSerializable(typeof(MediaPageAsset))]
+[JsonSerializable(typeof(VideoStreamResponse))]
+[JsonSerializable(typeof(IReadOnlyList<VideoStreamResponse>))]
+[JsonSerializable(typeof(List<VideoStreamResponse>))]
+[JsonSerializable(typeof(VideoStreamsResponse))]
+[JsonSerializable(typeof(VideoSegmentAssetResponse))]
 [JsonSerializable(typeof(PluginSummaryResponse))]
 [JsonSerializable(typeof(List<PluginSummaryResponse>))]
 [JsonSerializable(typeof(PluginManifestSearchExperience))]
@@ -48,6 +53,13 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(PluginRepositoryInstallResult))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(LibraryMediaRefreshFailure))]
+[JsonSerializable(typeof(IReadOnlyList<LibraryMediaRefreshFailure>))]
+[JsonSerializable(typeof(List<LibraryMediaRefreshFailure>))]
+[JsonSerializable(typeof(LibraryMediaDiscoveredUpdate))]
+[JsonSerializable(typeof(IReadOnlyList<LibraryMediaDiscoveredUpdate>))]
+[JsonSerializable(typeof(List<LibraryMediaDiscoveredUpdate>))]
+[JsonSerializable(typeof(LibraryMediaRefreshResponse))]
 public partial class PluginHostExportsJsonContext : JsonSerializerContext
 {
 }

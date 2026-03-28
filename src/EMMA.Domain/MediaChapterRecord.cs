@@ -8,4 +8,5 @@ public sealed record MediaChapterRecord(
     MediaId MediaId,
     int Number,
     string Title,
-    DateTimeOffset? PublishedAtUtc);
+    DateTimeOffset? PublishedAtUtc,
+    IReadOnlyList<string>? UploaderGroups = null);

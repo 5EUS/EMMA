@@ -23,6 +23,8 @@ public sealed class ApiPageAssetProxyIntegrationTests
         var assetPayload = new byte[] { 9, 8, 7, 6 };
         await using var assetServer = await AssetServer.StartAsync(assetPayload, "application/octet-stream");
         await using var pluginServer = await PluginServer.StartAsync(assetServer.AssetUrl);
+        using var signatureEnvScope = new EnvironmentVariableScope("EMMA_REQUIRE_SIGNED_PLUGINS", "false");
+        using var signatureCompatEnvScope = new EnvironmentVariableScope("PluginSignature__RequireSignedPlugins", "false");
 
         var tempRoot = Path.Combine(Path.GetTempPath(), "emma-apihost-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
@@ -51,7 +53,8 @@ public sealed class ApiPageAssetProxyIntegrationTests
                     {
                         ["PluginHost:ManifestDirectory"] = tempRoot,
                         ["PluginHost:HandshakeOnStartup"] = "true",
-                        ["PluginHost:HandshakeTimeoutSeconds"] = "5"
+                        ["PluginHost:HandshakeTimeoutSeconds"] = "5",
+                        ["PluginSignature:RequireSignedPlugins"] = "false"
                     };
 
                     config.AddInMemoryCollection(settings);
@@ -260,6 +263,24 @@ public sealed class ApiPageAssetProxyIntegrationTests
         }
 
         return address;
+    }
+
+    private sealed class EnvironmentVariableScope : IDisposable
+    {
+        private readonly string _name;
+        private readonly string? _originalValue;
+
+        public EnvironmentVariableScope(string name, string? value)
+        {
+            _name = name;
+            _originalValue = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, value);
+        }
+
+        public void Dispose()
+        {
+            Environment.SetEnvironmentVariable(_name, _originalValue);
+        }
     }
 
 }
