@@ -647,6 +647,178 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_enqueue_download_json")]
+    public static IntPtr RuntimeEnqueueDownloadJson(
+        int handle,
+        IntPtr pluginIdUtf8,
+        IntPtr mediaIdUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr chapterIdUtf8,
+        IntPtr streamIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            var mediaId = PtrToString(mediaIdUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var chapterId = PtrToString(chapterIdUtf8);
+            var streamId = PtrToString(streamIdUtf8);
+
+            var json = PluginHostExports.EnqueueDownloadJsonManaged(
+                pluginId,
+                mediaId,
+                mediaType,
+                chapterId,
+                streamId);
+
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to enqueue download.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_downloads_json")]
+    public static IntPtr RuntimeListDownloadsJson(int handle, int limit)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ListDownloadsJsonManaged(Math.Max(1, limit));
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list downloads.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_download_json")]
+    public static IntPtr RuntimeGetDownloadJson(int handle, IntPtr jobIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var jobId = PtrToString(jobIdUtf8) ?? string.Empty;
+            var json = PluginHostExports.GetDownloadJsonManaged(jobId);
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to get download.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_pause_download")]
+    public static int RuntimePauseDownload(int handle, IntPtr jobIdUtf8)
+    {
+        return RuntimeChangeDownloadState(handle, jobIdUtf8, PluginHostExports.PauseDownloadManaged, "pause");
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_resume_download")]
+    public static int RuntimeResumeDownload(int handle, IntPtr jobIdUtf8)
+    {
+        return RuntimeChangeDownloadState(handle, jobIdUtf8, PluginHostExports.ResumeDownloadManaged, "resume");
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_cancel_download")]
+    public static int RuntimeCancelDownload(int handle, IntPtr jobIdUtf8)
+    {
+        return RuntimeChangeDownloadState(handle, jobIdUtf8, PluginHostExports.CancelDownloadManaged, "cancel");
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_delete_download")]
+    public static int RuntimeDeleteDownload(int handle, IntPtr jobIdUtf8)
+    {
+        return RuntimeChangeDownloadState(handle, jobIdUtf8, PluginHostExports.DeleteDownloadManaged, "delete");
+    }
+
+    private static int RuntimeChangeDownloadState(
+        int handle,
+        IntPtr jobIdUtf8,
+        Func<string, int> action,
+        string operation)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            EnsurePluginHostInitialized();
+            var jobId = PtrToString(jobIdUtf8) ?? string.Empty;
+            var result = action(jobId);
+            if (result == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? $"Failed to {operation} download.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_configure_paths")]
     public static int RuntimeConfigurePaths(IntPtr manifestsDirUtf8, IntPtr pluginsDirUtf8)
     {

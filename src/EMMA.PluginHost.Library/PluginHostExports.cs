@@ -40,6 +40,7 @@ public static class PluginHostExports
     private static PluginHandshakeService? _handshake;
     private static PluginResolutionService? _pluginResolution;
     private static IWasmPluginRuntimeHost? _wasmRuntime;
+    private static DownloadOrchestrator? _downloadOrchestrator;
     private static bool _initialized = false;
     private static readonly Lock _initLock = new();
     private static readonly Lock _errorLock = new();
@@ -130,6 +131,7 @@ public static class PluginHostExports
                 services.AddSingleton<ILibraryPort, SqliteLibraryPort>();
                 services.AddSingleton<IProgressPort, SqliteProgressPort>();
                 services.AddSingleton<IHistoryPort, SqliteHistoryPort>();
+                services.AddSingleton<IDownloadPort, SqliteDownloadPort>();
                 services.AddSingleton<IPageAssetCachePort>(sp =>
                     new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
                 services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
@@ -182,6 +184,15 @@ public static class PluginHostExports
                 _handshake = _serviceProvider.GetRequiredService<PluginHandshakeService>();
                 _pluginResolution = _serviceProvider.GetRequiredService<PluginResolutionService>();
                 _wasmRuntime = _serviceProvider.GetRequiredService<IWasmPluginRuntimeHost>();
+
+                var downloadPort = _serviceProvider.GetRequiredService<IDownloadPort>();
+                var downloadLogger = _serviceProvider
+                    .GetRequiredService<ILoggerFactory>()
+                    .CreateLogger<DownloadOrchestrator>();
+                _downloadOrchestrator = new DownloadOrchestrator(
+                    downloadPort,
+                    ExecuteDownloadJobAsync,
+                    downloadLogger);
 
                 // Load plugins via handshake service
                 _handshake.HandshakeAllAsync(CancellationToken.None).GetAwaiter().GetResult();
@@ -337,6 +348,8 @@ public static class PluginHostExports
             _handshake = null;
             _pluginResolution = null;
             _wasmRuntime = null;
+            _downloadOrchestrator?.Dispose();
+            _downloadOrchestrator = null;
             foreach (var pair in _grpcChannelCache)
             {
                 pair.Value.Dispose();
@@ -553,6 +566,153 @@ public static class PluginHostExports
         {
             SetLastError(ex);
             return null;
+        }
+    }
+
+    public static string? EnqueueDownloadJsonManaged(
+        string pluginId,
+        string mediaId,
+        string mediaType,
+        string? chapterId,
+        string? streamId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var orchestrator = _downloadOrchestrator
+                ?? throw new InvalidOperationException("Download orchestrator is not initialized.");
+
+            var request = new DownloadEnqueueRequest(
+                pluginId,
+                mediaId,
+                mediaType,
+                chapterId,
+                streamId);
+
+            var created = orchestrator.EnqueueAsync(request, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return JsonSerializer.Serialize(
+                MapDownloadJobResponse(created),
+                PluginHostExportsJsonContext.Default.DownloadJobResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? ListDownloadsJsonManaged(int limit = 200)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var orchestrator = _downloadOrchestrator
+                ?? throw new InvalidOperationException("Download orchestrator is not initialized.");
+
+            var jobs = orchestrator.ListAsync(Math.Max(1, limit), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var payload = jobs.Select(MapDownloadJobResponse).ToList();
+            return JsonSerializer.Serialize(
+                payload,
+                PluginHostExportsJsonContext.Default.ListDownloadJobResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static string? GetDownloadJsonManaged(string jobId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var orchestrator = _downloadOrchestrator
+                ?? throw new InvalidOperationException("Download orchestrator is not initialized.");
+
+            var job = orchestrator.GetAsync(jobId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            if (job is null)
+            {
+                SetLastError($"Download job '{jobId}' was not found.");
+                return null;
+            }
+
+            return JsonSerializer.Serialize(
+                MapDownloadJobResponse(job),
+                PluginHostExportsJsonContext.Default.DownloadJobResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    public static int PauseDownloadManaged(string jobId)
+    {
+        return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.PauseAsync(id, CancellationToken.None));
+    }
+
+    public static int ResumeDownloadManaged(string jobId)
+    {
+        return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.ResumeAsync(id, CancellationToken.None));
+    }
+
+    public static int CancelDownloadManaged(string jobId)
+    {
+        return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.CancelAsync(id, CancellationToken.None));
+    }
+
+    public static int DeleteDownloadManaged(string jobId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var orchestrator = _downloadOrchestrator
+                ?? throw new InvalidOperationException("Download orchestrator is not initialized.");
+
+            var job = orchestrator.GetAsync(jobId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (job is null)
+            {
+                SetLastError($"Download job '{jobId}' was not found.");
+                return 0;
+            }
+
+            var ok = orchestrator.DeleteAsync(jobId, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (!ok)
+            {
+                SetLastError($"Failed to delete download job '{jobId}'.");
+                return 0;
+            }
+
+            DeleteDownloadedArtifactsForJob(job);
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
         }
     }
 
@@ -917,13 +1077,26 @@ public static class PluginHostExports
 
             if (cachedRecords.Count > 0)
             {
-                return cachedRecords
-                    .Select(chapter => new MediaChapter(
-                        chapter.ChapterId,
-                        chapter.Number,
-                        chapter.Title,
-                        chapter.UploaderGroups ?? []))
-                    .ToList();
+                var hasAnyUploaderGroups = cachedRecords.Any(chapter =>
+                    chapter.UploaderGroups is { Count: > 0 }
+                    && chapter.UploaderGroups.Any(group => !string.IsNullOrWhiteSpace(group)));
+
+                var hasNonGuidUploaderGroup = cachedRecords.Any(chapter =>
+                    chapter.UploaderGroups is { Count: > 0 }
+                    && chapter.UploaderGroups.Any(group =>
+                        !string.IsNullOrWhiteSpace(group)
+                        && !Guid.TryParse(group.Trim(), out _)));
+
+                if (hasAnyUploaderGroups && hasNonGuidUploaderGroup)
+                {
+                    return cachedRecords
+                        .Select(chapter => new MediaChapter(
+                            chapter.ChapterId,
+                            chapter.Number,
+                            chapter.Title,
+                            chapter.UploaderGroups ?? []))
+                        .ToList();
+                }
             }
         }
 
@@ -1073,28 +1246,10 @@ public static class PluginHostExports
 
         try
         {
-            var page = GetPageManagedInternal(pluginId, mediaId, chapterId, pageIndex);
-            if (page is null)
+            var asset = GetPageAssetManagedInternal(pluginId, mediaId, chapterId, pageIndex);
+            if (asset is null)
             {
                 return null;
-            }
-
-            EnsureInitialized();
-            var cache = _serviceProvider!.GetService<IPageAssetCachePort>();
-            var fetcher = _serviceProvider!.GetService<IPageAssetFetcherPort>();
-            if (fetcher is null)
-            {
-                SetLastError("Page asset fetcher is not configured.");
-                return null;
-            }
-
-            var cacheKey = $"page-asset:{page.ContentUri}";
-            var cached = cache?.GetAsync(cacheKey, CancellationToken.None).GetAwaiter().GetResult();
-            var asset = cached ?? fetcher.FetchAsync(page.ContentUri, CancellationToken.None).GetAwaiter().GetResult();
-
-            if (cache is not null && cached is null)
-            {
-                cache.SetAsync(cacheKey, asset, CancellationToken.None).GetAwaiter().GetResult();
             }
 
             return JsonSerializer.Serialize(asset, PluginHostExportsJsonContext.Default.MediaPageAsset);
@@ -1127,6 +1282,832 @@ public static class PluginHostExports
             SetLastError(ex);
             return null;
         }
+    }
+
+    private static MediaPageAsset? GetPageAssetManagedInternal(string pluginId, string mediaId, string chapterId, int pageIndex)
+    {
+        if (TryReadDownloadedPagedAsset(pluginId, mediaId, chapterId, pageIndex, out var downloadedAsset))
+        {
+            return downloadedAsset;
+        }
+
+        var page = GetPageManagedInternal(pluginId, mediaId, chapterId, pageIndex);
+        if (page is null)
+        {
+            return null;
+        }
+
+        EnsureInitialized();
+        var cache = _serviceProvider!.GetService<IPageAssetCachePort>();
+        var fetcher = _serviceProvider!.GetService<IPageAssetFetcherPort>();
+        if (fetcher is null)
+        {
+            SetLastError("Page asset fetcher is not configured.");
+            return null;
+        }
+
+        var cacheKey = $"page-asset:{page.ContentUri}";
+        var cached = cache?.GetAsync(cacheKey, CancellationToken.None).GetAwaiter().GetResult();
+        var asset = cached ?? fetcher.FetchAsync(page.ContentUri, CancellationToken.None).GetAwaiter().GetResult();
+
+        if (cache is not null && cached is null)
+        {
+            cache.SetAsync(cacheKey, asset, CancellationToken.None).GetAwaiter().GetResult();
+        }
+
+        return asset;
+    }
+
+    private static int ChangeDownloadStateManaged(
+        string jobId,
+        Func<DownloadOrchestrator, string, Task<bool>> action)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var orchestrator = _downloadOrchestrator
+                ?? throw new InvalidOperationException("Download orchestrator is not initialized.");
+
+            var ok = action(orchestrator, jobId)
+                .GetAwaiter()
+                .GetResult();
+
+            if (!ok)
+            {
+                SetLastError($"Failed to update download job '{jobId}'.");
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    private static DownloadJobResponse MapDownloadJobResponse(DownloadJobRecord record)
+    {
+        return new DownloadJobResponse(
+            record.Id,
+            record.PluginId,
+            record.MediaId,
+            record.MediaType,
+            record.ChapterId,
+            record.StreamId,
+            record.State.ToString(),
+            record.ProgressCompleted,
+            record.ProgressTotal,
+            record.BytesDownloaded,
+            record.ErrorMessage,
+            record.CreatedAtUtc.ToString("O"),
+            record.UpdatedAtUtc.ToString("O"),
+            record.StartedAtUtc?.ToString("O"),
+            record.CompletedAtUtc?.ToString("O"));
+    }
+
+    private static async Task<DownloadExecutionResult> ExecuteDownloadJobAsync(
+        DownloadJobRecord job,
+        IProgress<DownloadExecutionProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        EnsureInitialized();
+
+        var normalizedType = (job.MediaType ?? string.Empty).Trim().ToLowerInvariant();
+        return normalizedType switch
+        {
+            "video" => await ExecuteVideoDownloadJobAsync(job, progress, cancellationToken),
+            _ => await ExecutePagedDownloadJobAsync(job, progress, cancellationToken)
+        };
+    }
+
+    private static Task<DownloadExecutionResult> ExecutePagedDownloadJobAsync(
+        DownloadJobRecord job,
+        IProgress<DownloadExecutionProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        var chapters = GetChaptersManagedInternal(job.PluginId, job.MediaId, forceRefresh: false);
+        if (chapters is null)
+        {
+            return Task.FromResult(new DownloadExecutionResult(
+                false,
+                0,
+                0,
+                0,
+                GetLastErrorManaged() ?? "Failed to resolve chapters for download."));
+        }
+
+        var selectedChapters = !string.IsNullOrWhiteSpace(job.ChapterId)
+            ? chapters.Where(ch => string.Equals(ch.ChapterId, job.ChapterId, StringComparison.Ordinal)).ToList()
+            : chapters.ToList();
+
+        if (selectedChapters.Count == 0)
+        {
+            return Task.FromResult(new DownloadExecutionResult(false, 0, 0, 0, "No chapters available for download."));
+        }
+
+        var storageRoot = ResolveDownloadRootDirectory();
+        var completed = 0;
+        var total = 0;
+        long bytesDownloaded = 0;
+
+        foreach (var chapter in selectedChapters)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var startIndex = 0;
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var pagesResult = GetPagesManagedInternal(
+                    job.PluginId,
+                    job.MediaId,
+                    chapter.ChapterId,
+                    startIndex,
+                    64);
+
+                if (pagesResult.Pages.Count == 0)
+                {
+                    break;
+                }
+
+                total += pagesResult.Pages.Count;
+
+                foreach (var page in pagesResult.Pages)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var asset = GetPageAssetManagedInternal(job.PluginId, job.MediaId, chapter.ChapterId, page.Index);
+                    if (asset is null)
+                    {
+                        return Task.FromResult(new DownloadExecutionResult(
+                            false,
+                            completed,
+                            total,
+                            bytesDownloaded,
+                            GetLastErrorManaged() ?? "Failed to fetch page asset."));
+                    }
+
+                    var pagePath = Path.Combine(
+                        storageRoot,
+                        "paged",
+                        SanitizePathSegment(job.PluginId),
+                        SanitizePathSegment(job.MediaId),
+                        SanitizePathSegment(chapter.ChapterId),
+                        $"{page.Index:D6}.bin");
+
+                    WriteDownloadPayload(pagePath, asset.Payload);
+                    bytesDownloaded += asset.Payload.LongLength;
+                    completed++;
+                    progress.Report(new DownloadExecutionProgress(completed, total, bytesDownloaded));
+                }
+
+                if (pagesResult.ReachedEnd)
+                {
+                    break;
+                }
+
+                startIndex += pagesResult.Pages.Count;
+            }
+        }
+
+        return Task.FromResult(new DownloadExecutionResult(true, completed, total, bytesDownloaded, null));
+    }
+
+    private static Task<DownloadExecutionResult> ExecuteVideoDownloadJobAsync(
+        DownloadJobRecord job,
+        IProgress<DownloadExecutionProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        var streams = GetVideoStreamsManagedInternal(job.PluginId, job.MediaId);
+        if (streams is null || streams.Count == 0)
+        {
+            return Task.FromResult(new DownloadExecutionResult(
+                false,
+                0,
+                0,
+                0,
+                GetLastErrorManaged() ?? "No video streams available for download."));
+        }
+
+        var selectedStream = !string.IsNullOrWhiteSpace(job.StreamId)
+            ? streams.FirstOrDefault(stream => string.Equals(stream.Id, job.StreamId, StringComparison.Ordinal))
+            : streams.First();
+        if (selectedStream is null)
+        {
+            return Task.FromResult(new DownloadExecutionResult(false, 0, 0, 0, "Requested stream was not found."));
+        }
+
+        var storageRoot = ResolveDownloadRootDirectory();
+        var completed = 0;
+        var total = 0;
+        long bytesDownloaded = 0;
+
+        if (TryResolveDirectVideoUri(selectedStream.PlaylistUri, out var directVideoUri, out var directVideoExtension))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            total = 1;
+
+            try
+            {
+                byte[] payload;
+                if (directVideoUri.IsFile)
+                {
+                    payload = File.ReadAllBytes(directVideoUri.LocalPath);
+                }
+                else
+                {
+                    using var httpClient = new HttpClient();
+                    payload = httpClient.GetByteArrayAsync(directVideoUri, cancellationToken)
+                        .GetAwaiter()
+                        .GetResult();
+                }
+
+                if (payload.Length == 0)
+                {
+                    return Task.FromResult(new DownloadExecutionResult(
+                        false,
+                        0,
+                        total,
+                        0,
+                        "Direct video stream returned an empty payload."));
+                }
+
+                var directPath = BuildDownloadedVideoDirectFilePath(
+                    job.PluginId,
+                    job.MediaId,
+                    selectedStream.Id,
+                    directVideoExtension);
+                WriteDownloadPayload(directPath, payload);
+                bytesDownloaded = payload.LongLength;
+                completed = 1;
+                progress.Report(new DownloadExecutionProgress(completed, total, bytesDownloaded));
+                return Task.FromResult(new DownloadExecutionResult(true, completed, total, bytesDownloaded, null));
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult(new DownloadExecutionResult(
+                    false,
+                    0,
+                    total,
+                    0,
+                    $"Failed to download direct video stream: {ex.Message}"));
+            }
+        }
+
+        for (var sequence = 0; sequence < 100_000; sequence++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            total++;
+
+            var segment = GetVideoSegmentManagedInternal(job.PluginId, job.MediaId, selectedStream.Id, sequence);
+            if (segment is null)
+            {
+                var error = GetLastErrorManaged();
+                if (!string.IsNullOrWhiteSpace(error)
+                    && error.StartsWith("SEGMENT_NOT_FOUND:", StringComparison.Ordinal))
+                {
+                    total--;
+                    break;
+                }
+
+                return Task.FromResult(new DownloadExecutionResult(
+                    false,
+                    completed,
+                    total,
+                    bytesDownloaded,
+                    error ?? "Failed to fetch video segment."));
+            }
+
+            var segmentPath = Path.Combine(
+                storageRoot,
+                "video",
+                SanitizePathSegment(job.PluginId),
+                SanitizePathSegment(job.MediaId),
+                SanitizePathSegment(selectedStream.Id),
+                $"{sequence:D6}.bin");
+
+            WriteDownloadPayload(segmentPath, segment.Payload);
+            bytesDownloaded += segment.Payload.LongLength;
+            completed++;
+            progress.Report(new DownloadExecutionProgress(completed, total, bytesDownloaded));
+        }
+
+        if (completed <= 0)
+        {
+            var error = GetLastErrorManaged();
+            return Task.FromResult(new DownloadExecutionResult(
+                false,
+                completed,
+                total,
+                bytesDownloaded,
+                string.IsNullOrWhiteSpace(error)
+                    ? "No video segments were downloaded."
+                    : error));
+        }
+
+        return Task.FromResult(new DownloadExecutionResult(true, completed, total, bytesDownloaded, null));
+    }
+
+    private static string ResolveDownloadRootDirectory()
+    {
+        EnsureInitialized();
+        var storage = _serviceProvider!.GetRequiredService<StorageOptions>();
+        var dbDirectory = Path.GetDirectoryName(storage.DatabasePath);
+        if (string.IsNullOrWhiteSpace(dbDirectory))
+        {
+            dbDirectory = Path.Combine(Path.GetTempPath(), "EMMA");
+        }
+
+        var root = Path.Combine(dbDirectory, "downloads");
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static void WriteDownloadPayload(string path, byte[] payload)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        File.WriteAllBytes(path, payload ?? Array.Empty<byte>());
+    }
+
+    private static string BuildDownloadedPagedAssetPath(string pluginId, string mediaId, string chapterId, int pageIndex)
+    {
+        return Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "paged",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId),
+            SanitizePathSegment(chapterId),
+            $"{pageIndex:D6}.bin");
+    }
+
+    private static string BuildDownloadedPagedChapterRootPath(string pluginId, string mediaId, string chapterId)
+    {
+        return Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "paged",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId),
+            SanitizePathSegment(chapterId));
+    }
+
+    private static bool TryGetDownloadedPagedPage(
+        string pluginId,
+        string mediaId,
+        string chapterId,
+        int pageIndex,
+        out MediaPage? page)
+    {
+        page = null;
+        var path = BuildDownloadedPagedAssetPath(pluginId, mediaId, chapterId, pageIndex);
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        page = new MediaPage(
+            $"offline:{chapterId}:{pageIndex}",
+            pageIndex,
+            new Uri(
+                $"emma-offline://paged/{Uri.EscapeDataString(pluginId)}/{Uri.EscapeDataString(mediaId)}/{Uri.EscapeDataString(chapterId)}/{pageIndex:D6}.bin",
+                UriKind.Absolute));
+        return true;
+    }
+
+    private static bool TryGetDownloadedPagedPages(
+        string pluginId,
+        string mediaId,
+        string chapterId,
+        int startIndex,
+        int count,
+        out MediaPagesResult result)
+    {
+        result = new MediaPagesResult([], true);
+
+        var chapterRoot = BuildDownloadedPagedChapterRootPath(pluginId, mediaId, chapterId);
+        if (!Directory.Exists(chapterRoot))
+        {
+            return false;
+        }
+
+        var pageIndexes = new List<int>();
+        foreach (var filePath in Directory.EnumerateFiles(chapterRoot, "*.bin"))
+        {
+            var fileName = Path.GetFileNameWithoutExtension(filePath);
+            if (int.TryParse(fileName, out var parsedIndex) && parsedIndex >= 0)
+            {
+                pageIndexes.Add(parsedIndex);
+            }
+        }
+
+        if (pageIndexes.Count == 0)
+        {
+            return false;
+        }
+
+        pageIndexes.Sort();
+
+        var pages = pageIndexes
+            .Where(index => index >= startIndex)
+            .Take(count)
+            .Select(index =>
+                new MediaPage(
+                    $"offline:{chapterId}:{index}",
+                    index,
+                    new Uri(
+                        $"emma-offline://paged/{Uri.EscapeDataString(pluginId)}/{Uri.EscapeDataString(mediaId)}/{Uri.EscapeDataString(chapterId)}/{index:D6}.bin",
+                        UriKind.Absolute)))
+            .ToList();
+
+        if (pages.Count == 0)
+        {
+            result = new MediaPagesResult([], true);
+            return true;
+        }
+
+        var maxIndex = pageIndexes[^1];
+        var reachedEnd = pages[^1].Index >= maxIndex;
+        result = new MediaPagesResult(pages, reachedEnd);
+        return true;
+    }
+
+    private static string BuildDownloadedVideoSegmentPath(string pluginId, string mediaId, string streamId, int sequence)
+    {
+        return Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "video",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId),
+            SanitizePathSegment(streamId),
+            $"{sequence:D6}.bin");
+    }
+
+    private static string BuildDownloadedVideoDirectFilePath(string pluginId, string mediaId, string streamId, string extension)
+    {
+        var normalizedExtension = NormalizeDirectVideoExtension(extension);
+        return Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "video",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId),
+            SanitizePathSegment(streamId),
+            $"source{normalizedExtension}");
+    }
+
+    private static string BuildDownloadedPagedRootPath(string pluginId, string mediaId)
+    {
+        return Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "paged",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId));
+    }
+
+    private static string BuildDownloadedVideoRootPath(string pluginId, string mediaId)
+    {
+        return Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "video",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId));
+    }
+
+    private static string BuildDownloadedVideoPlaylistPath(string pluginId, string mediaId, string streamId)
+    {
+        return Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "video",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId),
+            SanitizePathSegment(streamId),
+            "offline.m3u8");
+    }
+
+    private static void DeleteDownloadedArtifactsForJob(DownloadJobRecord job)
+    {
+        var mediaType = (job.MediaType ?? string.Empty).Trim().ToLowerInvariant();
+        switch (mediaType)
+        {
+            case "video":
+                {
+                    var mediaRoot = BuildDownloadedVideoRootPath(job.PluginId, job.MediaId);
+                    if (string.IsNullOrWhiteSpace(job.StreamId))
+                    {
+                        DeleteDirectoryIfExists(mediaRoot);
+                        return;
+                    }
+
+                    var streamRoot = Path.Combine(mediaRoot, SanitizePathSegment(job.StreamId));
+                    DeleteDirectoryIfExists(streamRoot);
+                    DeleteDirectoryIfEmpty(mediaRoot);
+                    return;
+                }
+            default:
+                {
+                    var mediaRoot = BuildDownloadedPagedRootPath(job.PluginId, job.MediaId);
+                    if (string.IsNullOrWhiteSpace(job.ChapterId))
+                    {
+                        DeleteDirectoryIfExists(mediaRoot);
+                        return;
+                    }
+
+                    var chapterRoot = Path.Combine(mediaRoot, SanitizePathSegment(job.ChapterId));
+                    DeleteDirectoryIfExists(chapterRoot);
+                    DeleteDirectoryIfEmpty(mediaRoot);
+                    return;
+                }
+        }
+    }
+
+    private static void DeleteDirectoryIfExists(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+        {
+            return;
+        }
+
+        Directory.Delete(path, recursive: true);
+    }
+
+    private static void DeleteDirectoryIfEmpty(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+        {
+            return;
+        }
+
+        if (Directory.EnumerateFileSystemEntries(path).Any())
+        {
+            return;
+        }
+
+        Directory.Delete(path, recursive: false);
+    }
+
+    private static bool TryReadDownloadedPagedAsset(
+        string pluginId,
+        string mediaId,
+        string chapterId,
+        int pageIndex,
+        out MediaPageAsset? asset)
+    {
+        asset = null;
+        var path = BuildDownloadedPagedAssetPath(pluginId, mediaId, chapterId, pageIndex);
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        asset = new MediaPageAsset(
+            "application/octet-stream",
+            File.ReadAllBytes(path),
+            new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero));
+        return true;
+    }
+
+    private static bool TryReadDownloadedVideoSegmentAsset(
+        string pluginId,
+        string mediaId,
+        string streamId,
+        int sequence,
+        out VideoSegmentAssetResponse? asset)
+    {
+        asset = null;
+        var path = BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence);
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        asset = new VideoSegmentAssetResponse(
+            "application/octet-stream",
+            File.ReadAllBytes(path),
+            File.GetLastWriteTimeUtc(path).ToString("O"));
+        return true;
+    }
+
+    private static IReadOnlyList<VideoStreamResponse> ReadDownloadedVideoStreams(string pluginId, string mediaId)
+    {
+        var mediaRoot = Path.Combine(
+            ResolveDownloadRootDirectory(),
+            "video",
+            SanitizePathSegment(pluginId),
+            SanitizePathSegment(mediaId));
+        if (!Directory.Exists(mediaRoot))
+        {
+            return [];
+        }
+
+        var streams = new List<VideoStreamResponse>();
+        foreach (var streamDirectory in Directory.EnumerateDirectories(mediaRoot))
+        {
+            var streamId = Path.GetFileName(streamDirectory);
+            if (string.IsNullOrWhiteSpace(streamId))
+            {
+                continue;
+            }
+
+            var directVideoFile = TryGetDownloadedDirectVideoFile(streamDirectory);
+            if (directVideoFile is not null)
+            {
+                streams.Add(new VideoStreamResponse(
+                    streamId,
+                    $"Offline {streamId}",
+                    new Uri(directVideoFile).AbsoluteUri));
+                continue;
+            }
+
+            if (!Directory.EnumerateFiles(streamDirectory, "*.bin").Any())
+            {
+                continue;
+            }
+
+            if (LooksLikeSyntheticTextSegments(streamDirectory))
+            {
+                continue;
+            }
+
+            var playlistPath = BuildDownloadedVideoPlaylistPath(pluginId, mediaId, streamId);
+            if (!TryWriteOfflineVideoPlaylist(streamDirectory, playlistPath))
+            {
+                continue;
+            }
+
+            streams.Add(new VideoStreamResponse(
+                streamId,
+                $"Offline {streamId}",
+                new Uri(playlistPath).AbsoluteUri));
+        }
+
+        return streams;
+    }
+
+    private static bool TryWriteOfflineVideoPlaylist(string streamDirectory, string playlistPath)
+    {
+        var segments = Directory.EnumerateFiles(streamDirectory, "*.bin")
+            .Select(path => new
+            {
+                Path = path,
+                Name = Path.GetFileName(path),
+                Sort = ParseSequenceFromPath(path)
+            })
+            .Where(item => item.Sort >= 0 && !string.IsNullOrWhiteSpace(item.Name))
+            .OrderBy(item => item.Sort)
+            .ThenBy(item => item.Name, StringComparer.Ordinal)
+            .ToList();
+
+        if (segments.Count == 0)
+        {
+            return false;
+        }
+
+        var sb = new StringBuilder();
+        sb.AppendLine("#EXTM3U");
+        sb.AppendLine("#EXT-X-VERSION:3");
+        sb.AppendLine("#EXT-X-TARGETDURATION:6");
+        sb.AppendLine("#EXT-X-MEDIA-SEQUENCE:0");
+        foreach (var segment in segments)
+        {
+            sb.AppendLine("#EXTINF:6.000,");
+            sb.AppendLine(segment.Name);
+        }
+        sb.AppendLine("#EXT-X-ENDLIST");
+
+        var parent = Path.GetDirectoryName(playlistPath);
+        if (!string.IsNullOrWhiteSpace(parent))
+        {
+            Directory.CreateDirectory(parent);
+        }
+
+        File.WriteAllText(playlistPath, sb.ToString());
+        return true;
+    }
+
+    private static int ParseSequenceFromPath(string filePath)
+    {
+        var name = Path.GetFileNameWithoutExtension(filePath);
+        return int.TryParse(name, out var parsed) && parsed >= 0
+            ? parsed
+            : -1;
+    }
+
+    private static bool TryResolveDirectVideoUri(string playlistUri, out Uri directUri, out string extension)
+    {
+        directUri = default!;
+        extension = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(playlistUri)
+            || !Uri.TryCreate(playlistUri.Trim(), UriKind.Absolute, out var parsedUri))
+        {
+            return false;
+        }
+
+        var scheme = parsedUri.Scheme?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (scheme is not "http" and not "https" and not "file")
+        {
+            return false;
+        }
+
+        var ext = Path.GetExtension(parsedUri.AbsolutePath ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(ext))
+        {
+            return false;
+        }
+
+        var normalized = NormalizeDirectVideoExtension(ext);
+        if (normalized is not ".mp4" and not ".m4v" and not ".mov" and not ".webm" and not ".mkv" and not ".avi")
+        {
+            return false;
+        }
+
+        directUri = parsedUri;
+        extension = normalized;
+        return true;
+    }
+
+    private static string NormalizeDirectVideoExtension(string extension)
+    {
+        var normalized = (extension ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return ".mp4";
+        }
+
+        if (!normalized.StartsWith(".", StringComparison.Ordinal))
+        {
+            normalized = $".{normalized}";
+        }
+
+        return normalized;
+    }
+
+    private static string? TryGetDownloadedDirectVideoFile(string streamDirectory)
+    {
+        var candidates = Directory.EnumerateFiles(streamDirectory)
+            .Where(path =>
+            {
+                var ext = Path.GetExtension(path).Trim().ToLowerInvariant();
+                return ext is ".mp4" or ".m4v" or ".mov" or ".webm" or ".mkv" or ".avi";
+            })
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return candidates.Count > 0 ? candidates[0] : null;
+    }
+
+    private static bool LooksLikeSyntheticTextSegments(string streamDirectory)
+    {
+        var firstSegmentPath = Directory.EnumerateFiles(streamDirectory, "*.bin")
+            .Select(path => new
+            {
+                Path = path,
+                Sort = ParseSequenceFromPath(path)
+            })
+            .Where(item => item.Sort >= 0)
+            .OrderBy(item => item.Sort)
+            .Select(item => item.Path)
+            .FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(firstSegmentPath) || !File.Exists(firstSegmentPath))
+        {
+            return false;
+        }
+
+        var bytes = File.ReadAllBytes(firstSegmentPath);
+        if (bytes.Length == 0)
+        {
+            return true;
+        }
+
+        var probe = Encoding.UTF8.GetString(bytes, 0, Math.Min(bytes.Length, 128));
+        return probe.StartsWith("SEGMENT|", StringComparison.Ordinal);
+    }
+
+    private static string SanitizePathSegment(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "unknown";
+        }
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            sb.Append(invalid.Contains(ch) ? '_' : ch);
+        }
+
+        var sanitized = sb.ToString().Trim();
+        return string.IsNullOrWhiteSpace(sanitized) ? "unknown" : sanitized;
     }
 
     public static string? GetVideoSegmentJsonManaged(string pluginId, string mediaId, string streamId, int sequence)
@@ -2068,6 +3049,11 @@ public static class PluginHostExports
             return null;
         }
 
+        if (TryGetDownloadedPagedPage(pluginId, mediaId, chapterId, pageIndex, out var offlinePage))
+        {
+            return offlinePage;
+        }
+
         if (!TryResolvePlugin(pluginId, out var record, out var address))
         {
             return null;
@@ -2165,6 +3151,11 @@ public static class PluginHostExports
             return new MediaPagesResult([], true);
         }
 
+        if (TryGetDownloadedPagedPages(pluginId, mediaId, chapterId, startIndex, count, out var offlinePages))
+        {
+            return offlinePages;
+        }
+
         if (!TryResolvePlugin(pluginId, out var record, out var address))
         {
             return new MediaPagesResult([], true);
@@ -2252,6 +3243,12 @@ public static class PluginHostExports
             return null;
         }
 
+        var downloadedStreams = ReadDownloadedVideoStreams(pluginId, mediaId);
+        if (downloadedStreams.Count > 0)
+        {
+            return downloadedStreams;
+        }
+
         if (!TryResolvePlugin(pluginId, out var record, out var address))
         {
             return null;
@@ -2321,6 +3318,11 @@ public static class PluginHostExports
         {
             SetLastError("sequence must be >= 0");
             return null;
+        }
+
+        if (TryReadDownloadedVideoSegmentAsset(pluginId, mediaId, streamId, sequence, out var downloadedSegment))
+        {
+            return downloadedSegment;
         }
 
         if (!TryResolvePlugin(pluginId, out var record, out var address))

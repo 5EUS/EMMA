@@ -80,7 +80,8 @@ internal sealed class NativeLogStore
 
         lock (_lock)
         {
-            var sequence = Interlocked.Increment(ref _nextSequence);
+            _nextSequence++;
+            var sequence = _nextSequence;
             entry = new NativeLogEntry(sequence, DateTimeOffset.UtcNow, level, safeCategory, safeMessage);
 
             _entries.Enqueue(entry);

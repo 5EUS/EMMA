@@ -296,6 +296,9 @@ public sealed class PluginRepositoryInstallOrchestrator(
             MoveDirectoryWithFallback(payload.StagedPluginPath, payload.PluginDestination);
             MoveFileWithFallback(payload.StagedManifestPath, payload.ManifestDestination);
 
+            // Preserve runtime cache data (for example, thumbnails) across plugin updates.
+            RestorePluginCacheFromBackup(backupPluginPath, payload.PluginDestination);
+
             TryDeleteDirectory(backupRoot);
             TryDeleteDirectory(payload.StagingRoot);
         }
@@ -625,6 +628,52 @@ public sealed class PluginRepositoryInstallOrchestrator(
             var relative = Path.GetRelativePath(sourcePath, file);
             var targetFile = Path.Combine(destinationPath, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+            File.Copy(file, targetFile, overwrite: false);
+        }
+    }
+
+    private static void RestorePluginCacheFromBackup(string backupPluginPath, string pluginDestination)
+    {
+        if (string.IsNullOrWhiteSpace(backupPluginPath)
+            || string.IsNullOrWhiteSpace(pluginDestination)
+            || !Directory.Exists(backupPluginPath)
+            || !Directory.Exists(pluginDestination))
+        {
+            return;
+        }
+
+        var backupCachePath = Path.Combine(backupPluginPath, "cache");
+        if (!Directory.Exists(backupCachePath))
+        {
+            return;
+        }
+
+        var destinationCachePath = Path.Combine(pluginDestination, "cache");
+        CopyDirectoryContentsNoOverwrite(backupCachePath, destinationCachePath);
+    }
+
+    private static void CopyDirectoryContentsNoOverwrite(string sourcePath, string destinationPath)
+    {
+        Directory.CreateDirectory(destinationPath);
+
+        foreach (var directory in Directory.GetDirectories(sourcePath, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourcePath, directory);
+            var targetDirectory = Path.Combine(destinationPath, relative);
+            Directory.CreateDirectory(targetDirectory);
+        }
+
+        foreach (var file in Directory.GetFiles(sourcePath, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourcePath, file);
+            var targetFile = Path.Combine(destinationPath, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+
+            if (File.Exists(targetFile))
+            {
+                continue;
+            }
+
             File.Copy(file, targetFile, overwrite: false);
         }
     }

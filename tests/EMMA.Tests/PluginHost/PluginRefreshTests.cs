@@ -47,6 +47,7 @@ public sealed class PluginRefreshTests
                         ["PluginHost:ManifestDirectory"] = tempRoot,
                         ["PluginHost:HandshakeOnStartup"] = "true",
                         ["PluginHost:HandshakeTimeoutSeconds"] = "5",
+                        ["PluginHost:AllowNoSandboxFallback"] = "true",
                         ["PluginSignature:RequireSignedPlugins"] = "false"
                     };
 

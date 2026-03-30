@@ -105,7 +105,7 @@ public sealed class StorageInitializer(StorageOptions options)
 
         try
         {
-            if (await IsAppliedInCurrentTransactionAsync(connection, migration.Name, cancellationToken))
+            if (await IsAppliedAsync(connection, migration.Name, cancellationToken))
             {
                 await ExecuteNonQueryAsync(connection, "COMMIT;", cancellationToken);
                 return;
@@ -126,19 +126,6 @@ public sealed class StorageInitializer(StorageOptions options)
             await ExecuteNonQueryAsync(connection, "ROLLBACK;", cancellationToken);
             throw;
         }
-    }
-
-    private static async Task<bool> IsAppliedInCurrentTransactionAsync(
-        SqliteConnection connection,
-        string name,
-        CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT 1 FROM __emma_migrations WHERE name = $name LIMIT 1;";
-        command.Parameters.AddWithValue("$name", name);
-
-        var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result is not null;
     }
 
     private static async Task ExecuteNonQueryAsync(

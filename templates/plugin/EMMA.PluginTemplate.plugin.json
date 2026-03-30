@@ -2,14 +2,29 @@
   "id": "emma.plugin.template",
   "name": "EMMA Plugin Template",
   "version": "0.1.0",
-  "description": "Starter manifest for a gRPC plugin using PluginBuilder.",
+  "description": "Starter manifest aligned with the current Mangadex-based plugin runtime shape.",
   "author": "Your Name",
   "protocol": "grpc",
   "runtime": {
     "minHostVersion": "1.0.0"
   },
+  "mediaTypes": [
+    "paged"
+  ],
+  "capabilities": {
+    "network": [
+      "https"
+    ],
+    "fileSystem": [],
+    "cache": false,
+    "cpuBudgetMs": 250,
+    "memoryMb": 512
+  },
   "permissions": {
-    "domains": [],
+    "domains": [
+      "api.mangadex.org",
+      "uploads.mangadex.org"
+    ],
     "paths": []
   }
 }

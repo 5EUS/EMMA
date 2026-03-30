@@ -381,14 +381,13 @@ public sealed class WasmPluginRuntimeHost(
         CancellationToken cancellationToken)
     {
         var componentPath = ResolveComponentPath(record.Manifest);
-        var chaptersJson = await RunInvokeOperationAsync(
+        var chaptersJson = await RunComponentAsync(
             componentPath,
-            operation: ChaptersOperation,
-            mediaId: mediaId.Value,
-            mediaType: PagedMediaType,
-            argsJson: null,
-            permittedDomains: record.Manifest.Permissions?.Domains,
-            cancellationToken: cancellationToken);
+            ChaptersOperation,
+            [mediaId.Value],
+            record.Manifest.Permissions?.Domains,
+            cancellationToken);
+
         var chapters = DeserializeJson<IReadOnlyList<WasmChapterItem>>(chaptersJson);
         if (chapters is null || chapters.Count == 0)
         {

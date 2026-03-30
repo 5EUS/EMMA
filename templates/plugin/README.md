@@ -1,6 +1,10 @@
-# EMMA Plugin Template (Phase 3 SDK)
+# EMMA Plugin Template
 
-This template demonstrates the minimal secure startup shape using `PluginBuilder`.
+This template now follows the same runtime shape as the current Mangadex test plugin:
+- AspNet runtime uses a single `AspNetClient` that implements SDK runtime interfaces.
+- Default provider services are registered through `AddDefaultPagedProviders<T>()` and `AddDefaultVideoProvider<T>()`.
+- WASM transport uses a componentized host (`WasmPluginOperationHost`) plus typed WIT exports.
+- Request URL construction and payload mapping are centralized under `Infrastructure/`.
 
 ## Run
 
@@ -8,37 +12,64 @@ This template demonstrates the minimal secure startup shape using `PluginBuilder
 dotnet run --project templates/plugin/EMMA.PluginTemplate.csproj
 ```
 
-Build (AspNet transport):
+Default port is `5000`.
+
+In dev mode, you can override with:
 
 ```bash
-dotnet build templates/plugin/EMMA.PluginTemplate.csproj
+EMMA_PLUGIN_TEMPLATE_PORT=6001 dotnet run --project templates/plugin/EMMA.PluginTemplate.csproj
 ```
 
-Build (WASM transport):
+or:
+
+```bash
+dotnet run --project templates/plugin/EMMA.PluginTemplate.csproj -- --port 6001
+```
+
+## Build
+
+AspNet build:
+
+```bash
+dotnet build templates/plugin/EMMA.PluginTemplate.csproj -p:PluginTransport=AspNet
+```
+
+WASM component build:
 
 ```bash
 dotnet build templates/plugin/EMMA.PluginTemplate.csproj -p:PluginTransport=Wasm
 ```
 
-## Why this template is minimal
-- Startup uses `PluginBuilder` with default security interceptor.
-- Control service is provided by `UseDefaultControlService(...)`.
-- Provider handlers contain plugin logic only.
-- Policy enforcement remains host-side and manifest-authoritative.
+## Package
 
-## Next steps
-1. Rename namespace and project from `EMMA.PluginTemplate`.
-2. Implement logic in `Services/*ProviderService.cs`.
-3. Update `EMMA.PluginTemplate.plugin.json` metadata, budgets, and permissions.
-4. Pack with:
+From `templates/plugin/scripts`:
+
+Build and package WASM:
 
 ```bash
-./scripts/plugin-pack.sh ./templates/plugin
+./build-pack-plugin.sh ../EMMA.PluginTemplate.plugin.json
 ```
 
-Pack an ASP.NET plugin bundle for a native RID (for example Linux x64):
+Build and package AspNet for Linux x64:
 
 ```bash
-cd templates/plugin/scripts
 TARGETS="linux-x64" ./build-pack-plugin-aspnet.sh ../EMMA.PluginTemplate.plugin.json
 ```
+
+## File map
+
+- `Program.cs`: transport entrypoints and host wiring.
+- `Services/AspNetClient.cs`: AspNet runtime implementation.
+- `Infrastructure/ProviderRequestUrls.cs`: provider URL and HTTP profile defaults.
+- `Infrastructure/CoreClient.cs` + `Infrastructure/PayloadMapper.cs`: payload parsing/mapping.
+- `Infrastructure/WasmPluginOperationHost.cs`: WASM operation dispatch and CLI integration.
+- `Infrastructure/WasmTypedExports.cs`: WIT export bridge.
+- `wit/library.wit`: component interface contract.
+
+## Customize this template
+
+1. Rename namespace/project/manifest IDs from `EMMA.PluginTemplate`.
+2. Replace Mangadex URL builders in `Infrastructure/ProviderRequestUrls.cs`.
+3. Replace parsing logic in `Infrastructure/PayloadMapper.cs` to match your provider payload schema.
+4. Update permissions, budgets, and metadata in `EMMA.PluginTemplate.plugin.json`.
+5. Keep transport plumbing as-is unless your operation contract changes.

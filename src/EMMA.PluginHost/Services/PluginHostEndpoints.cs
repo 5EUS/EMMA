@@ -82,15 +82,11 @@ public static class PluginHostEndpoints
             PluginRepositoryService repositoryService,
             CancellationToken cancellationToken) =>
         {
-            try
+            return await ExecuteRepositoryActionAsync(async ct =>
             {
-                var repository = await repositoryService.AddRepositoryAsync(request, cancellationToken);
+                var repository = await repositoryService.AddRepositoryAsync(request, ct);
                 return Results.Ok(repository);
-            }
-            catch (Exception ex)
-            {
-                return MapRepositoryException(ex);
-            }
+            }, cancellationToken);
         });
 
         app.MapDelete("/plugins/repositories/{repositoryId}", async (
@@ -98,20 +94,16 @@ public static class PluginHostEndpoints
             PluginRepositoryService repositoryService,
             CancellationToken cancellationToken) =>
         {
-            try
+            return await ExecuteRepositoryActionAsync(async ct =>
             {
-                var removed = await repositoryService.RemoveRepositoryAsync(repositoryId, cancellationToken);
+                var removed = await repositoryService.RemoveRepositoryAsync(repositoryId, ct);
                 if (!removed)
                 {
                     return Results.NotFound(new { message = $"Repository '{repositoryId}' was not found." });
                 }
 
                 return Results.Ok(new { status = "removed", repositoryId });
-            }
-            catch (Exception ex)
-            {
-                return MapRepositoryException(ex);
-            }
+            }, cancellationToken);
         });
 
         app.MapPost("/plugins/repositories/{repositoryId}/refresh", async (
@@ -119,12 +111,12 @@ public static class PluginHostEndpoints
             PluginRepositoryService repositoryService,
             CancellationToken cancellationToken) =>
         {
-            try
+            return await ExecuteRepositoryActionAsync(async ct =>
             {
                 var snapshot = await repositoryService.GetRepositoryCatalogSnapshotAsync(
                     repositoryId,
                     refresh: true,
-                    cancellationToken);
+                    ct);
 
                 return Results.Ok(new
                 {
@@ -133,11 +125,7 @@ public static class PluginHostEndpoints
                     snapshot.RetrievedAtUtc,
                     pluginCount = snapshot.Catalog.Plugins.Count
                 });
-            }
-            catch (Exception ex)
-            {
-                return MapRepositoryException(ex);
-            }
+            }, cancellationToken);
         });
 
         app.MapGet("/plugins/repositories/{repositoryId}/plugins", async (
@@ -146,19 +134,15 @@ public static class PluginHostEndpoints
             PluginRepositoryService repositoryService,
             CancellationToken cancellationToken) =>
         {
-            try
+            return await ExecuteRepositoryActionAsync(async ct =>
             {
                 var result = await repositoryService.GetRepositoryPluginsAsync(
                     repositoryId,
                     refresh ?? false,
-                    cancellationToken);
+                    ct);
 
                 return Results.Ok(result);
-            }
-            catch (Exception ex)
-            {
-                return MapRepositoryException(ex);
-            }
+            }, cancellationToken);
         });
 
         app.MapGet("/plugins/repository-plugins", async (
@@ -175,18 +159,28 @@ public static class PluginHostEndpoints
             PluginRepositoryInstallOrchestrator installOrchestrator,
             CancellationToken cancellationToken) =>
         {
-            try
+            return await ExecuteRepositoryActionAsync(async ct =>
             {
-                var result = await installOrchestrator.InstallFromRepositoryAsync(request, cancellationToken);
+                var result = await installOrchestrator.InstallFromRepositoryAsync(request, ct);
                 return Results.Ok(result);
-            }
-            catch (Exception ex)
-            {
-                return MapRepositoryException(ex);
-            }
+            }, cancellationToken);
         });
 
         return app;
+    }
+
+    private static async Task<IResult> ExecuteRepositoryActionAsync(
+        Func<CancellationToken, Task<IResult>> action,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await action(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            return MapRepositoryException(ex);
+        }
     }
 
     private static IResult MapRepositoryException(Exception ex)

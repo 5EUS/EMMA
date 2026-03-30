@@ -19,10 +19,17 @@ public static class RuntimeBootstrap
     /// <summary>
     /// Creates an in-memory runtime with a seeded demo catalog.
     /// </summary>
-    public static InMemoryRuntime CreateInMemory()
+    public static InMemoryRuntime CreateInMemory(Action<InMemoryMediaStore>? seed = null)
     {
         var store = new InMemoryMediaStore();
-        SeedSampleData(store);
+        if (seed is null)
+        {
+            SeedSampleData(store);
+        }
+        else
+        {
+            seed(store);
+        }
 
         var cache = new InMemoryCachePort();
         var policy = new HostPolicyEvaluator();
