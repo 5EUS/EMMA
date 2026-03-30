@@ -1798,33 +1798,33 @@ public static class PluginHostExports
         switch (mediaType)
         {
             case "video":
-            {
-                var mediaRoot = BuildDownloadedVideoRootPath(job.PluginId, job.MediaId);
-                if (string.IsNullOrWhiteSpace(job.StreamId))
                 {
-                    DeleteDirectoryIfExists(mediaRoot);
+                    var mediaRoot = BuildDownloadedVideoRootPath(job.PluginId, job.MediaId);
+                    if (string.IsNullOrWhiteSpace(job.StreamId))
+                    {
+                        DeleteDirectoryIfExists(mediaRoot);
+                        return;
+                    }
+
+                    var streamRoot = Path.Combine(mediaRoot, SanitizePathSegment(job.StreamId));
+                    DeleteDirectoryIfExists(streamRoot);
+                    DeleteDirectoryIfEmpty(mediaRoot);
                     return;
                 }
-
-                var streamRoot = Path.Combine(mediaRoot, SanitizePathSegment(job.StreamId));
-                DeleteDirectoryIfExists(streamRoot);
-                DeleteDirectoryIfEmpty(mediaRoot);
-                return;
-            }
             default:
-            {
-                var mediaRoot = BuildDownloadedPagedRootPath(job.PluginId, job.MediaId);
-                if (string.IsNullOrWhiteSpace(job.ChapterId))
                 {
-                    DeleteDirectoryIfExists(mediaRoot);
+                    var mediaRoot = BuildDownloadedPagedRootPath(job.PluginId, job.MediaId);
+                    if (string.IsNullOrWhiteSpace(job.ChapterId))
+                    {
+                        DeleteDirectoryIfExists(mediaRoot);
+                        return;
+                    }
+
+                    var chapterRoot = Path.Combine(mediaRoot, SanitizePathSegment(job.ChapterId));
+                    DeleteDirectoryIfExists(chapterRoot);
+                    DeleteDirectoryIfEmpty(mediaRoot);
                     return;
                 }
-
-                var chapterRoot = Path.Combine(mediaRoot, SanitizePathSegment(job.ChapterId));
-                DeleteDirectoryIfExists(chapterRoot);
-                DeleteDirectoryIfEmpty(mediaRoot);
-                return;
-            }
         }
     }
 

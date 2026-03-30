@@ -9,6 +9,7 @@ using EMMA.Infrastructure.Http;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
 using EMMA.Storage;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,10 +23,16 @@ builder.Services.AddGrpc(options =>
 });
 builder.Services.AddRateLimiter(options =>
 {
+    static ApiRateLimitOptions GetRateLimitOptions(HttpContext context)
+        => context.RequestServices.GetRequiredService<IOptions<ApiRateLimitOptions>>().Value;
+
+    static ApiAuthOptions GetAuthOptions(HttpContext context)
+        => context.RequestServices.GetRequiredService<IOptions<ApiAuthOptions>>().Value;
+
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
-        var settings = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<ApiRateLimitOptions>>().Value;
+        var settings = GetRateLimitOptions(context);
         return RateLimitPartition.GetConcurrencyLimiter(
             "global",
             _ => new ConcurrencyLimiterOptions
@@ -37,8 +44,8 @@ builder.Services.AddRateLimiter(options =>
     });
     options.AddPolicy("per-client", context =>
     {
-        var settings = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<ApiRateLimitOptions>>().Value;
-        var auth = context.RequestServices.GetRequiredService<Microsoft.Extensions.Options.IOptions<ApiAuthOptions>>().Value;
+        var settings = GetRateLimitOptions(context);
+        var auth = GetAuthOptions(context);
         var key = ApiAuthHeader.GetClientKey(context, auth.HeaderName);
         return RateLimitPartition.GetFixedWindowLimiter(
             key,
@@ -54,7 +61,7 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.Configure<PluginHostClientOptions>(builder.Configuration.GetSection("PluginHost"));
 builder.Services.AddHttpClient<PluginHostPagedMediaPort>((sp, client) =>
 {
-    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PluginHostClientOptions>>().Value;
+    var options = sp.GetRequiredService<IOptions<PluginHostClientOptions>>().Value;
     client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
 });
 builder.Services.AddSingleton<IMediaSearchPort>(sp => sp.GetRequiredService<PluginHostPagedMediaPort>());

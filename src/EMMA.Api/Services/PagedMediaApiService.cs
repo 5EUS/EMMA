@@ -19,7 +19,7 @@ public sealed class PagedMediaApiService(
     public override async Task<SearchResponse> Search(SearchRequest request, ServerCallContext context)
     {
         using var scope = BeginClientScope();
-        try
+        return await ExecuteSafelyAsync(async () =>
         {
             var results = await _runtime.Pipeline.SearchAsync(request.Query ?? string.Empty, context.CancellationToken);
             var response = new SearchResponse
@@ -28,11 +28,7 @@ public sealed class PagedMediaApiService(
             };
             response.Result.Items.AddRange(results.Select(PagedMediaApiMapper.MapSummary));
             return response;
-        }
-        catch (Exception ex)
-        {
-            return new SearchResponse { Error = PagedMediaApiMapper.CreateError(ex) };
-        }
+        }, error => new SearchResponse { Error = error });
     }
 
     public override async Task<ChaptersResponse> GetChapters(ChaptersRequest request, ServerCallContext context)
@@ -43,7 +39,7 @@ public sealed class PagedMediaApiService(
             return new ChaptersResponse { Error = PagedMediaApiMapper.InvalidRequest("media_id is required.") };
         }
 
-        try
+        return await ExecuteSafelyAsync(async () =>
         {
             var chapters = await _runtime.Pipeline.GetChaptersAsync(
                 MediaId.Create(request.MediaId),
@@ -55,27 +51,19 @@ public sealed class PagedMediaApiService(
             };
             response.Result.Items.AddRange(chapters.Select(PagedMediaApiMapper.MapChapter));
             return response;
-        }
-        catch (Exception ex)
-        {
-            return new ChaptersResponse { Error = PagedMediaApiMapper.CreateError(ex) };
-        }
+        }, error => new ChaptersResponse { Error = error });
     }
 
     public override async Task<PageResponse> GetPage(PageRequest request, ServerCallContext context)
     {
         using var scope = BeginClientScope();
-        if (string.IsNullOrWhiteSpace(request.MediaId) || string.IsNullOrWhiteSpace(request.ChapterId))
+        var validationError = ValidatePageRequest(request.MediaId, request.ChapterId, request.Index);
+        if (validationError is not null)
         {
-            return new PageResponse { Error = PagedMediaApiMapper.InvalidRequest("media_id and chapter_id are required.") };
+            return new PageResponse { Error = validationError };
         }
 
-        if (request.Index < 0)
-        {
-            return new PageResponse { Error = PagedMediaApiMapper.InvalidRequest("index must be >= 0.") };
-        }
-
-        try
+        return await ExecuteSafelyAsync(async () =>
         {
             var page = await _runtime.Pipeline.GetPageAsync(
                 MediaId.Create(request.MediaId),
@@ -84,27 +72,19 @@ public sealed class PagedMediaApiService(
                 context.CancellationToken);
 
             return new PageResponse { Page = PagedMediaApiMapper.MapPage(page) };
-        }
-        catch (Exception ex)
-        {
-            return new PageResponse { Error = PagedMediaApiMapper.CreateError(ex) };
-        }
+        }, error => new PageResponse { Error = error });
     }
 
     public override async Task<PageAssetResponse> GetPageAsset(PageAssetRequest request, ServerCallContext context)
     {
         using var scope = BeginClientScope();
-        if (string.IsNullOrWhiteSpace(request.MediaId) || string.IsNullOrWhiteSpace(request.ChapterId))
+        var validationError = ValidatePageRequest(request.MediaId, request.ChapterId, request.Index);
+        if (validationError is not null)
         {
-            return new PageAssetResponse { Error = PagedMediaApiMapper.InvalidRequest("media_id and chapter_id are required.") };
+            return new PageAssetResponse { Error = validationError };
         }
 
-        if (request.Index < 0)
-        {
-            return new PageAssetResponse { Error = PagedMediaApiMapper.InvalidRequest("index must be >= 0.") };
-        }
-
-        try
+        return await ExecuteSafelyAsync(async () =>
         {
             var page = await _runtime.Pipeline.GetPageAsync(
                 MediaId.Create(request.MediaId),
@@ -117,10 +97,35 @@ public sealed class PagedMediaApiService(
             {
                 Asset = PagedMediaApiMapper.MapAsset(asset)
             };
+        }, error => new PageAssetResponse { Error = error });
+    }
+
+    private static ApiError? ValidatePageRequest(string mediaId, string chapterId, int index)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
+        {
+            return PagedMediaApiMapper.InvalidRequest("media_id and chapter_id are required.");
+        }
+
+        if (index < 0)
+        {
+            return PagedMediaApiMapper.InvalidRequest("index must be >= 0.");
+        }
+
+        return null;
+    }
+
+    private static async Task<TResponse> ExecuteSafelyAsync<TResponse>(
+        Func<Task<TResponse>> action,
+        Func<ApiError, TResponse> mapError)
+    {
+        try
+        {
+            return await action();
         }
         catch (Exception ex)
         {
-            return new PageAssetResponse { Error = PagedMediaApiMapper.CreateError(ex) };
+            return mapError(PagedMediaApiMapper.CreateError(ex));
         }
     }
 
