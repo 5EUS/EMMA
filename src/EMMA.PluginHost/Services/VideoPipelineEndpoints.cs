@@ -1,3 +1,4 @@
+using EMMA.Domain;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using Microsoft.AspNetCore.Builder;
@@ -35,28 +36,40 @@ public static class VideoPipelineEndpoints
                     : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
             }
 
-            if (wasmRuntimeHost.IsWasmPlugin(record.Manifest))
-            {
-                return Results.Problem(
-                    detail: "Video pipeline endpoints are not wired for WASM plugins yet.",
-                    statusCode: StatusCodes.Status501NotImplemented);
-            }
-
-            if (address is null)
+            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
+            if (!isWasm && address is null)
             {
                 return Results.Problem("Plugin resolution failed.");
             }
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
-            var correlationId = PluginGrpcHelpers.CreateCorrelationId();
-            var endpoint = new PluginGrpcEndpoint(record, address, correlationId);
-            var videoPort = new PluginVideoProviderPort(
-                endpoint,
-                options,
-                loggerFactory.CreateLogger<PluginVideoProviderPort>());
+            IReadOnlyList<VideoStreamResult> streams;
+            if (isWasm)
+            {
+                var wasmStreams = await wasmRuntimeHost.GetVideoStreamsAsync(
+                    record,
+                    MediaId.Create(mediaId),
+                    cancellationToken);
 
-            var streams = await videoPort.GetStreamsAsync(mediaId, cancellationToken);
+                streams = [.. wasmStreams
+                    .Select(stream => new VideoStreamResult(
+                        stream.Id ?? string.Empty,
+                        stream.Label ?? string.Empty,
+                        stream.PlaylistUri ?? string.Empty))];
+            }
+            else
+            {
+                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+                var endpoint = new PluginGrpcEndpoint(record, address!, correlationId);
+                var videoPort = new PluginVideoProviderPort(
+                    endpoint,
+                    options,
+                    loggerFactory.CreateLogger<PluginVideoProviderPort>());
+
+                streams = await videoPort.GetStreamsAsync(mediaId, cancellationToken);
+            }
+
             return Results.Ok(new
             {
                 Streams = streams.Select(stream => new
@@ -98,28 +111,48 @@ public static class VideoPipelineEndpoints
                     : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
             }
 
-            if (wasmRuntimeHost.IsWasmPlugin(record.Manifest))
-            {
-                return Results.Problem(
-                    detail: "Video pipeline endpoints are not wired for WASM plugins yet.",
-                    statusCode: StatusCodes.Status501NotImplemented);
-            }
-
-            if (address is null)
+            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
+            if (!isWasm && address is null)
             {
                 return Results.Problem("Plugin resolution failed.");
             }
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
-            var correlationId = PluginGrpcHelpers.CreateCorrelationId();
-            var endpoint = new PluginGrpcEndpoint(record, address, correlationId);
-            var videoPort = new PluginVideoProviderPort(
-                endpoint,
-                options,
-                loggerFactory.CreateLogger<PluginVideoProviderPort>());
+            VideoSegmentResult segment;
+            if (isWasm)
+            {
+                var wasmSegment = await wasmRuntimeHost.GetVideoSegmentAsync(
+                    record,
+                    MediaId.Create(mediaId),
+                    streamId,
+                    sequence ?? 0,
+                    cancellationToken);
 
-            var segment = await videoPort.GetSegmentAsync(mediaId, streamId, sequence ?? 0, cancellationToken);
+                if (wasmSegment is null)
+                {
+                    return Results.NotFound(new
+                    {
+                        message = "Video segment not found."
+                    });
+                }
+
+                segment = new VideoSegmentResult(
+                    wasmSegment.ContentType,
+                    wasmSegment.Payload);
+            }
+            else
+            {
+                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+                var endpoint = new PluginGrpcEndpoint(record, address!, correlationId);
+                var videoPort = new PluginVideoProviderPort(
+                    endpoint,
+                    options,
+                    loggerFactory.CreateLogger<PluginVideoProviderPort>());
+
+                segment = await videoPort.GetSegmentAsync(mediaId, streamId, sequence ?? 0, cancellationToken);
+            }
+
             return Results.File(segment.Payload, segment.ContentType);
         });
 
