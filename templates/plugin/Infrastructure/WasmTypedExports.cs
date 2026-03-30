@@ -97,6 +97,31 @@ public static class PluginImpl
         return new IPlugin.MediaOperationResponse(result.contentType, result.payloadJson);
     }
 
+    public static List<IPlugin.VideoStreamItem> VideoStreams(string mediaId, string payloadJson)
+    {
+        var streamsByMediaId = BuildStreamsByMediaId();
+        if (!streamsByMediaId.TryGetValue(mediaId, out var streams))
+        {
+            return [];
+        }
+
+        return [.. streams.Select(stream => new IPlugin.VideoStreamItem(stream.Id, stream.Label, stream.PlaylistUri))];
+    }
+
+    public static IPlugin.VideoSegmentItem? VideoSegment(string mediaId, string streamId, uint sequence, string payloadJson)
+    {
+        if (string.Equals(mediaId, "video-segment-basic", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(streamId, "segment-main", StringComparison.OrdinalIgnoreCase)
+            && sequence <= 4)
+        {
+            var payload = System.Text.Encoding.UTF8.GetBytes(
+                $"SEGMENT|media={mediaId}|stream={streamId}|seq={sequence}");
+            return new IPlugin.VideoSegmentItem("video/mp2t", payload);
+        }
+
+        return null;
+    }
+
     private static string? ResolveInvokePayload(IPlugin.MediaOperationRequest request)
     {
         var operationRequest = new OperationRequest(
