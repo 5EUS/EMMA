@@ -24,4 +24,20 @@ public static class PluginPayload
         var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(payload ?? string.Empty);
         Console.Error.WriteLine($"[TEMP_TIMING_REMOVE] wasmPayload op={operation} source=stdin bytes={payloadBytes}");
     }
+
+    public static string NormalizePayload(string? payload)
+    {
+        return PluginJsonPayload.Normalize(payload);
+    }
+
+    public static string ResolvePayload(string? payload, Func<string?> fallbackProvider)
+    {
+        var normalized = NormalizePayload(payload);
+        if (!string.IsNullOrWhiteSpace(normalized))
+        {
+            return normalized;
+        }
+
+        return NormalizePayload(fallbackProvider());
+    }
 }

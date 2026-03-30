@@ -4,6 +4,7 @@ using EMMA.Domain;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
 using EMMA.Storage;
+using Microsoft.Data.Sqlite;
 
 namespace EMMA.Tests.Application;
 
@@ -54,6 +55,63 @@ public sealed class PagedMediaPipelineStorageTests
         var storedPages = await catalog.GetPagesAsync(mediaId, "ch-1", CancellationToken.None);
         Assert.Single(storedPages);
         Assert.Equal("page-1", storedPages[0].PageId);
+    }
+
+    [Fact]
+    public async Task ListMediaAsync_HandlesNullTagsFromLegacyRows()
+    {
+        var tempDb = Path.Combine(Path.GetTempPath(), "emma-tests", Guid.NewGuid().ToString("N"), "emma.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(tempDb)!);
+
+        var options = new StorageOptions(tempDb);
+        var initializer = new StorageInitializer(options);
+        await initializer.InitializeAsync(CancellationToken.None);
+
+        await using (var connection = new SqliteConnection($"Data Source={tempDb}"))
+        {
+            await connection.OpenAsync(CancellationToken.None);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO media (
+                    id,
+                    source_id,
+                    title,
+                    media_type,
+                    rating,
+                    synopsis,
+                    language,
+                    tags,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    $id,
+                    $sourceId,
+                    $title,
+                    $mediaType,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL,
+                    $createdAt,
+                    $updatedAt
+                );
+                """;
+            command.Parameters.AddWithValue("$id", "legacy-null-tags");
+            command.Parameters.AddWithValue("$sourceId", "legacy-source");
+            command.Parameters.AddWithValue("$title", "Legacy Title");
+            command.Parameters.AddWithValue("$mediaType", "paged");
+            command.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            await command.ExecuteNonQueryAsync(CancellationToken.None);
+        }
+
+        var catalog = new SqliteMediaCatalogPort(options);
+
+        var items = await catalog.ListMediaAsync(10, CancellationToken.None);
+        var media = Assert.Single(items);
+        Assert.Equal("legacy-null-tags", media.Id.Value);
+        Assert.Empty(media.Tags);
     }
 
     private sealed class StubSearchPort : IMediaSearchPort

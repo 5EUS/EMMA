@@ -1,25 +1,31 @@
 #if PLUGIN_TRANSPORT_ASPNET
+using EMMA.Plugin.Common;
 using EMMA.Plugin.AspNetCore;
 using EMMA.PluginTemplate.Infrastructure;
 using EMMA.PluginTemplate.Services;
 using Microsoft.Extensions.DependencyInjection;
 #else
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using EMMA.Plugin.Common;
+using EMMA.PluginTemplate.Infrastructure;
 #endif
 
 namespace EMMA.PluginTemplate;
 
+/// <summary>
+/// Transport entrypoint: wires AspNet host services or WASM operation host.
+/// </summary>
 public static partial class Program
 {
 #if PLUGIN_TRANSPORT_ASPNET
+    private static readonly ManifestDefaults ControlDefaults = ManifestDefaultsProvider.Load();
+
     public static void Main(string[] args)
     {
         var devMode = PluginEnvironment.IsDevelopmentMode();
         var hostOptions = new PluginAspNetHostOptions(
-            DefaultPort: 5005,
+            DefaultPort: PluginEnvironment.GetPort(args, 5000),
             PortEnvironmentVariables: devMode
-                ? ["EMMA_PLUGIN_PORT", "EMMA_TEST_PLUGIN_PORT"]
+                ? ["EMMA_PLUGIN_PORT", "EMMA_PLUGIN_TEMPLATE_PORT"]
                 : ["EMMA_PLUGIN_PORT"],
             PortArgumentName: devMode ? "--port" : string.Empty,
             RootMessage: "EMMA plugin template is running.");
@@ -27,78 +33,89 @@ public static partial class Program
         PluginBuilder.Create(args, hostOptions)
             .ConfigureServices(services =>
             {
-                services.AddHttpClient<HttpJsonClient>(client =>
+                services.AddHttpClient<AspNetClient>(client =>
                 {
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd("EMMA-PluginTemplate/1.0");
-                    client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+                    client.BaseAddress = ProviderHttpProfile.BaseUri;
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd(ProviderHttpProfile.UserAgent);
+                    client.DefaultRequestHeaders.Accept.ParseAdd(ProviderHttpProfile.AcceptMediaType);
                 });
             })
-            .UseDefaultControlService(options =>
-            {
-                options.Message = "EMMA plugin template ready";
-                options.Capabilities.Add("search");
-                options.Capabilities.Add("pages");
-                options.Capabilities.Add("video");
-            })
-            .AddSearchProvider<SearchProviderService>()
-            .AddPageProvider<PageProviderService>()
-            .AddVideoProvider<VideoProviderService>()
+            .UseDefaultControlService(ConfigureDefaultControlService)
+                .AddDefaultPagedProviders<AspNetClient>()
+                .AddDefaultVideoProvider<AspNetClient>()
             .Run(mapDefaultEndpoints: devMode);
     }
+
+    /// <summary>
+    /// Applies manifest-driven control defaults exposed to the host.
+    /// </summary>
+    private static void ConfigureDefaultControlService(PluginSdkControlOptions options)
+    {
+        options.Message = "EMMA plugin template ready";
+        options.CpuBudgetMs = ControlDefaults.CpuBudgetMs;
+        options.MemoryMb = ControlDefaults.MemoryMb;
+        options.Capabilities.Add("plugin-template");
+        options.Capabilities.Add("search");
+        options.Capabilities.Add("pages");
+        options.Capabilities.Add("video");
+
+        options.Domains.Clear();
+        foreach (var domain in ControlDefaults.Domains)
+        {
+            options.Domains.Add(domain);
+        }
+
+        options.Paths.Clear();
+        foreach (var path in ControlDefaults.Paths)
+        {
+            options.Paths.Add(path);
+        }
+    }
+
 #else
+    private static readonly WasmPluginOperationHost OperationHost = new();
+
     public static void Main(string[] args)
     {
-        var operation = args.Length > 0 ? args[0].ToLowerInvariant() : string.Empty;
-        var json = ExecuteOperation(operation, args);
-
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            Environment.ExitCode = 2;
-            Console.Error.WriteLine("Unsupported or invalid operation.");
-            return;
-        }
-
-        Console.WriteLine(json);
+        Environment.ExitCode = PluginWasmCliHost.Run(
+            args,
+            PluginOperationNames.WasmCliKnownOperations,
+            OperationHost.ExecuteOperationForCli);
     }
 
-    private static string ExecuteOperation(string operation, string[] args)
+    public static HandshakeResponse handshake()
     {
-        try
-        {
-            return operation switch
-            {
-                "handshake" => JsonSerializer.Serialize(
-                    new HandshakeResponse("1.0.0", "EMMA template wasm component ready"),
-                    PluginTemplateWasmJsonContext.Default.HandshakeResponse),
-                "capabilities" => JsonSerializer.Serialize(
-                    ["health", "search", "paged", "pages"],
-                    PluginTemplateWasmJsonContext.Default.StringArray),
-                "search" => JsonSerializer.Serialize([], PluginTemplateWasmJsonContext.Default.SearchItemArray),
-                "chapters" => JsonSerializer.Serialize([], PluginTemplateWasmJsonContext.Default.ChapterItemArray),
-                "page" => "null",
-                "pages" => JsonSerializer.Serialize([], PluginTemplateWasmJsonContext.Default.PageItemArray),
-                _ => string.Empty
-            };
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"WASM operation '{operation}' failed: {ex}");
-            return string.Empty;
-        }
+        return OperationHost.Handshake();
     }
 
-    private sealed record HandshakeResponse(string version, string message);
-    private sealed record SearchItem(string id, string source, string title, string mediaType, string? thumbnailUrl = null, string? description = null);
-    private sealed record ChapterItem(string id, int number, string title);
-    private sealed record PageItem(string id, int index, string contentUri);
-
-    [JsonSerializable(typeof(HandshakeResponse))]
-    [JsonSerializable(typeof(string[]))]
-    [JsonSerializable(typeof(SearchItem[]))]
-    [JsonSerializable(typeof(ChapterItem[]))]
-    [JsonSerializable(typeof(PageItem[]))]
-    private sealed partial class PluginTemplateWasmJsonContext : JsonSerializerContext
+    public static CapabilityItem[] capabilities()
     {
+        return OperationHost.Capabilities();
+    }
+
+    public static SearchItem[] search(string query, string payloadJson)
+    {
+        return OperationHost.Search(query, payloadJson);
+    }
+
+    public static ChapterItem[] chapters(string mediaId, string payloadJson)
+    {
+        return OperationHost.Chapters(mediaId, payloadJson);
+    }
+
+    public static PageItem? page(string mediaId, string chapterId, uint pageIndex, string payloadJson)
+    {
+        return OperationHost.Page(mediaId, chapterId, pageIndex, payloadJson);
+    }
+
+    public static PageItem[] pages(string mediaId, string chapterId, uint startIndex, uint count, string payloadJson)
+    {
+        return OperationHost.Pages(mediaId, chapterId, startIndex, count, payloadJson);
+    }
+
+    public static OperationResult invoke(OperationRequest request)
+    {
+        return OperationHost.Invoke(request);
     }
 #endif
 }

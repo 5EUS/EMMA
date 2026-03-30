@@ -99,6 +99,7 @@ public sealed class PagedPipelineIntegrationTests
                             ["PluginHost:ManifestDirectory"] = tempRoot,
                             ["PluginHost:HandshakeOnStartup"] = "false",
                             ["PluginHost:HandshakeTimeoutSeconds"] = "5",
+                            ["PluginHost:AllowNoSandboxFallback"] = "true",
                             ["PluginSignature:RequireSignedPlugins"] = "false"
                         };
 

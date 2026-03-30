@@ -32,24 +32,18 @@ public static class PagedPipelineEndpoints
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
         {
-            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
-            if (error is not null || record is null)
+            var (Record, Address, IsWasm, Error) = await ResolvePluginAsync(pluginId, pluginResolution, wasmRuntimeHost, cancellationToken);
+            if (Error is not null)
             {
-                return error is null
-                    ? Results.Problem("Plugin resolution failed.")
-                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
+                return Error;
             }
 
-            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
-            if (!isWasm && address is null)
-            {
-                return Results.Problem("Plugin resolution failed.");
-            }
+            var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
             IReadOnlyList<MediaSummary> results;
-            if (isWasm)
+            if (IsWasm)
             {
                 var wasmLogger = loggerFactory.CreateLogger("WasmSearchEndpoint");
                 var timeoutSeconds = Math.Max(1, options.Value.WasmOperationTimeoutSeconds);
@@ -104,7 +98,7 @@ public static class PagedPipelineEndpoints
                 var correlationId = PluginGrpcHelpers.CreateCorrelationId();
                 var pipeline = CreatePipeline(
                     record,
-                    address!,
+                    Address!,
                     options,
                     catalog,
                     pageAssetCache,
@@ -120,8 +114,8 @@ public static class PagedPipelineEndpoints
                 Source = result.SourceId,
                 result.Title,
                 MediaType = result.MediaType.ToString().ToLowerInvariant(),
-                ThumbnailUrl = result.ThumbnailUrl,
-                Description = result.Description
+                result.ThumbnailUrl,
+                result.Description
             }));
         });
 
@@ -143,24 +137,18 @@ public static class PagedPipelineEndpoints
                 return Results.BadRequest(new { message = "mediaId is required." });
             }
 
-            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
-            if (error is not null || record is null)
+            var (Record, Address, IsWasm, Error) = await ResolvePluginAsync(pluginId, pluginResolution, wasmRuntimeHost, cancellationToken);
+            if (Error is not null)
             {
-                return error is null
-                    ? Results.Problem("Plugin resolution failed.")
-                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
+                return Error;
             }
 
-            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
-            if (!isWasm && address is null)
-            {
-                return Results.Problem("Plugin resolution failed.");
-            }
+            var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
             IReadOnlyList<MediaChapter> chapters;
-            if (isWasm)
+            if (IsWasm)
             {
                 chapters = await wasmRuntimeHost.GetChaptersAsync(record, MediaId.Create(mediaId), cancellationToken);
             }
@@ -169,7 +157,7 @@ public static class PagedPipelineEndpoints
                 var correlationId = PluginGrpcHelpers.CreateCorrelationId();
                 var pipeline = CreatePipeline(
                     record,
-                    address!,
+                    Address!,
                     options,
                     catalog,
                     pageAssetCache,
@@ -208,50 +196,30 @@ public static class PagedPipelineEndpoints
                 return Results.BadRequest(new { message = "mediaId and chapterId are required." });
             }
 
-            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
-            if (error is not null || record is null)
+            var (Record, Address, IsWasm, Error) = await ResolvePluginAsync(pluginId, pluginResolution, wasmRuntimeHost, cancellationToken);
+            if (Error is not null)
             {
-                return error is null
-                    ? Results.Problem("Plugin resolution failed.")
-                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
+                return Error;
             }
 
-            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
-            if (!isWasm && address is null)
-            {
-                return Results.Problem("Plugin resolution failed.");
-            }
+            var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
-            MediaPage page;
-            if (isWasm)
-            {
-                page = await wasmRuntimeHost.GetPageAsync(
-                    record,
-                    MediaId.Create(mediaId),
-                    chapterId,
-                    index ?? 0,
-                    cancellationToken);
-            }
-            else
-            {
-                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
-                var pipeline = CreatePipeline(
-                    record,
-                    address!,
-                    options,
-                    catalog,
-                    pageAssetCache,
-                    pageAssetFetcher,
-                    loggerFactory,
-                    correlationId);
-                page = await pipeline.GetPageAsync(
-                    MediaId.Create(mediaId),
-                    chapterId,
-                    index ?? 0,
-                    cancellationToken);
-            }
+            var page = await GetPageAsync(
+                record,
+                Address,
+                IsWasm,
+                wasmRuntimeHost,
+                options,
+                catalog,
+                pageAssetCache,
+                pageAssetFetcher,
+                loggerFactory,
+                MediaId.Create(mediaId),
+                chapterId,
+                index ?? 0,
+                cancellationToken);
 
             return Results.Ok(new
             {
@@ -285,24 +253,18 @@ public static class PagedPipelineEndpoints
             var safeStartIndex = Math.Max(0, startIndex ?? 0);
             var safeCount = Math.Max(1, count ?? 1);
 
-            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
-            if (error is not null || record is null)
+            var (Record, Address, IsWasm, Error) = await ResolvePluginAsync(pluginId, pluginResolution, wasmRuntimeHost, cancellationToken);
+            if (Error is not null)
             {
-                return error is null
-                    ? Results.Problem("Plugin resolution failed.")
-                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
+                return Error;
             }
 
-            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
-            if (!isWasm && address is null)
-            {
-                return Results.Problem("Plugin resolution failed.");
-            }
+            var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
             MediaPagesResult pages;
-            if (isWasm)
+            if (IsWasm)
             {
                 pages = await wasmRuntimeHost.GetPagesAsync(
                     record,
@@ -317,7 +279,7 @@ public static class PagedPipelineEndpoints
                 var correlationId = PluginGrpcHelpers.CreateCorrelationId();
                 var pipeline = CreatePipeline(
                     record,
-                    address!,
+                    Address!,
                     options,
                     catalog,
                     pageAssetCache,
@@ -364,50 +326,30 @@ public static class PagedPipelineEndpoints
                 return Results.BadRequest(new { message = "mediaId and chapterId are required." });
             }
 
-            var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
-            if (error is not null || record is null)
+            var (Record, Address, IsWasm, Error) = await ResolvePluginAsync(pluginId, pluginResolution, wasmRuntimeHost, cancellationToken);
+            if (Error is not null)
             {
-                return error is null
-                    ? Results.Problem("Plugin resolution failed.")
-                    : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
+                return Error;
             }
 
-            var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
-            if (!isWasm && address is null)
-            {
-                return Results.Problem("Plugin resolution failed.");
-            }
+            var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
 
-            MediaPage page;
-            if (isWasm)
-            {
-                page = await wasmRuntimeHost.GetPageAsync(
-                    record,
-                    MediaId.Create(mediaId),
-                    chapterId,
-                    index ?? 0,
-                    cancellationToken);
-            }
-            else
-            {
-                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
-                var pipeline = CreatePipeline(
-                    record,
-                    address!,
-                    options,
-                    catalog,
-                    pageAssetCache,
-                    pageAssetFetcher,
-                    loggerFactory,
-                    correlationId);
-                page = await pipeline.GetPageAsync(
-                    MediaId.Create(mediaId),
-                    chapterId,
-                    index ?? 0,
-                    cancellationToken);
-            }
+            var page = await GetPageAsync(
+                record,
+                Address,
+                IsWasm,
+                wasmRuntimeHost,
+                options,
+                catalog,
+                pageAssetCache,
+                pageAssetFetcher,
+                loggerFactory,
+                MediaId.Create(mediaId),
+                chapterId,
+                index ?? 0,
+                cancellationToken);
 
             var cacheKey = $"{record.Manifest.Id}:{page.PageId}:{page.ContentUri}";
             var asset = await pageAssetCache.GetAsync(cacheKey, cancellationToken);
@@ -460,6 +402,69 @@ public static class PagedPipelineEndpoints
             pageAssetCache,
             pageAssetFetcher,
             catalog);
+    }
+
+    private static async ValueTask<MediaPage> GetPageAsync(
+        PluginRecord record,
+        Uri? address,
+        bool isWasm,
+        IWasmPluginRuntimeHost wasmRuntimeHost,
+        IOptions<PluginHostOptions> options,
+        IMediaCatalogPort catalog,
+        IPageAssetCachePort pageAssetCache,
+        IPageAssetFetcherPort pageAssetFetcher,
+        ILoggerFactory loggerFactory,
+        MediaId mediaId,
+        string chapterId,
+        int index,
+        CancellationToken cancellationToken)
+    {
+        if (isWasm)
+        {
+            return await wasmRuntimeHost.GetPageAsync(
+                record,
+                mediaId,
+                chapterId,
+                index,
+                cancellationToken);
+        }
+
+        var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+        var pipeline = CreatePipeline(
+            record,
+            address!,
+            options,
+            catalog,
+            pageAssetCache,
+            pageAssetFetcher,
+            loggerFactory,
+            correlationId);
+        return await pipeline.GetPageAsync(mediaId, chapterId, index, cancellationToken);
+    }
+
+    private static async ValueTask<(PluginRecord? Record, Uri? Address, bool IsWasm, IResult? Error)> ResolvePluginAsync(
+        string? pluginId,
+        PluginResolutionService pluginResolution,
+        IWasmPluginRuntimeHost wasmRuntimeHost,
+        CancellationToken cancellationToken)
+    {
+        var (record, address, error) = await pluginResolution.ResolveAsync(pluginId, cancellationToken);
+        if (error is not null || record is null)
+        {
+            var result = error is null
+                ? Results.Problem("Plugin resolution failed.")
+                : Results.Problem(detail: error.Message, statusCode: error.StatusCode);
+
+            return (null, null, false, result);
+        }
+
+        var isWasm = wasmRuntimeHost.IsWasmPlugin(record.Manifest);
+        if (!isWasm && address is null)
+        {
+            return (null, null, false, Results.Problem("Plugin resolution failed."));
+        }
+
+        return (record, address, isWasm, null);
     }
 
 }

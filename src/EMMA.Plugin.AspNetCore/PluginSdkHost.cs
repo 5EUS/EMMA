@@ -29,6 +29,14 @@ public sealed class PluginSdkControlOptions
     public IList<string> Paths { get; } = [];
 }
 
+public sealed record PluginSdkControlDefaults(
+    string Message,
+    int CpuBudgetMs,
+    int MemoryMb,
+    IReadOnlyList<string> Capabilities,
+    IReadOnlyList<string>? Domains = null,
+    IReadOnlyList<string>? Paths = null);
+
 public sealed class PluginDefaultControlService(IOptions<PluginSdkControlOptions> options)
     : PluginControl.PluginControlBase
 {
@@ -298,6 +306,36 @@ public sealed class PluginBuilder
         return AddControlService<PluginDefaultControlService>();
     }
 
+    public PluginBuilder UseDefaultControlService(PluginSdkControlDefaults defaults)
+    {
+        ArgumentNullException.ThrowIfNull(defaults);
+
+        return UseDefaultControlService(options =>
+        {
+            options.Message = defaults.Message;
+            options.CpuBudgetMs = defaults.CpuBudgetMs;
+            options.MemoryMb = defaults.MemoryMb;
+
+            options.Capabilities.Clear();
+            foreach (var capability in defaults.Capabilities)
+            {
+                options.Capabilities.Add(capability);
+            }
+
+            options.Domains.Clear();
+            foreach (var domain in defaults.Domains ?? [])
+            {
+                options.Domains.Add(domain);
+            }
+
+            options.Paths.Clear();
+            foreach (var path in defaults.Paths ?? [])
+            {
+                options.Paths.Add(path);
+            }
+        });
+    }
+
     public PluginBuilder AddGrpcService<TService>() where TService : class
     {
         _endpointRegistrations += endpoints => endpoints.AddGrpcService<TService>();
@@ -316,16 +354,41 @@ public sealed class PluginBuilder
         return this;
     }
 
+    public PluginBuilder AddDefaultSearchProvider<TRuntime>()
+        where TRuntime : class, IPluginPagedMediaRuntime
+    {
+        return AddSearchProvider<PluginDefaultSearchProviderService<TRuntime>>();
+    }
+
     public PluginBuilder AddPageProvider<TService>() where TService : class
     {
         _endpointRegistrations += endpoints => endpoints.AddPageProvider<TService>();
         return this;
     }
 
+    public PluginBuilder AddDefaultPageProvider<TRuntime>()
+        where TRuntime : class, IPluginPagedMediaRuntime
+    {
+        return AddPageProvider<PluginDefaultPageProviderService<TRuntime>>();
+    }
+
+    public PluginBuilder AddDefaultPagedProviders<TRuntime>()
+        where TRuntime : class, IPluginPagedMediaRuntime
+    {
+        return AddDefaultSearchProvider<TRuntime>()
+            .AddDefaultPageProvider<TRuntime>();
+    }
+
     public PluginBuilder AddVideoProvider<TService>() where TService : class
     {
         _endpointRegistrations += endpoints => endpoints.AddVideoProvider<TService>();
         return this;
+    }
+
+    public PluginBuilder AddDefaultVideoProvider<TRuntime>()
+        where TRuntime : class, IPluginVideoRuntime
+    {
+        return AddVideoProvider<PluginDefaultVideoProviderService<TRuntime>>();
     }
 
     public void Run(bool mapDefaultEndpoints = false)

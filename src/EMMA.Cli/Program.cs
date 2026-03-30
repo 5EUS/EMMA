@@ -6,13 +6,17 @@ using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
 using Microsoft.Extensions.Options;
 
-var baseUrl = Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_URL")?.TrimEnd('/')
+var baseUrl = Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_URL")?.Trim().TrimEnd('/')
     ?? "http://localhost:5001";
-var pluginId = Environment.GetEnvironmentVariable("EMMA_PLUGIN_ID")
+var pluginId = Environment.GetEnvironmentVariable("EMMA_PLUGIN_ID")?.Trim()
     ?? "demo";
-var query = args.Length > 0 ? args[0] : "demo";
+var query = args.FirstOrDefault()?.Trim();
+if (string.IsNullOrWhiteSpace(query))
+{
+    query = "demo";
+}
 
-var httpClient = new HttpClient { BaseAddress = new Uri(baseUrl, UriKind.Absolute) };
+using var httpClient = new HttpClient { BaseAddress = new Uri(baseUrl, UriKind.Absolute) };
 var pluginPort = new PluginHostPagedMediaPort(
     httpClient,
     Options.Create(new PluginHostClientOptions

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using EMMA.Application.Ports;
 using EMMA.Domain;
 using Microsoft.Extensions.Options;
@@ -22,14 +23,11 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
             ["query"] = query
         });
 
-        var response = await _client.GetAsync(url, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        var results = JsonSerializer.Deserialize(
-            payload,
-            typeof(List<SearchResultDto>),
-            PluginHostPagedMediaPortJsonContext.Default) as List<SearchResultDto> ?? [];
+        var results = await GetAndDeserializeAsync(
+            url,
+            PluginHostPagedMediaPortJsonContext.Default.ListSearchResultDto,
+            () => [],
+            cancellationToken);
 
         return [.. results.Select(item => new MediaSummary(
             MediaId.Create(item.Id ?? string.Empty),
@@ -47,14 +45,11 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
             ["mediaId"] = mediaId.Value
         });
 
-        var response = await _client.GetAsync(url, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        var results = JsonSerializer.Deserialize(
-            payload,
-            typeof(List<ChapterDto>),
-            PluginHostPagedMediaPortJsonContext.Default) as List<ChapterDto> ?? [];
+        var results = await GetAndDeserializeAsync(
+            url,
+            PluginHostPagedMediaPortJsonContext.Default.ListChapterDto,
+            () => [],
+            cancellationToken);
 
         return [.. results.Select(item => new MediaChapter(
             item.Id ?? string.Empty,
@@ -76,20 +71,13 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
             ["index"] = pageIndex.ToString()
         });
 
-        var response = await _client.GetAsync(url, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
+        var result = await GetAndDeserializeAsync(
+            url,
+            PluginHostPagedMediaPortJsonContext.Default.PageDto,
+            () => throw new InvalidOperationException("Plugin host returned an empty page payload."),
+            cancellationToken);
 
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        var result = JsonSerializer.Deserialize(
-            payload,
-            typeof(PageDto),
-            PluginHostPagedMediaPortJsonContext.Default) as PageDto
-            ?? throw new InvalidOperationException("Plugin host returned an empty page payload.");
-
-        if (!Uri.TryCreate(result.ContentUri, UriKind.Absolute, out var contentUri))
-        {
-            throw new InvalidOperationException("Plugin host returned an invalid page URI.");
-        }
+        var contentUri = ParseAbsoluteUri(result.ContentUri, "Plugin host returned an invalid page URI.");
 
         return new MediaPage(result.Id ?? string.Empty, result.Index, contentUri);
     }
@@ -109,23 +97,16 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
             ["count"] = count.ToString()
         });
 
-        var response = await _client.GetAsync(url, cancellationToken);
-        await EnsureSuccessAsync(response, cancellationToken);
-
-        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
-        var result = JsonSerializer.Deserialize(
-            payload,
-            typeof(PagesResultDto),
-            PluginHostPagedMediaPortJsonContext.Default) as PagesResultDto
-            ?? new PagesResultDto();
+        var result = await GetAndDeserializeAsync(
+            url,
+            PluginHostPagedMediaPortJsonContext.Default.PagesResultDto,
+            () => new PagesResultDto(),
+            cancellationToken);
 
         var pages = (result.Pages ?? [])
             .Select(item =>
             {
-                if (!Uri.TryCreate(item.ContentUri, UriKind.Absolute, out var contentUri))
-                {
-                    throw new InvalidOperationException("Plugin host returned an invalid page URI.");
-                }
+                var contentUri = ParseAbsoluteUri(item.ContentUri, "Plugin host returned an invalid page URI.");
 
                 return new MediaPage(item.Id ?? string.Empty, item.Index, contentUri);
             })
@@ -170,6 +151,29 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
         }
 
         return parts.Count == 0 ? path : $"{path}?{string.Join("&", parts)}";
+    }
+
+    private async Task<T> GetAndDeserializeAsync<T>(
+        string url,
+        JsonTypeInfo<T> typeInfo,
+        Func<T> fallback,
+        CancellationToken cancellationToken)
+    {
+        var response = await _client.GetAsync(url, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken) ?? fallback();
+    }
+
+    private static Uri ParseAbsoluteUri(string? value, string errorMessage)
+    {
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            return uri;
+        }
+
+        throw new InvalidOperationException(errorMessage);
     }
 
     private static MediaType ParseMediaType(string? value)

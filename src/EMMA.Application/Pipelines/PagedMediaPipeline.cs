@@ -265,13 +265,7 @@ public sealed class PagedMediaPipeline(
         IReadOnlyList<MediaChapter> chapters,
         CancellationToken cancellationToken)
     {
-        if (_catalog is null)
-        {
-            return;
-        }
-
-        var existing = await _catalog.GetMediaAsync(mediaId, cancellationToken);
-        if (existing is null)
+        if (_catalog is null || !await MediaExistsAsync(mediaId, cancellationToken))
         {
             return;
         }
@@ -292,28 +286,33 @@ public sealed class PagedMediaPipeline(
         MediaPage page,
         CancellationToken cancellationToken)
     {
-        if (_catalog is null)
+        if (_catalog is null || !await MediaExistsAsync(mediaId, cancellationToken))
         {
             return;
+        }
+
+        IReadOnlyList<MediaPageRecord> records =
+        [
+            new MediaPageRecord(
+                    page.PageId,
+                    mediaId,
+                    chapterId,
+                    page.Index,
+                    page.ContentUri.ToString(),
+                    DateTimeOffset.UtcNow)
+        ];
+
+        await _catalog.UpsertPagesAsync(mediaId, chapterId, records, cancellationToken);
+    }
+
+    private async Task<bool> MediaExistsAsync(MediaId mediaId, CancellationToken cancellationToken)
+    {
+        if (_catalog is null)
+        {
+            return false;
         }
 
         var existing = await _catalog.GetMediaAsync(mediaId, cancellationToken);
-        if (existing is null)
-        {
-            return;
-        }
-
-        var records = new List<MediaPageRecord>
-        {
-            new(
-                page.PageId,
-                mediaId,
-                chapterId,
-                page.Index,
-                page.ContentUri.ToString(),
-                DateTimeOffset.UtcNow)
-        };
-
-        await _catalog.UpsertPagesAsync(mediaId, chapterId, records, cancellationToken);
+        return existing is not null;
     }
 }

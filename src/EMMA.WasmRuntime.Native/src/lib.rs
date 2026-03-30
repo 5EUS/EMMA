@@ -582,7 +582,11 @@ fn invoke_typed_operation(
 ) -> Result<Option<InvokeAttemptOutput>> {
     let typed_pre = &context.typed_pre;
 
-    if operation != "handshake" && operation != "capabilities" && operation != "invoke" {
+    if operation != "handshake"
+        && operation != "capabilities"
+        && operation != "invoke"
+        && operation != "chapters"
+    {
         return Ok(None);
     }
 
@@ -690,6 +694,33 @@ fn invoke_typed_operation(
 
             serde_json::to_string(&operation_result)
                 .context("failed to serialize typed invoke operation result")?
+        }
+        "chapters" => {
+            let media_id = operation_args
+                .first()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow!("typed chapters requires media id argument"))?;
+            let payload_json = operation_args.get(1).cloned().unwrap_or_default();
+
+            let chapters = context
+                .runtime
+                .block_on(async { guest.call_chapters(&mut store, media_id, &payload_json).await })
+                .context("typed chapters failed")?;
+
+            let value = chapters
+                .into_iter()
+                .map(|item| {
+                    serde_json::json!({
+                        "id": item.id,
+                        "number": item.number,
+                        "title": item.title,
+                        "uploaderGroups": item.uploader_groups,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            serde_json::to_string(&value).context("failed to serialize typed chapters")?
         }
         _ => return Ok(None),
     };
