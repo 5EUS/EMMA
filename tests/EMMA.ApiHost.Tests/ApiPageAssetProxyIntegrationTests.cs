@@ -54,6 +54,7 @@ public sealed class ApiPageAssetProxyIntegrationTests
                         ["PluginHost:ManifestDirectory"] = tempRoot,
                         ["PluginHost:HandshakeOnStartup"] = "true",
                         ["PluginHost:HandshakeTimeoutSeconds"] = "5",
+                        ["PluginHost:AllowNoSandboxFallback"] = "true",
                         ["PluginSignature:RequireSignedPlugins"] = "false"
                     };
 
