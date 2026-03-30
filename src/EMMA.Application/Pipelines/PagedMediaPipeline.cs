@@ -291,16 +291,16 @@ public sealed class PagedMediaPipeline(
             return;
         }
 
-            IReadOnlyList<MediaPageRecord> records =
-            [
-                new MediaPageRecord(
+        IReadOnlyList<MediaPageRecord> records =
+        [
+            new MediaPageRecord(
                     page.PageId,
                     mediaId,
                     chapterId,
                     page.Index,
                     page.ContentUri.ToString(),
                     DateTimeOffset.UtcNow)
-            ];
+        ];
 
         await _catalog.UpsertPagesAsync(mediaId, chapterId, records, cancellationToken);
     }
