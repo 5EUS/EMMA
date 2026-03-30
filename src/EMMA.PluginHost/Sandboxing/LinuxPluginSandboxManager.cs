@@ -21,7 +21,27 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         string pluginRoot,
         CancellationToken cancellationToken)
     {
-        return Task.FromResult(FindExecutable(BubblewrapName) is not null);
+        var bwrapPath = FindExecutable(BubblewrapName);
+        if (bwrapPath is not null)
+        {
+            return Task.FromResult(true);
+        }
+
+        if (!Options.AllowNoSandboxFallback)
+        {
+            throw new InvalidOperationException(
+                "Linux sandbox requires bubblewrap (bwrap), but it was not found in PATH. "
+                + "Install bubblewrap or set PluginHost:AllowNoSandboxFallback=true for explicit development/test usage.");
+        }
+
+        if (Logger.IsEnabled(LogLevel.Warning))
+        {
+            Logger.LogWarning(
+                "Linux sandbox fallback enabled for plugin {PluginId}. bubblewrap was not found; running without sandbox by explicit configuration.",
+                manifest.Id);
+        }
+
+        return Task.FromResult(false);
     }
 
     public override ProcessStartInfo ApplyToStartInfo(PluginManifest manifest, ProcessStartInfo startInfo)
