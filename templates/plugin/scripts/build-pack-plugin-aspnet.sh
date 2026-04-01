@@ -3,12 +3,14 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
-ROOT_DIR=$(cd "$PLUGIN_DIR/../.." && pwd)
+ROOT_DIR="$PLUGIN_DIR"
 MANIFEST_PATH="${1:-$PLUGIN_DIR/EMMA.PluginTemplate.plugin.json}"
 OUT_DIR="$PLUGIN_DIR/artifacts"
 PACK_DIR="$OUT_DIR/pack"
 ASPNET_BUILD_CONFIGURATION="${ASPNET_BUILD_CONFIGURATION:-Release}"
 ASPNET_PROJECT_PATH="${ASPNET_PROJECT_PATH:-}"
+EMMA_SDK_VERSION="${EMMA_SDK_VERSION:-}"
+ASPNET_NO_RESTORE="${ASPNET_NO_RESTORE:-0}"
 HOST_OS="$(uname -s)"
 DEFAULT_TARGETS="osx-arm64"
 if [[ "$HOST_OS" == "Linux" ]]; then
@@ -158,31 +160,73 @@ for TARGET in $TARGETS; do
     exit 1
   fi
 
-  dotnet publish "$PROJECT_PATH" \
-    -c "$ASPNET_BUILD_CONFIGURATION" \
-    -r "$TARGET" \
-    --self-contained true \
-    -p:UseAppHost=true \
-    -p:PluginTransport=AspNet \
+  publish_args=(
+    -c "$ASPNET_BUILD_CONFIGURATION"
+    -r "$TARGET"
+    --self-contained false
+    -p:UseAppHost=true
+    -p:PublishSingleFile=true
+    -p:PluginTransport=AspNet
     -o "$PUBLISH_DIR"
+  )
 
-  APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
-  if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
-    echo "Failed to locate runtimeconfig in publish output." >&2
-    exit 1
+  if [[ -n "$EMMA_SDK_VERSION" ]]; then
+    publish_args+=("-p:EmmaSdkVersion=$EMMA_SDK_VERSION")
   fi
 
-  APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
+  if [[ "$ASPNET_NO_RESTORE" == "1" ]]; then
+    publish_args+=("--no-restore")
+  fi
+
+  dotnet publish "$PROJECT_PATH" \
+    "${publish_args[@]}"
+
+  find "$PUBLISH_DIR" -maxdepth 1 -type f \( -name "*.pdb" -o -name "*.dbg" -o -name "*.xml" \) -delete || true
+  rm -f "$PUBLISH_DIR/createdump"
+
+  APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
+  APP_EXECUTABLE=""
+
+  if [[ -n "$APP_RUNTIME_CONFIG" ]]; then
+    APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
+  else
+    PROJECT_BASENAME=$(basename "$PROJECT_PATH" .csproj)
+
+    if [[ "$TARGET" == win-* ]]; then
+      if [[ -f "$PUBLISH_DIR/${PROJECT_BASENAME}.exe" ]]; then
+        APP_EXECUTABLE="$PROJECT_BASENAME"
+      fi
+    else
+      if [[ -f "$PUBLISH_DIR/$PROJECT_BASENAME" ]]; then
+        APP_EXECUTABLE="$PROJECT_BASENAME"
+      fi
+    fi
+
+    if [[ -z "$APP_EXECUTABLE" ]]; then
+      if [[ "$TARGET" == win-* ]]; then
+        APP_EXECUTABLE=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.exe" | xargs -r -n1 basename | head -n 1 | sed 's/\.exe$//')
+      else
+        APP_EXECUTABLE=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -executable | xargs -r -n1 basename | head -n 1)
+      fi
+    fi
+
+    if [[ -z "$APP_EXECUTABLE" ]]; then
+      echo "Failed to locate app executable in publish output." >&2
+      exit 1
+    fi
+  fi
 
   cp -R "$PUBLISH_DIR"/. "$PLUGIN_OUT_DIR/"
 
   if [[ "$TARGET" == win-* ]]; then
     if [[ -f "$PLUGIN_OUT_DIR/${APP_EXECUTABLE}.exe" && "${APP_EXECUTABLE}" != "$ENTRYPOINT_NAME" ]]; then
-      cp "$PLUGIN_OUT_DIR/${APP_EXECUTABLE}.exe" "$PLUGIN_OUT_DIR/${ENTRYPOINT_NAME}.exe"
+      mv "$PLUGIN_OUT_DIR/${APP_EXECUTABLE}.exe" "$PLUGIN_OUT_DIR/${ENTRYPOINT_NAME}.exe"
+      APP_EXECUTABLE="$ENTRYPOINT_NAME"
     fi
   else
     if [[ -f "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" && "$APP_EXECUTABLE" != "$ENTRYPOINT_NAME" ]]; then
-      cp "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME"
+      mv "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME"
+      APP_EXECUTABLE="$ENTRYPOINT_NAME"
     fi
 
     chmod +x "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" || true

@@ -3,56 +3,27 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
-ROOT_DIR=$(cd "$PLUGIN_DIR/../.." && pwd)
+ROOT_DIR="$PLUGIN_DIR"
 MANIFEST_PATH="${1:-$PLUGIN_DIR/EMMA.PluginTemplate.plugin.json}"
 OUT_DIR="$PLUGIN_DIR/artifacts"
 PACK_DIR="$OUT_DIR/pack"
 HOST_OS="$(uname -s)"
-DEFAULT_TARGETS="osx-arm64"
-if [[ "$HOST_OS" == "Linux" ]]; then
-  DEFAULT_TARGETS="linux-x64"
-fi
+DEFAULT_TARGETS="wasm"
 TARGETS=${TARGETS:-"$DEFAULT_TARGETS"}
 WASM_MODULE_PATH="${WASM_MODULE_PATH:-$OUT_DIR/wasm/plugin.wasm}"
 WASM_PACKAGE_FILE_NAME="${WASM_PACKAGE_FILE_NAME:-plugin.wasm}"
-WASM_PROJECT_PATH="${WASM_PROJECT_PATH:-}"
+WASM_PROJECT_PATH="${WASM_PROJECT_PATH:-$PLUGIN_DIR/EMMA.PluginTemplate.csproj}"
 WASM_BUILD_CONFIGURATION="${WASM_BUILD_CONFIGURATION:-Release}"
 WASM_BUILD_RID="${WASM_BUILD_RID:-wasi-wasm}"
 WASM_BUILD_OUTPUT="${WASM_BUILD_OUTPUT:-$OUT_DIR/wasm-publish}"
 WASM_OUTPUT_NAME="${WASM_OUTPUT_NAME:-}"
+WASM_BUILD_TOOLCHAIN="${WASM_BUILD_TOOLCHAIN:-componentize}"
+WASM_NATIVE_CODEGEN="${WASM_NATIVE_CODEGEN:-none}"
 SKIP_WASM_BUILD="${SKIP_WASM_BUILD:-0}"
 CWASM_WASMTIME_TARGET="${CWASM_WASMTIME_TARGET:-}"
 CWASM_WASMTIME_BIN="${CWASM_WASMTIME_BIN:-wasmtime}"
 CWASM_EXPECTED_WASMTIME_VERSION="${CWASM_EXPECTED_WASMTIME_VERSION:-34.0.2}"
-CWASM_PRECOMPILE_TOOL="${CWASM_PRECOMPILE_TOOL:-$ROOT_DIR/tools/EMMA.CwasmPrecompile/target/release/emma_cwasm_precompile}"
-
-resolve_project_path() {
-  if [[ -n "$WASM_PROJECT_PATH" ]]; then
-    echo "$WASM_PROJECT_PATH"
-    return 0
-  fi
-
-  local -a csproj_candidates=()
-  while IFS= read -r candidate; do
-    csproj_candidates+=("$candidate")
-  done < <(find "$PLUGIN_DIR" -maxdepth 1 -type f -name "*.csproj" | sort)
-
-  if [[ ${#csproj_candidates[@]} -eq 1 ]]; then
-    echo "${csproj_candidates[0]}"
-    return 0
-  fi
-
-  if [[ ${#csproj_candidates[@]} -eq 0 ]]; then
-    echo "No .csproj found in plugin directory: $PLUGIN_DIR" >&2
-  else
-    echo "Multiple .csproj files found in plugin directory. Set WASM_PROJECT_PATH explicitly." >&2
-    printf '  - %s\n' "${csproj_candidates[@]}" >&2
-  fi
-
-  exit 1
-}
-
-WASM_PROJECT_PATH="$(resolve_project_path)"
+CWASM_PRECOMPILE_TOOL="${CWASM_PRECOMPILE_TOOL:-$ROOT_DIR/tools/emma_cwasm_precompile}"
 
 resolve_default_cwasm_target() {
   local rust_host
@@ -174,14 +145,59 @@ build_wasm_component() {
   fi
 
   echo "Compiling wasm component from project: $WASM_PROJECT_PATH"
-  dotnet publish "$WASM_PROJECT_PATH" \
+  rm -rf "$WASM_BUILD_OUTPUT"
+  mkdir -p "$WASM_BUILD_OUTPUT"
+
+  # Force a clean wasm-specific dependency graph so stale obj/bin artifacts cannot
+  # leak an incompatible ABI into the produced component.
+  local project_dir
+  project_dir="$(dirname "$WASM_PROJECT_PATH")"
+  rm -rf "$project_dir/bin/"
+  rm -rf "$project_dir/obj/"
+
+  dotnet restore "$WASM_PROJECT_PATH" \
+    --no-cache \
+    --force-evaluate \
+    --runtime "$WASM_BUILD_RID" \
+    -p:PluginTransport=Wasm >/dev/null
+
+  if [[ "$WASM_BUILD_TOOLCHAIN" != "componentize" ]]; then
+    echo "Unsupported WASM_BUILD_TOOLCHAIN '$WASM_BUILD_TOOLCHAIN'. Only 'componentize' is supported." >&2
+    exit 1
+  fi
+
+  local publish_log
+  publish_log="$WASM_BUILD_OUTPUT/publish.log"
+
+  if ! WASI_SDK_PATH="$WASI_SDK_PATH" dotnet publish "$WASM_PROJECT_PATH" \
     -c "$WASM_BUILD_CONFIGURATION" \
     -r "$WASM_BUILD_RID" \
     --self-contained true \
     -p:PublishAot=false \
+    -p:NativeCodeGen="$WASM_NATIVE_CODEGEN" \
+    -p:DebugType=None \
+    -p:DebugSymbols=false \
     -p:WasmSingleFileBundle=true \
     -p:PluginTransport=Wasm \
-    -o "$WASM_BUILD_OUTPUT"
+    -o "$WASM_BUILD_OUTPUT" \
+    2>&1 | tee "$publish_log"; then
+    if grep -q "native/.*\.wasm\" because it was not found" "$publish_log" && [[ "$WASM_NATIVE_CODEGEN" == "none" ]]; then
+      echo "WASM publish produced no native artifact with NativeCodeGen=none; retrying with NativeCodeGen=llvm..."
+      WASI_SDK_PATH="$WASI_SDK_PATH" dotnet publish "$WASM_PROJECT_PATH" \
+        -c "$WASM_BUILD_CONFIGURATION" \
+        -r "$WASM_BUILD_RID" \
+        --self-contained true \
+        -p:PublishAot=false \
+        -p:NativeCodeGen=llvm \
+        -p:DebugType=None \
+        -p:DebugSymbols=false \
+        -p:WasmSingleFileBundle=true \
+        -p:PluginTransport=Wasm \
+        -o "$WASM_BUILD_OUTPUT"
+    else
+      return 1
+    fi
+  fi
 
   local expected_name
   if [[ -n "$WASM_OUTPUT_NAME" ]]; then
@@ -190,22 +206,25 @@ build_wasm_component() {
     expected_name="$(basename "$WASM_PROJECT_PATH" .csproj).wasm"
   fi
 
-  local project_dir
-  project_dir="$(dirname "$WASM_PROJECT_PATH")"
-
-  local built_wasm
-  built_wasm="$(find "$project_dir/bin/$WASM_BUILD_CONFIGURATION" -type f -path "*/$WASM_BUILD_RID/AppBundle/$expected_name" 2>/dev/null | head -n 1)"
-
-  if [[ -z "$built_wasm" ]]; then
-    built_wasm="$(find "$project_dir/bin/$WASM_BUILD_CONFIGURATION" -type f -path "*/$WASM_BUILD_RID/AppBundle/*.wasm" ! -name "dotnet.wasm" 2>/dev/null | head -n 1)"
+  local built_wasm=""
+  mapfile -t wasm_candidates_by_name < <(find "$WASM_BUILD_OUTPUT" -type f -name "$expected_name" 2>/dev/null)
+  if [[ ${#wasm_candidates_by_name[@]} -eq 1 ]]; then
+    built_wasm="${wasm_candidates_by_name[0]}"
+  elif [[ ${#wasm_candidates_by_name[@]} -gt 1 ]]; then
+    echo "Multiple wasm outputs matched '$expected_name' under publish output; refusing ambiguous selection:" >&2
+    printf '  %s\n' "${wasm_candidates_by_name[@]}" >&2
+    exit 1
   fi
 
   if [[ -z "$built_wasm" ]]; then
-    built_wasm="$(find "$WASM_BUILD_OUTPUT" -type f -name "$expected_name" 2>/dev/null | head -n 1)"
-  fi
-
-  if [[ -z "$built_wasm" ]]; then
-    built_wasm="$(find "$WASM_BUILD_OUTPUT" -type f -name "*.wasm" ! -name "dotnet.wasm" 2>/dev/null | head -n 1)"
+    mapfile -t wasm_candidates < <(find "$WASM_BUILD_OUTPUT" -type f -name "*.wasm" ! -name "dotnet.wasm" 2>/dev/null)
+    if [[ ${#wasm_candidates[@]} -eq 1 ]]; then
+      built_wasm="${wasm_candidates[0]}"
+    elif [[ ${#wasm_candidates[@]} -gt 1 ]]; then
+      echo "Multiple wasm outputs found under publish output; refusing ambiguous selection:" >&2
+      printf '  %s\n' "${wasm_candidates[@]}" >&2
+      exit 1
+    fi
   fi
 
   if [[ -z "$built_wasm" ]]; then
@@ -240,6 +259,13 @@ PY
 
 if [[ ! -f "$MANIFEST_PATH" ]]; then
   echo "Manifest not found: $MANIFEST_PATH" >&2
+  exit 1
+fi
+
+if [[ "${MANIFEST_PATH##*.}" == "csproj" ]]; then
+  echo "Expected a plugin manifest JSON, but got a .csproj: $MANIFEST_PATH" >&2
+  echo "Use: ./build-pack-plugin.sh /path/to/*.plugin.json" >&2
+  echo "For regular ASP.NET packaging, use: ./build-pack-plugin-aspnet.sh /path/to/*.plugin.json" >&2
   exit 1
 fi
 
@@ -294,83 +320,7 @@ for TARGET in $TARGETS; do
   rm -rf "$BUILD_DIR" "$PACKAGE_ROOT" "$PACK_DIR/${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip"
   mkdir -p "$PUBLISH_DIR" "$MANIFEST_OUT_DIR" "$PLUGIN_OUT_DIR"
 
-  if [[ "$TARGET" == osx-* ]]; then
-    APP_DIR="$BUILD_DIR/$APP_NAME"
-    CONTENTS_DIR="$APP_DIR/Contents"
-    MACOS_DIR="$CONTENTS_DIR/MacOS"
-    RESOURCES_DIR="$CONTENTS_DIR/Resources"
-
-    mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-
-    dotnet publish "$WASM_PROJECT_PATH" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
-
-    APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
-    if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
-      echo "Failed to locate runtimeconfig in publish output." >&2
-      exit 1
-    fi
-
-    APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
-
-    cp -R "$PUBLISH_DIR"/. "$MACOS_DIR/"
-    rm -rf "$MACOS_DIR/artifacts"
-
-    cat > "$CONTENTS_DIR/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleIdentifier</key>
-  <string>$PLUGIN_ID</string>
-  <key>CFBundleName</key>
-  <string>$PLUGIN_NAME</string>
-  <key>CFBundleDisplayName</key>
-  <string>$PLUGIN_NAME</string>
-  <key>CFBundleVersion</key>
-  <string>$PLUGIN_VERSION</string>
-  <key>CFBundleShortVersionString</key>
-  <string>$PLUGIN_VERSION</string>
-  <key>CFBundleExecutable</key>
-  <string>$APP_EXECUTABLE</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
-</dict>
-</plist>
-PLIST
-
-    if command -v codesign >/dev/null 2>&1; then
-      codesign --force --deep --sign - --entitlements "$PLUGIN_DIR/entitlements.plist" "$APP_DIR"
-    else
-      echo "Warning: codesign not found; skipping macOS app signing for $APP_DIR" >&2
-    fi
-    cp -R "$APP_DIR" "$PLUGIN_OUT_DIR/"
-  elif [[ "$TARGET" == linux-* ]]; then
-    dotnet publish "$WASM_PROJECT_PATH" -c Release -r "$TARGET" --self-contained true -p:UseAppHost=true -o "$PUBLISH_DIR"
-
-    APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
-    if [[ -z "$APP_RUNTIME_CONFIG" ]]; then
-      echo "Failed to locate runtimeconfig in publish output." >&2
-      exit 1
-    fi
-
-    APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
-    ENTRYPOINT_NAME="$APP_BUNDLE_NAME"
-
-    cp -R "$PUBLISH_DIR"/. "$PLUGIN_OUT_DIR/"
-    if [[ -f "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" && "$APP_EXECUTABLE" != "$ENTRYPOINT_NAME" ]]; then
-      cp "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME"
-    fi
-
-    chmod +x "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" || true
-    chmod +x "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME" || true
-    find "$PLUGIN_OUT_DIR" -type f -name "*.so" -exec chmod +x {} \; || true
-
-    while IFS= read -r candidate; do
-      if file -b "$candidate" | grep -qiE 'ELF .*executable|ELF .*shared object'; then
-        chmod +x "$candidate" || true
-      fi
-    done < <(find "$PLUGIN_OUT_DIR" -type f)
-  elif [[ "$TARGET" == wasm* || "$TARGET" == cwasm* ]]; then
+  if [[ "$TARGET" == wasm* || "$TARGET" == cwasm* ]]; then
     if [[ "$SKIP_WASM_BUILD" != "1" ]]; then
       build_wasm_component
     fi
@@ -400,7 +350,8 @@ PLIST
       cp "$WASM_MODULE_PATH" "$PLUGIN_OUT_DIR/wasm/$package_file_name"
     fi
   else
-    echo "Unsupported target for packaging: $TARGET" >&2
+    echo "Unsupported target for packaging: $TARGET (supported: wasm, cwasm)" >&2
+    echo "For ASP.NET targets (for example linux-x64), use build-pack-plugin-aspnet.sh." >&2
     exit 1
   fi
 

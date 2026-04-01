@@ -39,4 +39,10 @@ public static class PluginOperationRequestExtensions
         return string.IsNullOrWhiteSpace(request.mediaType)
             || string.Equals(request.mediaType.Trim(), PluginMediaTypes.Paged, StringComparison.OrdinalIgnoreCase);
     }
+
+    public static bool IsVideoMediaRequest(this OperationRequest request)
+    {
+        return string.IsNullOrWhiteSpace(request.mediaType)
+            || string.Equals(request.mediaType.Trim(), PluginMediaTypes.Video, StringComparison.OrdinalIgnoreCase);
+    }
 }

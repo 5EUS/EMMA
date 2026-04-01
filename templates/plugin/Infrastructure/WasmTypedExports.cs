@@ -14,6 +14,7 @@ namespace LibraryWorld.wit.exports.emma.plugin;
 public static class PluginImpl
 {
     private static readonly PluginOperationPayloadRouter InvokePayloadRouter = BuildInvokePayloadRouter();
+    private static readonly CoreClient Core = new();
 
     public static IPlugin.HandshakeResponse Handshake()
     {
@@ -24,58 +25,71 @@ public static class PluginImpl
     public static List<IPlugin.Capability> Capabilities()
     {
         var capabilities = EMMA.PluginTemplate.Program.capabilities();
-        return [.. capabilities.Select(capability => new IPlugin.Capability(
-            capability.name,
-            [.. capability.mediaTypes],
-            [.. capability.operations]))];
+        return PluginTypedExportScaffold.MapList(
+            capabilities,
+            capability => new IPlugin.Capability(
+                capability.name,
+                [.. capability.mediaTypes],
+                [.. capability.operations]));
     }
 
     public static List<IPlugin.MediaSearchItem> Search(string query, string payloadJson)
     {
-        payloadJson = ResolvePayload(payloadJson, "search", ProviderRequestUrls.BuildSearchAbsoluteUrl(query));
+        payloadJson ??= string.Empty;
         var items = EMMA.PluginTemplate.Program.search(query, payloadJson);
 
-        return [.. items.Select(item => new IPlugin.MediaSearchItem(
-            item.id,
-            item.source,
-            item.title,
-            item.mediaType,
-            item.thumbnailUrl,
-            item.description,
-            []))];
+        return PluginTypedExportScaffold.MapList(
+            items,
+            item => new IPlugin.MediaSearchItem(
+                item.id,
+                item.source,
+                item.title,
+                item.mediaType,
+                item.thumbnailUrl,
+                item.description,
+                []));
     }
 
     public static List<IPlugin.ChapterItem> Chapters(string mediaId, string payloadJson)
     {
-        payloadJson = ResolvePayload(payloadJson, "chapters", ProviderRequestUrls.BuildChaptersAbsoluteUrl(mediaId));
+        payloadJson ??= string.Empty;
         var items = EMMA.PluginTemplate.Program.chapters(mediaId, payloadJson);
 
-        return [.. items.Select(item => new IPlugin.ChapterItem(
-            item.id,
-            checked((uint)item.number),
-            item.title,
-            [.. item.uploaderGroups ?? []]))];
+        return PluginTypedExportScaffold.MapList(
+            items,
+            item => new IPlugin.ChapterItem(
+                item.id,
+                checked((uint)item.number),
+                item.title,
+                [.. item.uploaderGroups ?? []]));
     }
 
     public static IPlugin.PageItem? Page(string mediaId, string chapterId, uint pageIndex, string payloadJson)
     {
-        payloadJson = ResolvePayload(payloadJson, "page", ProviderRequestUrls.BuildAtHomeAbsoluteUrl(chapterId));
+        payloadJson = PluginPayloadResolvers.ResolveProvidedOrHostPayload(
+            payloadJson,
+            "page",
+            ProviderRequestUrls.BuildAtHomeAbsoluteUrl(chapterId),
+            (operation, hint) => HostBridgeInterop.OperationPayload(operation, hint));
 
         var page = EMMA.PluginTemplate.Program.page(mediaId, chapterId, pageIndex, payloadJson);
-        if (page is null)
-        {
-            return null;
-        }
-
-        return new IPlugin.PageItem(page.id, checked((uint)page.index), page.contentUri);
+        return PluginTypedExportScaffold.MapNullable(
+            page,
+            value => new IPlugin.PageItem(value.id, checked((uint)value.index), value.contentUri));
     }
 
     public static List<IPlugin.PageItem> Pages(string mediaId, string chapterId, uint startIndex, uint count, string payloadJson)
     {
-        payloadJson = ResolvePayload(payloadJson, "pages", ProviderRequestUrls.BuildAtHomeAbsoluteUrl(chapterId));
+        payloadJson = PluginPayloadResolvers.ResolveProvidedOrHostPayload(
+            payloadJson,
+            "pages",
+            ProviderRequestUrls.BuildAtHomeAbsoluteUrl(chapterId),
+            (operation, hint) => HostBridgeInterop.OperationPayload(operation, hint));
 
         var pages = EMMA.PluginTemplate.Program.pages(mediaId, chapterId, startIndex, count, payloadJson);
-        return [.. pages.Select(page => new IPlugin.PageItem(page.id, checked((uint)page.index), page.contentUri))];
+        return PluginTypedExportScaffold.MapList(
+            pages,
+            page => new IPlugin.PageItem(page.id, checked((uint)page.index), page.contentUri));
     }
 
     public static IPlugin.MediaOperationResponse Invoke(IPlugin.MediaOperationRequest request)
@@ -97,42 +111,46 @@ public static class PluginImpl
         return new IPlugin.MediaOperationResponse(result.contentType, result.payloadJson);
     }
 
+    public static List<IPlugin.VideoStreamItem> VideoStreams(string mediaId, string payloadJson)
+    {
+        var streams = Core.GetStreams(mediaId);
+        if (streams.Count == 0)
+        {
+            return [];
+        }
+
+        return PluginTypedExportScaffold.MapList(
+            streams,
+            stream => new IPlugin.VideoStreamItem(stream.Id, stream.Label, stream.PlaylistUri));
+    }
+
+    public static IPlugin.VideoSegmentItem? VideoSegment(string mediaId, string streamId, uint sequence, string payloadJson)
+    {
+        var segment = Core.GetSegment(mediaId, streamId, sequence);
+        if (segment is null)
+        {
+            return null;
+        }
+
+        return new IPlugin.VideoSegmentItem(segment.Value.ContentType, segment.Value.Payload);
+    }
+
     private static string? ResolveInvokePayload(IPlugin.MediaOperationRequest request)
     {
-        var operationRequest = new OperationRequest(
+        return PluginTypedExportScaffold.ResolveInvokePayload(
             request.operation,
             request.mediaId,
             request.mediaType,
             request.argsJson,
-            request.payloadJson);
-
-        return InvokePayloadRouter.Resolve(
-            operationRequest,
+            request.payloadJson,
+            InvokePayloadRouter,
             (operation, hint) => HostBridgeInterop.OperationPayload(operation, hint),
             useArgsJsonFallbackHint: true);
     }
 
-    private static string ResolvePayload(string payloadJson, string operation, string? payloadUrl)
-    {
-        if (!string.IsNullOrWhiteSpace(payloadJson))
-        {
-            return payloadJson;
-        }
-
-        if (string.IsNullOrWhiteSpace(payloadUrl))
-        {
-            return string.Empty;
-        }
-
-        return HostBridgeInterop.OperationPayload(operation, payloadUrl) ?? string.Empty;
-    }
-
     private static WitException<IPlugin.OperationError> CreateOperationError(string? error)
     {
-        if (!PluginOperationError.TryParse(error, out var parsed))
-        {
-            return new WitException<IPlugin.OperationError>(IPlugin.OperationError.Failed("operation failed"), 0);
-        }
+        var parsed = PluginTypedExportScaffold.ResolveOperationError(error);
 
         return parsed.Kind switch
         {
