@@ -1,20 +1,111 @@
 {
-  "id": "emma.plugin.template",
+  "id": "emma.video.test",
   "name": "EMMA Plugin Template",
-  "version": "0.1.0",
-  "description": "Starter manifest aligned with the current Mangadex-based plugin runtime shape.",
-  "author": "Your Name",
+  "version": "0.1.11",
+  "description": "Template plugin manifest. Customize id, name, description, and capabilities for your provider.",
+  "author": "projectemma",
   "protocol": "grpc",
   "runtime": {
     "minHostVersion": "1.0.0"
   },
   "mediaTypes": [
-    "paged"
+    "video"
   ],
-  "capabilities": {
-    "network": [
-      "https"
+  "thumbnail": {
+    "aspectRatio": 0.7,
+    "fit": "cover",
+    "width": 256,
+    "height": 384
+  },
+  "searchExperience": {
+    "capabilities": [
+      "landing-v1",
+      "query-additions-v1"
     ],
+    "landing": {
+      "template": "media-search",
+      "title": "Plugin Landing",
+      "subtitle": "TODO: Replace landing copy and actions with your plugin experience.",
+      "sections": [
+        {
+          "id": "hero",
+          "type": "hero",
+          "title": "Plugin Template",
+          "description": "TODO: Explain what users can search and discover with this plugin.",
+          "mediaTypes": [
+            "video"
+          ],
+          "actions": [
+            {
+              "id": "quick-single",
+              "label": "Example Action 1",
+              "type": "set-query",
+              "value": "example-1"
+            },
+            {
+              "id": "quick-multi",
+              "label": "Example Action 2",
+              "type": "set-query",
+              "value": "example-2"
+            },
+            {
+              "id": "quick-segment",
+              "label": "Example Action 3",
+              "type": "set-query",
+              "value": "example-3"
+            },
+            {
+              "id": "quick-empty",
+              "label": "Example Action 4",
+              "type": "set-query",
+              "value": "example-4"
+            }
+          ]
+        }
+      ]
+    },
+    "query": {
+      "allowFreeText": true,
+      "minLength": 0,
+      "maxLength": 200,
+      "additions": [
+        {
+          "id": "scenario.hint",
+          "label": "Example Filter",
+          "type": "single",
+          "defaultValue": "all",
+          "options": [
+            {
+              "value": "all",
+              "label": "All Results",
+              "isDefault": true
+            },
+            {
+              "value": "example-1",
+              "label": "Example 1"
+            },
+            {
+              "value": "example-2",
+              "label": "Example 2"
+            },
+            {
+              "value": "example-3",
+              "label": "Example 3"
+            },
+            {
+              "value": "example-4",
+              "label": "Example 4"
+            }
+          ],
+          "appliesToMediaTypes": [
+            "video"
+          ]
+        }
+      ]
+    }
+  },
+  "capabilities": {
+    "network": [],
     "fileSystem": [],
     "cache": false,
     "cpuBudgetMs": 250,
@@ -22,8 +113,7 @@
   },
   "permissions": {
     "domains": [
-      "api.mangadex.org",
-      "uploads.mangadex.org"
+      "example.invalid"
     ],
     "paths": []
   }

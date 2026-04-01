@@ -10,6 +10,8 @@ namespace EMMA.PluginTemplate.Infrastructure;
 [JsonSerializable(typeof(SearchItem[]))]
 [JsonSerializable(typeof(ChapterItem[]))]
 [JsonSerializable(typeof(WasmChapterOperationItem[]))]
+[JsonSerializable(typeof(WasmVideoStreamOperationItem[]))]
+[JsonSerializable(typeof(WasmVideoSegmentOperationItem))]
 [JsonSerializable(typeof(PageItem))]
 [JsonSerializable(typeof(PageItem[]))]
 [JsonSerializable(typeof(OperationResult))]
@@ -24,4 +26,13 @@ internal sealed record WasmChapterOperationItem(
     int number,
     string title,
     string[] uploaderGroups);
+
+internal sealed record WasmVideoStreamOperationItem(
+    string id,
+    string label,
+    string playlistUri);
+
+internal sealed record WasmVideoSegmentOperationItem(
+    string contentType,
+    string payload);
 #endif

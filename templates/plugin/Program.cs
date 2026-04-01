@@ -11,13 +11,17 @@ using EMMA.PluginTemplate.Infrastructure;
 
 namespace EMMA.PluginTemplate;
 
-/// <summary>
-/// Transport entrypoint: wires AspNet host services or WASM operation host.
-/// </summary>
 public static partial class Program
 {
 #if PLUGIN_TRANSPORT_ASPNET
-    private static readonly ManifestDefaults ControlDefaults = ManifestDefaultsProvider.Load();
+    private static readonly PluginManifestDefaults ControlDefaults = PluginManifestDefaultsProvider.Load(
+        pluginManifestFileName: "EMMA.PluginTemplate.plugin.json",
+        fallback: new PluginManifestDefaults(
+            250,
+            512,
+            ["example.invalid"],
+            []),
+        pluginProjectFolderName: "EMMA.PluginTemplate");
 
     public static void Main(string[] args)
     {
@@ -25,7 +29,7 @@ public static partial class Program
         var hostOptions = new PluginAspNetHostOptions(
             DefaultPort: PluginEnvironment.GetPort(args, 5000),
             PortEnvironmentVariables: devMode
-                ? ["EMMA_PLUGIN_PORT", "EMMA_PLUGIN_TEMPLATE_PORT"]
+                ? ["EMMA_PLUGIN_PORT", "EMMA_TEST_PLUGIN_PORT"]
                 : ["EMMA_PLUGIN_PORT"],
             PortArgumentName: devMode ? "--port" : string.Empty,
             RootMessage: "EMMA plugin template is running.");
@@ -35,9 +39,9 @@ public static partial class Program
             {
                 services.AddHttpClient<AspNetClient>(client =>
                 {
-                    client.BaseAddress = ProviderHttpProfile.BaseUri;
-                    client.DefaultRequestHeaders.UserAgent.ParseAdd(ProviderHttpProfile.UserAgent);
-                    client.DefaultRequestHeaders.Accept.ParseAdd(ProviderHttpProfile.AcceptMediaType);
+                    client.BaseAddress = ProviderHttpProfile.Defaults.BaseUri;
+                    client.DefaultRequestHeaders.UserAgent.ParseAdd(ProviderHttpProfile.Defaults.UserAgent);
+                    client.DefaultRequestHeaders.Accept.ParseAdd(ProviderHttpProfile.Defaults.AcceptMediaType);
                 });
             })
             .UseDefaultControlService(ConfigureDefaultControlService)
@@ -46,9 +50,6 @@ public static partial class Program
             .Run(mapDefaultEndpoints: devMode);
     }
 
-    /// <summary>
-    /// Applies manifest-driven control defaults exposed to the host.
-    /// </summary>
     private static void ConfigureDefaultControlService(PluginSdkControlOptions options)
     {
         options.Message = "EMMA plugin template ready";

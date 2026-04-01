@@ -1,33 +1,50 @@
 #if PLUGIN_TRANSPORT_WASM
-using System.Net.Http;
+using System.Text.Json;
 using EMMA.Plugin.Common;
+using LibraryWorld;
+using LibraryWorld.wit.exports.emma.plugin;
 
 namespace EMMA.PluginTemplate.Infrastructure;
 
 internal sealed class WasmClient
 {
     private static readonly CoreClient Core = new();
-    private static readonly HttpClient Http = CreateHttpClient();
 
-    public SearchParseMapResult SearchFromPayloadWithTimings(string payloadJson)
+    public SearchParseMapResult SearchFromPayload(string query, string payloadJson)
     {
-        var parseMap = Core.SearchFromPayloadWithTimings(payloadJson);
-        return new SearchParseMapResult(parseMap.Results, parseMap.ParseMs, parseMap.MapMs);
+        var results = Core.Search(query);
+        return new SearchParseMapResult(results, 0, 0);
     }
 
     public IReadOnlyList<ChapterItem> GetChaptersFromPayload(string mediaId, string payloadJson)
     {
-        return Core.GetChaptersFromPayload(payloadJson);
+        return Core.GetChapters(mediaId);
     }
 
     public IReadOnlyList<ChapterOperationItem> GetChapterOperationItemsFromPayload(string mediaId, string payloadJson)
     {
-        return Core.GetChapterOperationItemsFromPayload(payloadJson);
+        var chapters = Core.GetChapters(mediaId);
+        if (chapters.Count == 0)
+        {
+            return [];
+        }
+
+        var results = new List<ChapterOperationItem>(chapters.Count);
+        foreach (var chapter in chapters)
+        {
+            results.Add(new ChapterOperationItem(
+                chapter.id,
+                chapter.number,
+                chapter.title,
+                chapter.uploaderGroups ?? []));
+        }
+
+        return results;
     }
 
     public PageItem? GetPageFromPayload(string chapterId, int pageIndex, string payloadJson)
     {
-        return Core.GetPageFromPayload(chapterId, pageIndex, payloadJson);
+        return null;
     }
 
     public IReadOnlyList<PageItem> GetPagesFromPayload(
@@ -36,7 +53,7 @@ internal sealed class WasmClient
         int count,
         string payloadJson)
     {
-        return Core.GetPagesFromPayload(chapterId, startIndex, count, payloadJson);
+        return [];
     }
 
     public string? FetchSearchPayload(string query)
@@ -56,33 +73,13 @@ internal sealed class WasmClient
 
     internal static string ResolvePayloadContent(string payload)
     {
-        return CoreClient.ResolvePayloadContent(payload);
+        return PluginJsonPayload.Normalize(payload);
     }
 
     private static string? TryFetchPayload(string? absoluteUrl)
     {
-        if (string.IsNullOrWhiteSpace(absoluteUrl))
-        {
-            return null;
-        }
-
-        try
-        {
-            var payload = Http.GetStringAsync(absoluteUrl).GetAwaiter().GetResult();
-            return ResolvePayloadContent(payload);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static HttpClient CreateHttpClient()
-    {
-        var client = new HttpClient();
-        client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", ProviderHttpProfile.UserAgent);
-        client.DefaultRequestHeaders.TryAddWithoutValidation("Accept", ProviderHttpProfile.AcceptMediaType);
-        return client;
+        // TODO: Implement provider fetch when your plugin needs network-backed payload retrieval.
+        return null;
     }
 
     public readonly record struct SearchParseMapResult(
