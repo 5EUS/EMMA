@@ -50,7 +50,27 @@ public static class VideoPipelineEndpoints
                     .Select(stream => new VideoStreamResult(
                         stream.Id ?? string.Empty,
                         stream.Label ?? string.Empty,
-                        stream.PlaylistUri ?? string.Empty))];
+                        stream.PlaylistUri ?? string.Empty,
+                        stream.RequestHeaders,
+                        stream.RequestCookies,
+                        stream.StreamType,
+                        stream.IsLive,
+                        stream.DrmProtected,
+                        stream.DrmScheme,
+                        stream.AudioTracks?.Select(track => new VideoTrackResult(
+                            track.Id ?? string.Empty,
+                            track.Label ?? string.Empty,
+                            track.Language,
+                            track.Codec,
+                            track.IsDefault)).ToList(),
+                        stream.SubtitleTracks?.Select(track => new VideoTrackResult(
+                            track.Id ?? string.Empty,
+                            track.Label ?? string.Empty,
+                            track.Language,
+                            track.Codec,
+                            track.IsDefault)).ToList(),
+                        stream.DefaultAudioTrackId,
+                        stream.DefaultSubtitleTrackId))];
             }
             else
             {
@@ -65,7 +85,17 @@ public static class VideoPipelineEndpoints
                 {
                     stream.Id,
                     stream.Label,
-                    stream.PlaylistUri
+                    stream.PlaylistUri,
+                    stream.RequestHeaders,
+                    stream.RequestCookies,
+                    stream.StreamType,
+                    stream.IsLive,
+                    stream.DrmProtected,
+                    stream.DrmScheme,
+                    stream.AudioTracks,
+                    stream.SubtitleTracks,
+                    stream.DefaultAudioTrackId,
+                    stream.DefaultSubtitleTrackId
                 })
             });
         });

@@ -36,4 +36,22 @@ message StreamInfo {
   string id = 1;
   string label = 2;
   string playlist_uri = 3;
+  map<string, string> request_headers = 4;
+  string request_cookies = 5;
+  string stream_type = 6;
+  bool is_live = 7;
+  bool drm_protected = 8;
+  string drm_scheme = 9;
+  repeated MediaTrack audio_tracks = 10;
+  repeated MediaTrack subtitle_tracks = 11;
+  string default_audio_track_id = 12;
+  string default_subtitle_track_id = 13;
+}
+
+message MediaTrack {
+  string id = 1;
+  string label = 2;
+  string language = 3;
+  string codec = 4;
+  bool is_default = 5;
 }
