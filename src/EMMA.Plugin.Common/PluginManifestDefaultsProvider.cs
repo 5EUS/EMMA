@@ -1,21 +1,21 @@
 using System.Text.Json;
 
-namespace EMMA.PluginTemplate.Infrastructure;
+namespace EMMA.Plugin.Common;
 
-/// <summary>
-/// Loads control defaults from plugin manifest with safe fallback values.
-/// </summary>
-public static class ManifestDefaultsProvider
+public readonly record struct PluginManifestDefaults(
+    int CpuBudgetMs,
+    int MemoryMb,
+    string[] Domains,
+    string[] Paths);
+
+public static class PluginManifestDefaultsProvider
 {
-    public static ManifestDefaults Load()
+    public static PluginManifestDefaults Load(
+        string pluginManifestFileName,
+        PluginManifestDefaults fallback,
+        string? pluginProjectFolderName = null)
     {
-        var fallback = new ManifestDefaults(
-            250,
-            512,
-            ["api.mangadex.org", "uploads.mangadex.org"],
-            []);
-
-        foreach (var manifestPath in EnumerateManifestCandidates())
+        foreach (var manifestPath in EnumerateManifestCandidates(pluginManifestFileName, pluginProjectFolderName))
         {
             if (!File.Exists(manifestPath))
             {
@@ -50,7 +50,7 @@ public static class ManifestDefaultsProvider
                 var domains = ReadStringArray(permissions, "domains", fallback.Domains);
                 var paths = ReadStringArray(permissions, "paths", fallback.Paths);
 
-                return new ManifestDefaults(cpu, memory, domains, paths);
+                return new PluginManifestDefaults(cpu, memory, domains, paths);
             }
             catch
             {
@@ -60,11 +60,15 @@ public static class ManifestDefaultsProvider
         return fallback;
     }
 
-    private static IEnumerable<string> EnumerateManifestCandidates()
+    private static IEnumerable<string> EnumerateManifestCandidates(string pluginManifestFileName, string? pluginProjectFolderName)
     {
-        yield return Path.Combine(AppContext.BaseDirectory, "EMMA.PluginTemplate.plugin.json");
-        yield return Path.Combine(Directory.GetCurrentDirectory(), "EMMA.PluginTemplate.plugin.json");
-        yield return Path.Combine(Directory.GetCurrentDirectory(), "src", "EMMA.PluginTemplate", "EMMA.PluginTemplate.plugin.json");
+        yield return Path.Combine(AppContext.BaseDirectory, pluginManifestFileName);
+        yield return Path.Combine(Directory.GetCurrentDirectory(), pluginManifestFileName);
+
+        if (!string.IsNullOrWhiteSpace(pluginProjectFolderName))
+        {
+            yield return Path.Combine(Directory.GetCurrentDirectory(), "src", pluginProjectFolderName, pluginManifestFileName);
+        }
     }
 
     private static string[] ReadStringArray(JsonElement permissions, string propertyName, IReadOnlyList<string> fallback)
@@ -83,9 +87,3 @@ public static class ManifestDefaultsProvider
             .Select(value => value!)];
     }
 }
-
-public readonly record struct ManifestDefaults(
-    int CpuBudgetMs,
-    int MemoryMb,
-    string[] Domains,
-    string[] Paths);

@@ -23,6 +23,7 @@ untrusted plugins, and streaming-friendly pipelines for paged and video media.
 
 - System blueprint: [docs/architecture/system-blueprint.md](docs/architecture/system-blueprint.md)
 - Plugin system design: [docs/architecture/plugin-system-design.md](docs/architecture/plugin-system-design.md)
+- Plugin scaffold workflow: [docs/architecture/plugin-scaffold-workflow.md](docs/architecture/plugin-scaffold-workflow.md)
 - Media pipeline design: [docs/architecture/media-pipeline-design.md](docs/architecture/media-pipeline-design.md)
 - Solution structure: [docs/architecture/solution-structure.md](docs/architecture/solution-structure.md)
 - Implementation roadmap: [docs/architecture/implementation-roadmap.md](docs/architecture/implementation-roadmap.md)
