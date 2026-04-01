@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -12,6 +13,8 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
 [JsonSerializable(typeof(WasmSearchItem))]
 [JsonSerializable(typeof(IReadOnlyList<WasmSearchItem>))]
 [JsonSerializable(typeof(List<WasmSearchItem>))]
@@ -26,6 +29,9 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(WasmVideoStreamItem))]
 [JsonSerializable(typeof(IReadOnlyList<WasmVideoStreamItem>))]
 [JsonSerializable(typeof(List<WasmVideoStreamItem>))]
+[JsonSerializable(typeof(WasmVideoTrackItem))]
+[JsonSerializable(typeof(IReadOnlyList<WasmVideoTrackItem>))]
+[JsonSerializable(typeof(List<WasmVideoTrackItem>))]
 [JsonSerializable(typeof(WasmVideoSegmentWire))]
 [JsonSerializable(typeof(WasmVideoSegmentArgs))]
 [JsonSerializable(typeof(WasmCapabilityItem))]
@@ -70,7 +76,27 @@ public sealed record WasmPageItem(string Id, int Index, string ContentUri);
 /// </summary>
 public sealed record WasmOperationResult(bool IsError, string? Error, string? ContentType, string? PayloadJson);
 
-public sealed record WasmVideoStreamItem(string Id, string Label, string PlaylistUri);
+public sealed record WasmVideoStreamItem(
+    string Id,
+    string Label,
+    string PlaylistUri,
+    IReadOnlyDictionary<string, string>? RequestHeaders = null,
+    string? RequestCookies = null,
+    string? StreamType = null,
+    bool IsLive = false,
+    bool DrmProtected = false,
+    string? DrmScheme = null,
+    IReadOnlyList<WasmVideoTrackItem>? AudioTracks = null,
+    IReadOnlyList<WasmVideoTrackItem>? SubtitleTracks = null,
+    string? DefaultAudioTrackId = null,
+    string? DefaultSubtitleTrackId = null);
+
+public sealed record WasmVideoTrackItem(
+    string Id,
+    string Label,
+    string? Language = null,
+    string? Codec = null,
+    bool IsDefault = false);
 
 public sealed record WasmVideoSegmentWire(
     [property: JsonPropertyName("contentType")] string ContentType,
