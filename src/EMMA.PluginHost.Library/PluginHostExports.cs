@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using EMMA.Application.Ports;
+using EMMA.Plugin.Common;
 using PluginContracts = EMMA.Contracts.Plugins;
 using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Http;
@@ -920,13 +921,23 @@ public static class PluginHostExports
                 return null;
             }
 
-            var normalizedQuery = query ?? string.Empty;
+            var rawQuery = query ?? string.Empty;
+            var parsedQuery = PluginSearchQuery.Parse(rawQuery, fallbackQuery: rawQuery);
+            var normalizedQuery = parsedQuery.Query;
+            var isStructuredQuery = LooksLikeJson(rawQuery)
+                && (parsedQuery.Filters.Count > 0
+                    || parsedQuery.QueryAdditions.Count > 0
+                    || parsedQuery.MediaTypes.Count > 0
+                    || !string.IsNullOrWhiteSpace(parsedQuery.Sort)
+                    || parsedQuery.Page.HasValue
+                    || parsedQuery.PageSize.HasValue);
 
             var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<MediaSummary> results;
             if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
             {
-                results = _wasmRuntime.SearchAsync(record, normalizedQuery, CancellationToken.None)
+                var wasmQuery = isStructuredQuery ? rawQuery : normalizedQuery;
+                results = _wasmRuntime.SearchAsync(record, wasmQuery, CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
             }
@@ -951,21 +962,63 @@ public static class PluginHostExports
                 var channel = GetOrCreateChannel(address);
                 var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
                 var headers = BuildGrpcHeaders(record.Manifest.Id, resolvedCorrelationId!);
-                var response = client.SearchAsync(new PluginContracts.SearchRequest
+                var grpcQuery = isStructuredQuery ? rawQuery : normalizedQuery;
+                var request = new PluginContracts.SearchRequest
                 {
-                    Query = normalizedQuery,
+                    Query = grpcQuery,
                     Context = new PluginContracts.RequestContext
                     {
                         CorrelationId = resolvedCorrelationId,
                         DeadlineUtc = deadlineUtc.ToString("O")
                     }
-                }, headers: headers, cancellationToken: CancellationToken.None)
+                };
+
+                if (parsedQuery.MediaTypes.Count > 0)
+                {
+                    request.MediaTypes.AddRange(parsedQuery.MediaTypes);
+                }
+
+                foreach (var filter in parsedQuery.Filters)
+                {
+                    var grpcFilter = new PluginContracts.SearchFilter
+                    {
+                        Id = filter.Id,
+                        Operation = filter.Operation ?? string.Empty
+                    };
+                    grpcFilter.Values.AddRange(filter.Values);
+                    request.Filters.Add(grpcFilter);
+                }
+
+                foreach (var addition in parsedQuery.QueryAdditions)
+                {
+                    request.QueryAdditions.Add(new PluginContracts.SearchQueryAddition
+                    {
+                        Id = addition.Id,
+                        Value = addition.Value,
+                        Type = addition.Type ?? string.Empty
+                    });
+                }
+
+                if (!string.IsNullOrWhiteSpace(parsedQuery.Sort))
+                {
+                    request.Sort = parsedQuery.Sort;
+                }
+
+                if (parsedQuery.Page is int page && page >= 0)
+                {
+                    request.Page = page;
+                }
+
+                if (parsedQuery.PageSize is int pageSize && pageSize > 0)
+                {
+                    request.PageSize = pageSize;
+                }
+
+                var response = client.SearchAsync(request, headers: headers, cancellationToken: CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
 
-                results = response.Results
-                    .Select(MapPluginSearchSummary)
-                    .ToList();
+                results = [.. response.Results.Select(MapPluginSearchSummary)];
             }
 
             runtimeSearchStopwatch.Stop();
@@ -980,6 +1033,17 @@ public static class PluginHostExports
         {
             totalStopwatch.Stop();
         }
+    }
+
+    private static bool LooksLikeJson(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.StartsWith('{') || trimmed.StartsWith('[');
     }
 
     private static bool TryResolveWasmSearchRecord(string pluginId, out PluginRecord? record)

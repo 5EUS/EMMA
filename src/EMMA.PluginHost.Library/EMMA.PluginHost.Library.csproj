@@ -21,6 +21,7 @@
     <ProjectReference Include="..\EMMA.Storage\EMMA.Storage.csproj" />
     <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
     <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
+    <ProjectReference Include="..\EMMA.Plugin.Common\EMMA.Plugin.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios' or ('$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true')">

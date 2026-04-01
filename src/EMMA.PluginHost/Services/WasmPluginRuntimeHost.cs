@@ -907,13 +907,26 @@ public sealed class WasmPluginRuntimeHost(
         return trimmed.StartsWith('{') || trimmed.StartsWith('[') || trimmed.StartsWith('"');
     }
 
-    private static WasmQueryArgs BuildSearchArgs(PluginManifest manifest, string query)
+    private WasmQueryArgs BuildSearchArgs(PluginManifest manifest, string query)
     {
         var mediaTypes = manifest.MediaTypes?.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
         var search = manifest.SearchExperience;
         if (search is null)
         {
             return new WasmQueryArgs(query, mediaTypes);
+        }
+
+        if (LooksLikeJson(query) && TryDeserialize(query, out WasmQueryArgs? parsedArgs) && parsedArgs is not null)
+        {
+            var parsedMediaTypes = parsedArgs.MediaTypes is { Count: > 0 }
+                ? parsedArgs.MediaTypes
+                : mediaTypes;
+
+            return parsedArgs with
+            {
+                Query = parsedArgs.Query?.Trim() ?? string.Empty,
+                MediaTypes = parsedMediaTypes
+            };
         }
 
         var filters = (search.Filters ?? [])
