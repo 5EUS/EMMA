@@ -9,6 +9,7 @@ using EMMA.Infrastructure.Http;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
 using EMMA.Storage;
+using EMMA.Contracts.Api.V1;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -90,6 +91,49 @@ await storageInitializer.InitializeAsync(CancellationToken.None);
 
 app.MapGet("/", () => "EMMA API host is running.");
 
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "ok"
+}));
+
+app.MapGet("/ready", async (
+    IHttpClientFactory httpClientFactory,
+    IOptions<PluginHostClientOptions> pluginHostOptions,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var client = httpClientFactory.CreateClient();
+        client.BaseAddress = new Uri(pluginHostOptions.Value.BaseUrl, UriKind.Absolute);
+        using var response = await client.GetAsync("/", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = new ApiError
+            {
+                Code = ErrorCodes.UpstreamFailure,
+                Message = "Plugin host readiness check failed.",
+                Details = $"plugin_host_status={(int)response.StatusCode}"
+            };
+            return Results.Json(ApiErrorContract.ToEnvelope(error), statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+
+        return Results.Ok(new
+        {
+            status = "ready"
+        });
+    }
+    catch (Exception ex)
+    {
+        var error = new ApiError
+        {
+            Code = ErrorCodes.UpstreamFailure,
+            Message = "Plugin host readiness check failed.",
+            Details = ex.Message
+        };
+        return Results.Json(ApiErrorContract.ToEnvelope(error), statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
+
 app.MapGrpcService<PagedMediaApiService>()
     .RequireRateLimiting("per-client");
 
@@ -98,14 +142,21 @@ app.MapGet("/api/paged/search", async (
     EmbeddedRuntime runtime,
     CancellationToken cancellationToken) =>
 {
-    var results = await runtime.Pipeline.SearchAsync(query ?? string.Empty, cancellationToken);
-    return Results.Ok(results.Select(result => new
+    try
     {
-        Id = result.Id.ToString(),
-        Source = result.SourceId,
-        result.Title,
-        MediaType = result.MediaType.ToString().ToLowerInvariant()
-    }));
+        var results = await runtime.Pipeline.SearchAsync(query ?? string.Empty, cancellationToken);
+        return Results.Ok(results.Select(result => new
+        {
+            Id = result.Id.ToString(),
+            Source = result.SourceId,
+            result.Title,
+            MediaType = result.MediaType.ToString().ToLowerInvariant()
+        }));
+    }
+    catch (Exception ex)
+    {
+        return ToHttpErrorResult(ApiErrorContract.FromException(ex));
+    }
 }).RequireRateLimiting("per-client");
 
 app.MapGet("/api/paged/chapters", async (
@@ -115,16 +166,23 @@ app.MapGet("/api/paged/chapters", async (
 {
     if (string.IsNullOrWhiteSpace(mediaId))
     {
-        return Results.BadRequest(new { message = "mediaId is required." });
+        return ToHttpErrorResult(ApiErrorContract.InvalidRequest("mediaId is required."));
     }
 
-    var chapters = await runtime.Pipeline.GetChaptersAsync(MediaId.Create(mediaId), cancellationToken);
-    return Results.Ok(chapters.Select(chapter => new
+    try
     {
-        Id = chapter.ChapterId,
-        chapter.Number,
-        chapter.Title
-    }));
+        var chapters = await runtime.Pipeline.GetChaptersAsync(MediaId.Create(mediaId), cancellationToken);
+        return Results.Ok(chapters.Select(chapter => new
+        {
+            Id = chapter.ChapterId,
+            chapter.Number,
+            chapter.Title
+        }));
+    }
+    catch (Exception ex)
+    {
+        return ToHttpErrorResult(ApiErrorContract.FromException(ex));
+    }
 }).RequireRateLimiting("per-client");
 
 app.MapGet("/api/paged/page", async (
@@ -136,21 +194,28 @@ app.MapGet("/api/paged/page", async (
 {
     if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
     {
-        return Results.BadRequest(new { message = "mediaId and chapterId are required." });
+        return ToHttpErrorResult(ApiErrorContract.InvalidRequest("mediaId and chapterId are required."));
     }
 
-    var page = await runtime.Pipeline.GetPageAsync(
-        MediaId.Create(mediaId),
-        chapterId,
-        index ?? 0,
-        cancellationToken);
-
-    return Results.Ok(new
+    try
     {
-        Id = page.PageId,
-        page.Index,
-        ContentUri = page.ContentUri.ToString()
-    });
+        var page = await runtime.Pipeline.GetPageAsync(
+            MediaId.Create(mediaId),
+            chapterId,
+            index ?? 0,
+            cancellationToken);
+
+        return Results.Ok(new
+        {
+            Id = page.PageId,
+            page.Index,
+            ContentUri = page.ContentUri.ToString()
+        });
+    }
+    catch (Exception ex)
+    {
+        return ToHttpErrorResult(ApiErrorContract.FromException(ex));
+    }
 }).RequireRateLimiting("per-client");
 
 app.MapGet("/api/paged/page-asset", async (
@@ -163,7 +228,7 @@ app.MapGet("/api/paged/page-asset", async (
 {
     if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(chapterId))
     {
-        return Results.BadRequest(new { message = "mediaId and chapterId are required." });
+        return ToHttpErrorResult(ApiErrorContract.InvalidRequest("mediaId and chapterId are required."));
     }
 
     var correlationId = Guid.NewGuid().ToString("n");
@@ -198,11 +263,18 @@ app.MapGet("/api/paged/page-asset", async (
             chapterId,
             index ?? 0,
             stopwatch.ElapsedMilliseconds);
-        throw;
+        return ToHttpErrorResult(ApiErrorContract.FromException(ex));
     }
 }).RequireRateLimiting("per-client");
 
 app.Run();
+
+static IResult ToHttpErrorResult(ApiError error)
+{
+    return Results.Json(
+        ApiErrorContract.ToEnvelope(error),
+        statusCode: ApiErrorContract.ToHttpStatusCode(error));
+}
 
 public partial class Program
 {

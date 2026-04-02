@@ -37,67 +37,73 @@ public static class VideoPipelineEndpoints
             var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
-
-            IReadOnlyList<VideoStreamResult> streams;
-            if (IsWasm)
+            try
             {
-                var wasmStreams = await wasmRuntimeHost.GetVideoStreamsAsync(
-                    record,
-                    MediaId.Create(mediaId),
-                    cancellationToken);
+                IReadOnlyList<VideoStreamResult> streams;
+                if (IsWasm)
+                {
+                    var wasmStreams = await wasmRuntimeHost.GetVideoStreamsAsync(
+                        record,
+                        MediaId.Create(mediaId),
+                        cancellationToken);
 
-                streams = [.. wasmStreams
-                    .Select(stream => new VideoStreamResult(
-                        stream.Id ?? string.Empty,
-                        stream.Label ?? string.Empty,
-                        stream.PlaylistUri ?? string.Empty,
+                    streams = [.. wasmStreams
+                        .Select(stream => new VideoStreamResult(
+                            stream.Id ?? string.Empty,
+                            stream.Label ?? string.Empty,
+                            stream.PlaylistUri ?? string.Empty,
+                            stream.RequestHeaders,
+                            stream.RequestCookies,
+                            stream.StreamType,
+                            stream.IsLive,
+                            stream.DrmProtected,
+                            stream.DrmScheme,
+                            stream.AudioTracks?.Select(track => new VideoTrackResult(
+                                track.Id ?? string.Empty,
+                                track.Label ?? string.Empty,
+                                track.Language,
+                                track.Codec,
+                                track.IsDefault)).ToList(),
+                            stream.SubtitleTracks?.Select(track => new VideoTrackResult(
+                                track.Id ?? string.Empty,
+                                track.Label ?? string.Empty,
+                                track.Language,
+                                track.Codec,
+                                track.IsDefault)).ToList(),
+                            stream.DefaultAudioTrackId,
+                            stream.DefaultSubtitleTrackId))];
+                }
+                else
+                {
+                    var videoPort = CreateVideoPort(record, Address!, options, loggerFactory);
+
+                    streams = await videoPort.GetStreamsAsync(mediaId, cancellationToken);
+                }
+
+                return Results.Ok(new
+                {
+                    Streams = streams.Select(stream => new
+                    {
+                        stream.Id,
+                        stream.Label,
+                        stream.PlaylistUri,
                         stream.RequestHeaders,
                         stream.RequestCookies,
                         stream.StreamType,
                         stream.IsLive,
                         stream.DrmProtected,
                         stream.DrmScheme,
-                        stream.AudioTracks?.Select(track => new VideoTrackResult(
-                            track.Id ?? string.Empty,
-                            track.Label ?? string.Empty,
-                            track.Language,
-                            track.Codec,
-                            track.IsDefault)).ToList(),
-                        stream.SubtitleTracks?.Select(track => new VideoTrackResult(
-                            track.Id ?? string.Empty,
-                            track.Label ?? string.Empty,
-                            track.Language,
-                            track.Codec,
-                            track.IsDefault)).ToList(),
+                        stream.AudioTracks,
+                        stream.SubtitleTracks,
                         stream.DefaultAudioTrackId,
-                        stream.DefaultSubtitleTrackId))];
+                        stream.DefaultSubtitleTrackId
+                    })
+                });
             }
-            else
+            catch (Exception ex)
             {
-                var videoPort = CreateVideoPort(record, Address!, options, loggerFactory);
-
-                streams = await videoPort.GetStreamsAsync(mediaId, cancellationToken);
+                return PipelineErrorContract.ToResult(ex, "video.streams");
             }
-
-            return Results.Ok(new
-            {
-                Streams = streams.Select(stream => new
-                {
-                    stream.Id,
-                    stream.Label,
-                    stream.PlaylistUri,
-                    stream.RequestHeaders,
-                    stream.RequestCookies,
-                    stream.StreamType,
-                    stream.IsLive,
-                    stream.DrmProtected,
-                    stream.DrmScheme,
-                    stream.AudioTracks,
-                    stream.SubtitleTracks,
-                    stream.DefaultAudioTrackId,
-                    stream.DefaultSubtitleTrackId
-                })
-            });
         });
 
         app.MapGet("/pipeline/video/segment", async (
@@ -131,37 +137,40 @@ public static class VideoPipelineEndpoints
             var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
-
-            VideoSegmentResult segment;
-            if (IsWasm)
+            try
             {
-                var wasmSegment = await wasmRuntimeHost.GetVideoSegmentAsync(
-                    record,
-                    MediaId.Create(mediaId),
-                    streamId,
-                    sequence ?? 0,
-                    cancellationToken);
-
-                if (wasmSegment is null)
+                VideoSegmentResult segment;
+                if (IsWasm)
                 {
-                    return Results.NotFound(new
+                    var wasmSegment = await wasmRuntimeHost.GetVideoSegmentAsync(
+                        record,
+                        MediaId.Create(mediaId),
+                        streamId,
+                        sequence ?? 0,
+                        cancellationToken);
+
+                    if (wasmSegment is null)
                     {
-                        message = "Video segment not found."
-                    });
+                        return PipelineErrorContract.ToResult(new KeyNotFoundException("Video segment not found."), "video.segment");
+                    }
+
+                    segment = new VideoSegmentResult(
+                        wasmSegment.ContentType,
+                        wasmSegment.Payload);
+                }
+                else
+                {
+                    var videoPort = CreateVideoPort(record, Address!, options, loggerFactory);
+
+                    segment = await videoPort.GetSegmentAsync(mediaId, streamId, sequence ?? 0, cancellationToken);
                 }
 
-                segment = new VideoSegmentResult(
-                    wasmSegment.ContentType,
-                    wasmSegment.Payload);
+                return Results.File(segment.Payload, segment.ContentType);
             }
-            else
+            catch (Exception ex)
             {
-                var videoPort = CreateVideoPort(record, Address!, options, loggerFactory);
-
-                segment = await videoPort.GetSegmentAsync(mediaId, streamId, sequence ?? 0, cancellationToken);
+                return PipelineErrorContract.ToResult(ex, "video.segment");
             }
-
-            return Results.File(segment.Payload, segment.ContentType);
         });
 
         return app;
