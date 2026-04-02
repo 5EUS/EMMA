@@ -23,6 +23,6 @@ public static class PluginCliOperations
         }
 
         var fallback = args[0].ToLowerInvariant();
-        return (fallback, args.Length > 1 ? args[1..] : Array.Empty<string>());
+        return (fallback, args.Length > 1 ? args[1..] : []);
     }
 }

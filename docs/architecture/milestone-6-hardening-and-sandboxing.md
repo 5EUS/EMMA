@@ -7,40 +7,51 @@
 - Implement quarantine and recovery flow for misbehaving plugins.
 - Ship an observability stack with metrics, tracing, and diagnostics.
 
+## Current Status (2026-04-01)
+
+In progress. Baseline hardening is implemented (signature verification,
+quarantine lifecycle hooks, budget monitoring, and structured logs), while
+full trust model rollout, strict enforcement parity, and deep observability are
+still open.
+
 ## Work items
 
 1) Resource enforcement
-   - Apply per-plugin CPU, memory, and IO budgets.
-   - Enforce filesystem and network access policies.
-   - Add per-call timeouts and global circuit breakers.
-   - Capture resource usage metrics for policy audits.
+   - Done: budget monitoring/watcher services and timeout-driven lifecycle paths.
+   - Partial: filesystem/network policies are represented in manifest + sandbox
+     preparation, but enforcement parity varies by platform.
+   - Partial: per-call timeout handling exists in key host endpoints.
+   - Open: strict CPU/memory/IO enforcement and policy-audit metric depth.
 
 2) Sandboxing
-   - Finalize OS-specific sandbox implementations and configuration.
-   - Add sandbox feature detection and fallback modes.
-   - Provide a local dev mode with explicit warning banners.
+   - Done: OS-specific sandbox manager implementations exist for Linux,
+     Windows, macOS, iOS, and Android.
+   - Partial: feature detection/fallback behavior exists, but enforcement depth
+     is not yet equivalent across targets.
+   - Open: stronger production-mode guarantees and clearer operator diagnostics.
 
 3) Plugin signing and trust
-   - Add manifest signing and signature verification on load.
-   - Maintain a trust store and revocation list.
-   - Prevent unsigned plugins from running in production mode.
+   - Done: HMAC signature verification during plugin load.
+   - Partial: unsigned plugin behavior can be gated via configuration/env.
+   - Open: delegated trust model, trust store, revocation, and key rotation.
 
 4) Quarantine and recovery
-   - Detect repeated crashes, timeouts, and policy violations.
-   - Quarantine plugins with a backoff schedule and manual override.
-   - Provide recovery workflow and audit logs.
+   - Done: crash/timeout-driven quarantine behavior with lifecycle coordination.
+   - Partial: recovery/backoff exists but can be expanded operationally.
+   - Open: broader automated recovery policy and richer audit/reporting outputs.
 
 5) Observability
-   - Emit structured logs with correlation IDs across host and plugins.
-   - Add metrics for latency, cache hit rate, and resource usage.
-   - Wire distributed tracing for host -> plugin calls.
+   - Done: structured logging and correlation IDs in host/API paths.
+   - Open: full metrics surface (latency/cache/resource dashboards).
+   - Open: distributed tracing for host -> plugin calls.
 
-## Validation plan
+## Validation Status
 
-- Chaos tests with misbehaving plugins (timeouts, crashes, leaks).
-- Security review of sandboxing and signing flows.
-- Observability tests to ensure metrics and traces are complete.
-- Load tests to validate resource enforcement under stress.
+- Done: security/lifecycle tests cover signature checks, quarantine, and
+   plugin-host behavior under failure scenarios.
+- In progress: expanded chaos scenarios for resource pressure and recovery.
+- Open: observability completeness tests for metrics/traces.
+- Open: stress/load suites that validate strict resource enforcement.
 
 ## Dependencies
 
@@ -54,4 +65,4 @@
 
 ## Status
 
-Not started.
+In progress.
