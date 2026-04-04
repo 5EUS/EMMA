@@ -20,6 +20,7 @@ public static class PluginHostEndpoints
         app.MapGet("/plugins/available", async (
             PluginManifestLoader manifestLoader,
             PluginRegistry registry,
+            IPluginEntrypointResolver entrypointResolver,
             CancellationToken cancellationToken) =>
         {
             var manifests = await manifestLoader.LoadManifestsAsync(cancellationToken);
@@ -36,6 +37,7 @@ public static class PluginHostEndpoints
                 {
                     manifest.Runtime?.MinHostVersion
                 },
+                BuildType = ResolveBuildType(manifest, entrypointResolver),
                 manifest.Description,
                 manifest.Author,
                 manifest.MediaTypes,
@@ -167,6 +169,18 @@ public static class PluginHostEndpoints
         });
 
         return app;
+    }
+
+    private static string ResolveBuildType(PluginManifest manifest, IPluginEntrypointResolver entrypointResolver)
+    {
+        if (entrypointResolver.TryResolveWasmComponent(manifest, out var componentPath))
+        {
+            return Path.GetExtension(componentPath).Equals(".cwasm", StringComparison.OrdinalIgnoreCase)
+                ? "cwasm"
+                : "wasm";
+        }
+
+        return "csharp";
     }
 
     private static async Task<IResult> ExecuteRepositoryActionAsync(

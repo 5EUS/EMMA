@@ -11,4 +11,9 @@ public sealed record PluginSummaryResponse(
     string Title,
     string Version,
     string Author,
+    string BuildType,
+    double? ThumbnailAspectRatio = null,
+    string? ThumbnailFit = null,
+    int? ThumbnailWidth = null,
+    int? ThumbnailHeight = null,
     PluginManifestSearchExperience? SearchExperience = null);

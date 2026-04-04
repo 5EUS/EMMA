@@ -3,6 +3,13 @@ using EMMA.Domain;
 
 namespace EMMA.Api.Services;
 
+public sealed record ApiErrorEnvelope(ApiErrorEnvelopeBody Error);
+
+public sealed record ApiErrorEnvelopeBody(
+    string Code,
+    string Message,
+    string? Details);
+
 public static class ApiErrorContract
 {
     public static ApiError FromException(Exception ex)
@@ -46,16 +53,12 @@ public static class ApiErrorContract
         };
     }
 
-    public static object ToEnvelope(ApiError error)
+    public static ApiErrorEnvelope ToEnvelope(ApiError error)
     {
-        return new
-        {
-            error = new
-            {
-                code = error.Code,
-                message = error.Message,
-                details = error.Details
-            }
-        };
+        return new ApiErrorEnvelope(
+            new ApiErrorEnvelopeBody(
+                error.Code,
+                error.Message,
+                error.Details));
     }
 }

@@ -337,6 +337,19 @@ public static class PluginHostExports
         return LogLevel.Warning;
     }
 
+    private static string ResolvePluginBuildType(PluginManifest manifest)
+    {
+        if (_serviceProvider?.GetService<IPluginEntrypointResolver>() is { } entrypointResolver
+            && entrypointResolver.TryResolveWasmComponent(manifest, out var componentPath))
+        {
+            return Path.GetExtension(componentPath).Equals(".cwasm", StringComparison.OrdinalIgnoreCase)
+                ? "cwasm"
+                : "wasm";
+        }
+
+        return "csharp";
+    }
+
     /// <summary>
     /// Shutdown the plugin host and release resources.
     /// </summary>
@@ -385,6 +398,11 @@ public static class PluginHostExports
                 Title: r.Manifest.Name ?? r.Manifest.Id,
                 Version: r.Manifest.Version ?? "1.0.0",
                 Author: r.Manifest.Author ?? "Unknown",
+                BuildType: ResolvePluginBuildType(r.Manifest),
+                ThumbnailAspectRatio: ResolveThumbnailAspectRatio(r.Manifest),
+                ThumbnailFit: r.Manifest.Thumbnail?.Fit,
+                ThumbnailWidth: r.Manifest.Thumbnail?.Width,
+                ThumbnailHeight: r.Manifest.Thumbnail?.Height,
                 SearchExperience: r.Manifest.SearchExperience
             )).ToList();
 
@@ -416,6 +434,30 @@ public static class PluginHostExports
             SetLastError(ex);
             return -1;
         }
+    }
+
+    private static double? ResolveThumbnailAspectRatio(PluginManifest manifest)
+    {
+        var thumbnail = manifest.Thumbnail;
+        if (thumbnail is null)
+        {
+            return null;
+        }
+
+        if (thumbnail.AspectRatio is { } aspect && aspect > 0)
+        {
+            return aspect;
+        }
+
+        if (thumbnail.Width is { } width
+            && thumbnail.Height is { } height
+            && width > 0
+            && height > 0)
+        {
+            return (double)width / height;
+        }
+
+        return null;
     }
 
     public static string? ListPluginRepositoriesJsonManaged()

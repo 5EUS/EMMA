@@ -38,7 +38,10 @@ internal static class PipelineErrorContract
 
     public static IResult ToResult(PipelineError error)
     {
-        return Results.Json(new PipelineErrorEnvelope(error), statusCode: ToHttpStatusCode(error.Code));
+        return Results.Json(
+            new PipelineErrorEnvelope(error),
+            PipelineErrorJsonContext.Default.PipelineErrorEnvelope,
+            statusCode: ToHttpStatusCode(error.Code));
     }
 
     private static PipelineError FromRpcException(RpcException ex, string operation)

@@ -49,7 +49,9 @@ public sealed class ApiKeyAuthMiddleware
                 Code = ErrorCodes.Unauthenticated,
                 Message = "Invalid API key."
             };
-            await context.Response.WriteAsJsonAsync(ApiErrorContract.ToEnvelope(error));
+            await context.Response.WriteAsJsonAsync(
+                ApiErrorContract.ToEnvelope(error),
+                ApiErrorJsonContext.Default.ApiErrorEnvelope);
             return;
         }
 
