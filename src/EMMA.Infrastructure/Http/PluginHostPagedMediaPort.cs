@@ -178,9 +178,20 @@ public sealed partial class PluginHostPagedMediaPort(HttpClient client, IOptions
 
     private static MediaType ParseMediaType(string? value)
     {
-        return string.Equals(value, "video", StringComparison.OrdinalIgnoreCase)
-            ? MediaType.Video
-            : MediaType.Paged;
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
+        }
+
+        return MediaType.Paged;
     }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)

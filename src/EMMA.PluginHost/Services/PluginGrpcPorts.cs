@@ -76,9 +76,17 @@ internal sealed class PluginSearchPort(
 
     private static MediaType ParseMediaType(string? value)
     {
-        if (string.Equals(value, "video", StringComparison.OrdinalIgnoreCase))
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
         {
             return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
         }
 
         return MediaType.Paged;

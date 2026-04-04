@@ -1489,11 +1489,12 @@ public static class PluginHostExports
         EnsureInitialized();
 
         var normalizedType = (job.MediaType ?? string.Empty).Trim().ToLowerInvariant();
-        return normalizedType switch
+        if (IsVideoLikeMediaType(normalizedType))
         {
-            "video" => await ExecuteVideoDownloadJobAsync(job, progress, cancellationToken),
-            _ => await ExecutePagedDownloadJobAsync(job, progress, cancellationToken)
-        };
+            return await ExecuteVideoDownloadJobAsync(job, progress, cancellationToken);
+        }
+
+        return await ExecutePagedDownloadJobAsync(job, progress, cancellationToken);
     }
 
     private static Task<DownloadExecutionResult> ExecutePagedDownloadJobAsync(
@@ -2041,6 +2042,9 @@ public static class PluginHostExports
         switch (mediaType)
         {
             case "video":
+            case "audio":
+            case "music":
+            case "podcast":
                 {
                     var mediaRoot = BuildDownloadedVideoRootPath(job.PluginId, job.MediaId);
                     if (string.IsNullOrWhiteSpace(job.StreamId))
@@ -3987,7 +3991,7 @@ public static class PluginHostExports
                         var newItemsCount = chapters.Count(chapter => !knownChapterIds.Contains(chapter.ChapterId));
                         if (newItemsCount > 0)
                         {
-                            var mediaTypeText = mediaType == MediaType.Video ? "video" : "paged";
+                            var mediaTypeText = ToMediaTypeString(mediaType);
                             var title = !string.IsNullOrWhiteSpace(metadata?.Title)
                                 ? metadata!.Title
                                 : mediaId;
@@ -4247,9 +4251,7 @@ public static class PluginHostExports
 
             EnsureInitialized();
 
-            var parsedMediaType = string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
-                ? MediaType.Video
-                : MediaType.Paged;
+            var parsedMediaType = ParseMediaType(mediaType);
             var now = DateTimeOffset.UtcNow;
             var normalizedUserId = ToLibraryStorageKey(userId);
 
@@ -4346,7 +4348,7 @@ public static class PluginHostExports
                 ? DefaultProgressUserId
                 : userId;
 
-            if (string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase))
+            if (IsVideoLikeMediaType(mediaType))
             {
                 var video = progress.GetVideoProgressAsync(
                     mediaIdValue,
@@ -4361,8 +4363,9 @@ public static class PluginHostExports
                     return "null";
                 }
 
+                var responseMediaType = ToVideoLikeMediaTypeString(mediaType);
                 var payload = new MediaProgressResponse(
-                    "video",
+                    responseMediaType,
                     null,
                     null,
                     video.PositionSeconds,
@@ -5062,9 +5065,7 @@ public static class PluginHostExports
 
     private static MediaSummary MapPluginSearchSummary(PluginContracts.MediaSummary result)
     {
-        var mediaType = string.Equals(result.MediaType, "video", StringComparison.OrdinalIgnoreCase)
-            ? MediaType.Video
-            : MediaType.Paged;
+        var mediaType = ParseMediaType(result.MediaType);
 
         var thumbnailUrl = string.IsNullOrWhiteSpace(result.ThumbnailUrl)
             ? null
@@ -5081,6 +5082,56 @@ public static class PluginHostExports
             mediaType,
             thumbnailUrl,
             description);
+    }
+
+    private static MediaType ParseMediaType(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
+        }
+
+        return MediaType.Paged;
+    }
+
+    private static bool IsVideoLikeMediaType(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        return string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ToMediaTypeString(MediaType mediaType)
+    {
+        return mediaType switch
+        {
+            MediaType.Video => "video",
+            MediaType.Audio => "audio",
+            _ => "paged"
+        };
+    }
+
+    private static string ToVideoLikeMediaTypeString(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return "audio";
+        }
+
+        return "video";
     }
 
     private static Metadata BuildGrpcHeaders(string pluginId, string correlationId)

@@ -262,9 +262,7 @@ public sealed class WasmPluginRuntimeHost(
             MediaId.Create(item.Id),
             item.Source ?? record.Manifest.Id,
             item.Title,
-            string.Equals(item.MediaType, "video", StringComparison.OrdinalIgnoreCase)
-                ? MediaType.Video
-                : MediaType.Paged,
+            ParseMediaType(item.MediaType),
             string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
             string.IsNullOrWhiteSpace(item.Description) ? null : item.Description))
             .ToArray();
@@ -272,6 +270,24 @@ public sealed class WasmPluginRuntimeHost(
         _searchCache[searchCacheKey] = new SearchCacheEntry(mappedResults, DateTimeOffset.UtcNow);
 
         return mappedResults;
+    }
+
+    private static MediaType ParseMediaType(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
+        }
+
+        return MediaType.Paged;
     }
 
     public async Task<string> SearchJsonAsync(

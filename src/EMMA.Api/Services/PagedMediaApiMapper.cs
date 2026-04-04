@@ -58,6 +58,7 @@ internal static class PagedMediaApiMapper
     {
         return mediaType switch
         {
+            MediaType.Audio => ApiMediaType.Audio,
             MediaType.Video => ApiMediaType.Video,
             MediaType.Paged => ApiMediaType.Paged,
             _ => ApiMediaType.Unspecified
