@@ -16,6 +16,21 @@ if [[ -z "$OUTPUT_DIR" ]]; then
   OUTPUT_DIR="$ROOT_DIR/artifacts/aot/EMMA.Native/$RID"
 fi
 
+HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
+ALLOW_CROSS_OS_NATIVE_AOT="${EMMA_ALLOW_CROSS_OS_NATIVE_AOT:-0}"
+
+if [[ "$RID" == win-* && "$HOST_OS" != CYGWIN* && "$HOST_OS" != MINGW* && "$HOST_OS" != MSYS* && "$ALLOW_CROSS_OS_NATIVE_AOT" != "1" ]]; then
+  echo "NativeAOT publish for '$RID' is not supported from host OS '$HOST_OS'."
+  echo ""
+  echo "Reason: .NET NativeAOT cross-OS native compilation is not supported for this lane."
+  echo ""
+  echo "Run this step on Windows instead:"
+  echo "  ./scripts/publish-native-aot.sh $RID"
+  echo ""
+  echo "If you intentionally want to bypass this preflight, set EMMA_ALLOW_CROSS_OS_NATIVE_AOT=1."
+  exit 1
+fi
+
 # Use static libraries only for iOS (App Store requirement)
 # Use dynamic libraries for desktop/Linux/Android (easier deployment, code signing)
 NATIVE_LIB_TYPE="Shared"

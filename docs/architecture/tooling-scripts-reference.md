@@ -81,6 +81,9 @@ Behavior:
 - Builds native in-process runtime from `src/EMMA.WasmRuntime.Native` using Cargo.
 - RID→target mapping is built in for: `linux-x64`, `osx-arm64`, `osx-x64`, `win-x64`, `ios-arm64`, `iossimulator-arm64`, `iossimulator-x64`.
 - Writes runtime artifact to `artifacts/wasm-runtime-native/<rid>` by default.
+- For `win-x64`:
+  - On Windows hosts, uses Cargo with MSVC target/toolchain (`x86_64-pc-windows-msvc`).
+  - On non-Windows hosts, automatically uses `cargo xwin` for cross-compilation (requires `cargo-xwin` installed).
 
 ### `build-ios-native-framework.sh`
 
