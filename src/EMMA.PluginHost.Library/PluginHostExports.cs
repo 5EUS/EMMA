@@ -36,8 +36,10 @@ public static class PluginHostExports
     private const string PluginHostHandshakeOnStartupEnvVar = "PluginHost__HandshakeOnStartup";
     private const string RequireSignedPluginsEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS";
     private const string PluginSignatureRequireSignedEnvVar = "PluginSignature__RequireSignedPlugins";
-    private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
-    private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
+    private const string PluginSignatureDelegationDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_DELEGATION_DIR";
+    private const string PluginSignatureDelegationDirectoryConfigEnvVar = "PluginSignature__DelegationDirectory";
+    private const string PluginSignatureRootKeyDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_ROOT_KEY_DIR";
+    private const string PluginSignatureRootKeyDirectoryConfigEnvVar = "PluginSignature__RootKeyDirectory";
     private const string DevModeEnvVar = "EMMA_PLUGIN_DEV_MODE";
     private const string PluginHostConsoleLogsEnvVar = "EMMA_PLUGINHOST_CONSOLE_LOGS";
     private const string PluginHostLogLevelEnvVar = "EMMA_PLUGINHOST_LOG_LEVEL";
@@ -106,11 +108,18 @@ public static class PluginHostExports
                         typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RequireSignedPlugins))!
                             .SetValue(options, ResolveRequireSignedPlugins());
 
-                        var hmacKey = ResolvePluginSignatureHmacKey();
-                        if (!string.IsNullOrWhiteSpace(hmacKey))
+                        var delegationDirectory = ResolvePluginSignatureDelegationDirectory();
+                        if (!string.IsNullOrWhiteSpace(delegationDirectory))
                         {
-                            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.HmacKeyBase64))!
-                                .SetValue(options, hmacKey);
+                            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.DelegationDirectory))!
+                                .SetValue(options, delegationDirectory);
+                        }
+
+                        var rootKeyDirectory = ResolvePluginSignatureRootKeyDirectory();
+                        if (!string.IsNullOrWhiteSpace(rootKeyDirectory))
+                        {
+                            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RootKeyDirectory))!
+                                .SetValue(options, rootKeyDirectory);
                         }
                     });
 
@@ -128,7 +137,7 @@ public static class PluginHostExports
                 services.AddSingleton<PluginProcessManager>();
                 services.AddSingleton<IWasmComponentInvoker, NativeInProcessWasmComponentInvoker>();
                 services.AddSingleton<IWasmPluginRuntimeHost, WasmPluginRuntimeHost>();
-                services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
+                services.AddSingleton<IPluginSignatureVerifier, DelegatedPluginSignatureVerifier>();
 
                 // Storage
                 services.AddSingleton(StorageOptions.Default);
@@ -282,10 +291,16 @@ public static class PluginHostExports
         return !IsDevelopmentMode();
     }
 
-    private static string? ResolvePluginSignatureHmacKey()
+    private static string? ResolvePluginSignatureDelegationDirectory()
     {
-        return Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
-            ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
+        return Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryConfigEnvVar);
+    }
+
+    private static string? ResolvePluginSignatureRootKeyDirectory()
+    {
+        return Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryConfigEnvVar);
     }
 
     private static bool IsDevelopmentMode()

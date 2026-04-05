@@ -24,10 +24,14 @@ public static class NativeExports
     private const string RequireSignedPluginsFileEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS_FILE";
     private const string RequireSignedPluginsManifestFileName = ".plugin-signature-require-signed";
     private const string RequireSignedPluginsAppFileName = "plugin-signature-require-signed";
-    private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
-    private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
-    private const string PluginSignatureHmacKeyFileEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_FILE";
-    private const string PluginSignatureHmacKeyFileName = ".plugin-signature-hmac.key";
+    private const string PluginSignatureDelegationDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_DELEGATION_DIR";
+    private const string PluginSignatureDelegationDirectoryConfigEnvVar = "PluginSignature__DelegationDirectory";
+    private const string PluginSignatureDelegationDirectoryFileEnvVar = "EMMA_PLUGIN_SIGNATURE_DELEGATION_DIR_FILE";
+    private const string PluginSignatureDelegationDirectoryFileName = ".plugin-signature-delegation-dir";
+    private const string PluginSignatureRootKeyDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_ROOT_KEY_DIR";
+    private const string PluginSignatureRootKeyDirectoryConfigEnvVar = "PluginSignature__RootKeyDirectory";
+    private const string PluginSignatureRootKeyDirectoryFileEnvVar = "EMMA_PLUGIN_SIGNATURE_ROOT_KEY_DIR_FILE";
+    private const string PluginSignatureRootKeyDirectoryFileName = ".plugin-signature-root-key-dir";
     private sealed class RuntimeState(EmbeddedRuntime runtime, InMemoryMediaStore store)
     {
         public EmbeddedRuntime Runtime { get; } = runtime;
@@ -956,7 +960,7 @@ public static class NativeExports
                         var pathsChanged = !SameConfiguredPath(previousConfiguration.ManifestsDirectory, _pluginPathConfiguration.ManifestsDirectory)
                             || !SameConfiguredPath(previousConfiguration.PluginsDirectory, _pluginPathConfiguration.PluginsDirectory);
                         var signaturePolicyChanged = EnsureRequireSignedPluginsConfigured(currentManifestDirectory);
-                        var signatureKeyChanged = EnsurePluginSignatureKeyConfigured(currentManifestDirectory);
+                        var signatureKeyChanged = EnsurePluginSignatureTrustConfigured(currentManifestDirectory);
 
                         if (pathsChanged || signaturePolicyChanged || signatureKeyChanged)
                         {
@@ -2648,7 +2652,7 @@ public static class NativeExports
             var sandboxDirectory = ResolvePluginSandboxDirectory() ?? string.Empty;
 
             EnsureRequireSignedPluginsConfigured(manifestDirectory);
-            EnsurePluginSignatureKeyConfigured(manifestDirectory);
+            EnsurePluginSignatureTrustConfigured(manifestDirectory);
 
             var resultCode = PluginHostExports.InitializeManaged(manifestDirectory, sandboxDirectory);
 
@@ -2664,34 +2668,40 @@ public static class NativeExports
         }
     }
 
-    private static bool EnsurePluginSignatureKeyConfigured(string? manifestDirectory)
+    private static bool EnsurePluginSignatureTrustConfigured(string? manifestDirectory)
     {
-        var existingKey = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
-            ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
+        var changed = false;
 
-        var resolvedKey = ResolvePluginSignatureKeyFromFiles(manifestDirectory);
-        if (string.IsNullOrWhiteSpace(resolvedKey))
+        var existingDelegationDirectory = Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryConfigEnvVar);
+        var resolvedDelegationDirectory = ResolvePluginSignatureDelegationDirectoryFromFiles(manifestDirectory);
+
+        if (!string.IsNullOrWhiteSpace(resolvedDelegationDirectory)
+            && !string.Equals(existingDelegationDirectory?.Trim(), resolvedDelegationDirectory, StringComparison.Ordinal))
         {
-            if (string.IsNullOrWhiteSpace(existingKey))
-            {
-                return false;
-            }
-
-            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, null);
-            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, null);
-            LogInfo("plugin-host", "Cleared plugin signature key because no key file is present.");
-            return true;
+            Environment.SetEnvironmentVariable(PluginSignatureDelegationDirectoryEnvVar, resolvedDelegationDirectory);
+            Environment.SetEnvironmentVariable(PluginSignatureDelegationDirectoryConfigEnvVar, resolvedDelegationDirectory);
+            changed = true;
         }
 
-        if (string.Equals(existingKey?.Trim(), resolvedKey, StringComparison.Ordinal))
+        var existingRootKeyDirectory = Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryConfigEnvVar);
+        var resolvedRootKeyDirectory = ResolvePluginSignatureRootKeyDirectoryFromFiles(manifestDirectory);
+
+        if (!string.IsNullOrWhiteSpace(resolvedRootKeyDirectory)
+            && !string.Equals(existingRootKeyDirectory?.Trim(), resolvedRootKeyDirectory, StringComparison.Ordinal))
         {
-            return false;
+            Environment.SetEnvironmentVariable(PluginSignatureRootKeyDirectoryEnvVar, resolvedRootKeyDirectory);
+            Environment.SetEnvironmentVariable(PluginSignatureRootKeyDirectoryConfigEnvVar, resolvedRootKeyDirectory);
+            changed = true;
         }
 
-        Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, resolvedKey);
-        Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, resolvedKey);
-        LogInfo("plugin-host", "Loaded plugin signature key from configured key file.");
-        return true;
+        if (changed)
+        {
+            LogInfo("plugin-host", "Loaded delegated plugin signature trust configuration.");
+        }
+
+        return changed;
     }
 
     private static bool EnsureRequireSignedPluginsConfigured(string? manifestDirectory)
@@ -2792,11 +2802,11 @@ public static class NativeExports
         }
     }
 
-    private static string? ResolvePluginSignatureKeyFromFiles(string? manifestDirectory)
+    private static string? ResolvePluginSignatureDelegationDirectoryFromFiles(string? manifestDirectory)
     {
         var candidatePaths = new List<string>();
 
-        var explicitPath = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyFileEnvVar);
+        var explicitPath = Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryFileEnvVar);
         if (!string.IsNullOrWhiteSpace(explicitPath))
         {
             candidatePaths.Add(explicitPath);
@@ -2804,18 +2814,38 @@ public static class NativeExports
 
         if (!string.IsNullOrWhiteSpace(manifestDirectory))
         {
-            candidatePaths.Add(Path.Combine(manifestDirectory, PluginSignatureHmacKeyFileName));
+            candidatePaths.Add(Path.Combine(manifestDirectory, PluginSignatureDelegationDirectoryFileName));
+            candidatePaths.Add(Path.Combine(manifestDirectory, "trust"));
+            candidatePaths.Add(Path.Combine(manifestDirectory, "delegations"));
+
+            var manifestParent = Path.GetDirectoryName(manifestDirectory);
+            if (!string.IsNullOrWhiteSpace(manifestParent))
+            {
+                candidatePaths.Add(Path.Combine(manifestParent, "trust"));
+                candidatePaths.Add(Path.Combine(manifestParent, "delegations"));
+            }
         }
 
         var support = GetApplicationSupportDirectories().FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(support))
         {
-            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-hmac.key"));
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-trust"));
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-delegations"));
         }
 
         foreach (var path in candidatePaths)
         {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            if (Directory.Exists(path))
+            {
+                return path;
+            }
+
+            if (!File.Exists(path))
             {
                 continue;
             }
@@ -2823,7 +2853,70 @@ public static class NativeExports
             try
             {
                 var value = File.ReadAllText(path).Trim();
-                if (!string.IsNullOrWhiteSpace(value))
+                if (!string.IsNullOrWhiteSpace(value) && Directory.Exists(value))
+                {
+                    return value;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ResolvePluginSignatureRootKeyDirectoryFromFiles(string? manifestDirectory)
+    {
+        var candidatePaths = new List<string>();
+
+        var explicitPath = Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryFileEnvVar);
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            candidatePaths.Add(explicitPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifestDirectory))
+        {
+            candidatePaths.Add(Path.Combine(manifestDirectory, PluginSignatureRootKeyDirectoryFileName));
+            candidatePaths.Add(Path.Combine(manifestDirectory, "trust", "roots"));
+
+            var manifestParent = Path.GetDirectoryName(manifestDirectory);
+            if (!string.IsNullOrWhiteSpace(manifestParent))
+            {
+                candidatePaths.Add(Path.Combine(manifestParent, "trust", "roots"));
+            }
+        }
+
+        var support = GetApplicationSupportDirectories().FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(support))
+        {
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-trust", "roots"));
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-root-keys"));
+        }
+
+        foreach (var path in candidatePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            if (Directory.Exists(path))
+            {
+                return path;
+            }
+
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var value = File.ReadAllText(path).Trim();
+                if (!string.IsNullOrWhiteSpace(value) && Directory.Exists(value))
                 {
                     return value;
                 }

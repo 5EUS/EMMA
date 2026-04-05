@@ -66,6 +66,8 @@ public sealed class PluginRepositoryInstallOrchestrator(
             request.RefreshCatalog,
             cancellationToken);
 
+        await EnsureRepositoryTrustMaterialAsync(selection.Repository, request.RepositoryId, cancellationToken);
+
         ValidateReleasePlatform(selection.Release);
 
         var releaseHash = NormalizeSha256(selection.Release.Sha256)
@@ -92,6 +94,7 @@ public sealed class PluginRepositoryInstallOrchestrator(
 
             var parsed = await ParseAndValidateArchiveAsync(
                 archivePath,
+                request.RepositoryId,
                 selection.Plugin.PluginId,
                 selection.Release,
                 cancellationToken);
@@ -152,6 +155,7 @@ public sealed class PluginRepositoryInstallOrchestrator(
 
     private async Task<ParsedInstallPayload> ParseAndValidateArchiveAsync(
         string archivePath,
+        string repositoryId,
         string expectedPluginId,
         PluginRepositoryCatalogRelease expectedRelease,
         CancellationToken cancellationToken)
@@ -187,8 +191,6 @@ public sealed class PluginRepositoryInstallOrchestrator(
             $"Plugin version mismatch. Expected '{expectedRelease.Version}', archive manifest reports '{manifest.Version}'.");
         }
 
-        ValidateSignaturePolicy(manifest);
-
         var pluginPrefix = manifest.Id + "/";
         var pluginEntries = archive.Entries
             .Where(entry =>
@@ -201,6 +203,9 @@ public sealed class PluginRepositoryInstallOrchestrator(
             throw new InvalidDataException(
                 $"Invalid plugin package: expected plugin payload under '{pluginPrefix}'.");
         }
+
+        var payloadDigestSha256 = ComputePayloadDigest(pluginEntries, pluginPrefix);
+        ValidateSignaturePolicy(manifest, repositoryId, payloadDigestSha256);
 
         var payloadType = DetectPayloadType(pluginEntries);
         EnsurePayloadSupportedForCurrentPlatform(payloadType);
@@ -331,7 +336,93 @@ public sealed class PluginRepositoryInstallOrchestrator(
         return Encoding.UTF8.GetString(memory.ToArray());
     }
 
-    private void ValidateSignaturePolicy(PluginManifest manifest)
+    private async Task EnsureRepositoryTrustMaterialAsync(
+        PluginRepositoryRecord repository,
+        string repositoryId,
+        CancellationToken cancellationToken)
+    {
+        if (!_signatureOptions.RequireSignedPlugins)
+        {
+            return;
+        }
+
+        var delegationDirectory = ResolveDelegationDirectory();
+        var rootKeyDirectory = ResolveRootKeyDirectory();
+
+        Directory.CreateDirectory(delegationDirectory);
+        Directory.CreateDirectory(rootKeyDirectory);
+
+        var delegationPath = Path.Combine(delegationDirectory, $"{repositoryId}.delegations.json");
+        if (!File.Exists(delegationPath))
+        {
+            var delegationUri = ResolveTrustFileUri(repository.CatalogUrl, $"{repositoryId}.delegations.json");
+            var delegationJson = await _catalogClient.DownloadTextAsync(
+                delegationUri.ToString(),
+                _hostOptions.RepositoryMaxCatalogBytes,
+                cancellationToken);
+
+            await File.WriteAllTextAsync(delegationPath, delegationJson, cancellationToken);
+        }
+
+        var rootKeyId = ReadRootKeyIdFromDelegation(delegationPath);
+        var rootKeyPath = Path.Combine(rootKeyDirectory, $"{rootKeyId}.pem");
+        if (!File.Exists(rootKeyPath))
+        {
+            var rootUri = ResolveTrustFileUri(repository.CatalogUrl, $"roots/{rootKeyId}.pem");
+            var rootPem = await _catalogClient.DownloadTextAsync(
+                rootUri.ToString(),
+                1024 * 1024,
+                cancellationToken);
+
+            await File.WriteAllTextAsync(rootKeyPath, rootPem, cancellationToken);
+        }
+    }
+
+    private string ResolveDelegationDirectory()
+    {
+        if (!string.IsNullOrWhiteSpace(_signatureOptions.DelegationDirectory))
+        {
+            return _signatureOptions.DelegationDirectory;
+        }
+
+        return Path.Combine(_hostOptions.ManifestDirectory, "trust");
+    }
+
+    private string ResolveRootKeyDirectory()
+    {
+        if (!string.IsNullOrWhiteSpace(_signatureOptions.RootKeyDirectory))
+        {
+            return _signatureOptions.RootKeyDirectory;
+        }
+
+        return Path.Combine(_hostOptions.ManifestDirectory, "trust", "roots");
+    }
+
+    private static Uri ResolveTrustFileUri(string catalogUrl, string relativeTrustPath)
+    {
+        var catalogUri = new Uri(catalogUrl, UriKind.Absolute);
+        return new Uri(catalogUri, $"trust/{relativeTrustPath}");
+    }
+
+    private static string ReadRootKeyIdFromDelegation(string delegationPath)
+    {
+        using var doc = JsonDocument.Parse(File.ReadAllText(delegationPath));
+        if (!doc.RootElement.TryGetProperty("rootKeyId", out var rootKeyIdElement)
+            || rootKeyIdElement.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidDataException("Delegation metadata rootKeyId is missing.");
+        }
+
+        var rootKeyId = rootKeyIdElement.GetString()?.Trim();
+        if (string.IsNullOrWhiteSpace(rootKeyId))
+        {
+            throw new InvalidDataException("Delegation metadata rootKeyId is empty.");
+        }
+
+        return rootKeyId;
+    }
+
+    private void ValidateSignaturePolicy(PluginManifest manifest, string repositoryId, string payloadDigestSha256)
     {
         if (!_signatureOptions.RequireSignedPlugins)
         {
@@ -343,10 +434,58 @@ public sealed class PluginRepositoryInstallOrchestrator(
             throw new InvalidDataException("Plugin manifest signature is required for installation.");
         }
 
+        if (!string.Equals(manifest.Signature.RepositoryId, repositoryId, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("Plugin manifest signature repository binding does not match install repository.");
+        }
+
+        if (!string.Equals(manifest.Signature.PayloadDigestSha256, payloadDigestSha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException("Plugin manifest payload digest does not match package payload.");
+        }
+
         if (!_signatureVerifier.Verify(manifest, out var reason))
         {
             throw new InvalidDataException(reason ?? "Plugin manifest signature validation failed.");
         }
+    }
+
+    private static string ComputePayloadDigest(IReadOnlyList<ZipArchiveEntry> entries, string pluginPrefix)
+    {
+        using var sha = SHA256.Create();
+
+        foreach (var entry in entries
+                     .Where(item => !string.IsNullOrEmpty(item.Name))
+                     .OrderBy(item => item.FullName, StringComparer.Ordinal))
+        {
+            var relative = entry.FullName;
+            if (relative.StartsWith(pluginPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                relative = relative[pluginPrefix.Length..];
+            }
+
+            if (string.IsNullOrWhiteSpace(relative))
+            {
+                continue;
+            }
+
+            var relativeBytes = Encoding.UTF8.GetBytes(relative.Replace('\\', '/'));
+            sha.TransformBlock(relativeBytes, 0, relativeBytes.Length, null, 0);
+            sha.TransformBlock([0], 0, 1, null, 0);
+
+            using var stream = entry.Open();
+            var buffer = new byte[64 * 1024];
+            int read;
+            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                sha.TransformBlock(buffer, 0, read, null, 0);
+            }
+
+            sha.TransformBlock([0], 0, 1, null, 0);
+        }
+
+        sha.TransformFinalBlock([], 0, 0);
+        return Convert.ToHexString(sha.Hash ?? []).ToLowerInvariant();
     }
 
     private void ValidateReleasePlatform(PluginRepositoryCatalogRelease release)
