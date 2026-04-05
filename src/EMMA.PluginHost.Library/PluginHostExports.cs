@@ -3876,7 +3876,7 @@ public static class PluginHostExports
                     item.SourceId,
                     item.Title,
                     item.MediaType,
-                    null,
+                    item.ThumbnailUrl,
                     item.Synopsis))
                 .ToList();
 
@@ -3926,7 +3926,7 @@ public static class PluginHostExports
                     metadata.SourceId,
                     metadata.Title,
                     metadata.MediaType,
-                    null,
+                    metadata.ThumbnailUrl,
                     metadata.Synopsis));
             }
 
@@ -3981,6 +3981,12 @@ public static class PluginHostExports
                 }
 
                 var mediaType = metadata?.MediaType ?? MediaType.Paged;
+                var resolvedThumbnailUrl = metadata?.ThumbnailUrl;
+                if (string.IsNullOrWhiteSpace(resolvedThumbnailUrl))
+                {
+                    resolvedThumbnailUrl = ResolveThumbnailUrlFromSearch(sourceId, mediaId, metadata?.Title ?? mediaId);
+                }
+
                 var refreshFailed = false;
                 if (mediaType == MediaType.Paged)
                 {
@@ -4038,11 +4044,19 @@ public static class PluginHostExports
                         mediaType,
                         null,
                         null,
+                        string.IsNullOrWhiteSpace(resolvedThumbnailUrl) ? null : resolvedThumbnailUrl,
                         null,
                         [],
                         now,
                         now)
-                    : metadata with { UpdatedAtUtc = now };
+                    : metadata with
+                    {
+                        UpdatedAtUtc = now,
+                        SourceId = sourceId,
+                        ThumbnailUrl = string.IsNullOrWhiteSpace(metadata.ThumbnailUrl)
+                            ? (string.IsNullOrWhiteSpace(resolvedThumbnailUrl) ? null : resolvedThumbnailUrl)
+                            : metadata.ThumbnailUrl
+                    };
 
                 catalog.UpsertMediaAsync(metadataToPersist, CancellationToken.None)
                     .GetAwaiter()
@@ -4252,7 +4266,8 @@ public static class PluginHostExports
         string title,
         string mediaType,
         string userId = "Library",
-        string? description = null)
+        string? description = null,
+        string? thumbnailUrl = null)
     {
         ClearLastError();
 
@@ -4279,6 +4294,7 @@ public static class PluginHostExports
                     parsedMediaType,
                     null,
                     string.IsNullOrWhiteSpace(description) ? null : description,
+                    string.IsNullOrWhiteSpace(thumbnailUrl) ? null : thumbnailUrl,
                     null,
                     [],
                     now,
@@ -5071,6 +5087,64 @@ public static class PluginHostExports
     private static string BuildPageCacheKey(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
         return $"{pluginId}\u001f{mediaId}\u001f{chapterId}\u001f{pageIndex}";
+    }
+
+    private static string? ResolveThumbnailUrlFromSearch(string sourceId, string mediaId, string title)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId))
+        {
+            return null;
+        }
+
+        try
+        {
+            var query = string.IsNullOrWhiteSpace(title)
+                ? mediaId
+                : title;
+            var json = SearchJsonManaged(sourceId, query, Guid.NewGuid().ToString("n"));
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                ClearLastError();
+                return null;
+            }
+
+            var parsed = JsonSerializer.Deserialize(json, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+            if (parsed is null || parsed.Count == 0)
+            {
+                return null;
+            }
+
+            var mediaIdMatch = parsed.FirstOrDefault(item =>
+                string.Equals(item.Id.Value, mediaId, StringComparison.Ordinal));
+            if (!string.IsNullOrWhiteSpace(mediaIdMatch?.ThumbnailUrl))
+            {
+                return mediaIdMatch!.ThumbnailUrl;
+            }
+
+            var normalizedTitle = (title ?? string.Empty).Trim();
+            if (normalizedTitle.Length > 0)
+            {
+                var titleMatch = parsed.FirstOrDefault(item =>
+                    string.Equals(item.Title, normalizedTitle, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(titleMatch?.ThumbnailUrl))
+                {
+                    return titleMatch!.ThumbnailUrl;
+                }
+            }
+
+            return parsed
+                .Select(item => item.ThumbnailUrl)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            // Search failures during refresh should not poison the caller error state.
+            ClearLastError();
+        }
     }
 
     private static GrpcChannel GetOrCreateChannel(Uri address)

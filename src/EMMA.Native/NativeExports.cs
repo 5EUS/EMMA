@@ -1860,6 +1860,65 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library_v3")]
+    public static int RuntimeAddMediaToLibraryV3(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr descriptionUtf8,
+        IntPtr thumbnailUrlUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var description = PtrToString(descriptionUtf8);
+            var thumbnailUrl = PtrToString(thumbnailUrlUtf8);
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                "Library",
+                description,
+                thumbnailUrl);
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_remove_media_from_library")]
     public static int RuntimeRemoveMediaFromLibrary(int handle, IntPtr mediaIdUtf8)
     {
@@ -1994,6 +2053,67 @@ public static class NativeExports
                 mediaType,
                 libraryName,
                 description);
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library_for_library_v3")]
+    public static int RuntimeAddMediaToLibraryForLibraryV3(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr libraryNameUtf8,
+        IntPtr descriptionUtf8,
+        IntPtr thumbnailUrlUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+            var description = PtrToString(descriptionUtf8);
+            var thumbnailUrl = PtrToString(thumbnailUrlUtf8);
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                libraryName,
+                description,
+                thumbnailUrl);
 
             if (added == 0)
             {

@@ -10,6 +10,7 @@ public sealed record MediaMetadata(
     MediaType MediaType,
     string? Rating,
     string? Synopsis,
+    string? ThumbnailUrl,
     string? Language,
     IReadOnlyList<string> Tags,
     DateTimeOffset CreatedAtUtc,
