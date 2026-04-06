@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EMMA.Domain;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using Microsoft.Extensions.Options;
@@ -43,6 +44,7 @@ public sealed class WasmPluginRuntimeHost(
     IPluginEntrypointResolver entrypointResolver,
     IWasmComponentInvoker invoker,
     IOptions<PluginHostOptions> options,
+    PluginHostMetrics metrics,
     ILogger<WasmPluginRuntimeHost> logger) : IWasmPluginRuntimeHost
 {
     private const string HandshakeOperation = "handshake";
@@ -60,6 +62,7 @@ public sealed class WasmPluginRuntimeHost(
 
     private readonly IPluginEntrypointResolver _entrypointResolver = entrypointResolver;
     private readonly IWasmComponentInvoker _invoker = invoker;
+    private readonly PluginHostMetrics _metrics = metrics;
     private readonly ILogger<WasmPluginRuntimeHost> _logger = logger;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _batchPagesBackoffUntilByPlugin = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SearchCacheEntry> _searchCache = new(StringComparer.Ordinal);
@@ -708,14 +711,42 @@ public sealed class WasmPluginRuntimeHost(
         IReadOnlyList<string>? permittedDomains,
         CancellationToken cancellationToken)
     {
+        var pluginId = InferPluginIdFromComponentPath(componentPath);
+        var stopwatch = Stopwatch.StartNew();
         try
         {
-            return await _invoker.InvokeAsync(componentPath, operation, operationArgs, permittedDomains, cancellationToken);
+            var result = await _invoker.InvokeAsync(componentPath, operation, operationArgs, permittedDomains, cancellationToken);
+            _metrics.RecordWasmOperation(pluginId, operation, EmmaTelemetry.Outcomes.Ok, stopwatch.Elapsed.TotalMilliseconds);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            _metrics.RecordWasmOperation(pluginId, operation, EmmaTelemetry.Outcomes.Cancelled, stopwatch.Elapsed.TotalMilliseconds);
+            throw;
         }
         catch (Exception ex)
         {
+            _metrics.RecordWasmOperation(pluginId, operation, EmmaTelemetry.Outcomes.Error, stopwatch.Elapsed.TotalMilliseconds);
             _logger.LogWarning(ex, "WASM operation {Operation} failed for {ComponentPath}", operation, componentPath);
             throw;
+        }
+    }
+
+    private static string InferPluginIdFromComponentPath(string componentPath)
+    {
+        if (string.IsNullOrWhiteSpace(componentPath))
+        {
+            return "unknown";
+        }
+
+        try
+        {
+            var parent = Path.GetFileName(Path.GetDirectoryName(componentPath));
+            return string.IsNullOrWhiteSpace(parent) ? "unknown" : parent;
+        }
+        catch
+        {
+            return "unknown";
         }
     }
 

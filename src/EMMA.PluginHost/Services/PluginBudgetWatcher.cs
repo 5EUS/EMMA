@@ -6,17 +6,18 @@ namespace EMMA.PluginHost.Services;
 
 /// <summary>
 /// Checks plugin resource usage against configured budgets and quarantines plugins that exceed them.
-/// TODO: Add more telemetry.
 /// </summary>
 public sealed class PluginBudgetWatcher(
     PluginRegistry registry,
     PluginProcessManager processManager,
     IOptions<PluginHostOptions> options,
+    PluginHostMetrics metrics,
     ILogger<PluginBudgetWatcher> logger) : BackgroundService
 {
     private readonly PluginRegistry _registry = registry;
     private readonly PluginProcessManager _processManager = processManager;
     private readonly PluginHostOptions _options = options.Value;
+    private readonly PluginHostMetrics _metrics = metrics;
     private readonly ILogger<PluginBudgetWatcher> _logger = logger;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -38,6 +39,8 @@ public sealed class PluginBudgetWatcher(
                     continue;
                 }
 
+                _metrics.RecordBudgetCheck(record.Manifest.Id);
+
                 var exceededReasons = new List<string>();
                 if (_options.MaxCpuBudgetMs > 0 && record.Status.CpuBudgetMs > _options.MaxCpuBudgetMs)
                 {
@@ -55,6 +58,7 @@ public sealed class PluginBudgetWatcher(
                 }
 
                 var reasonText = string.Join(", ", exceededReasons);
+                _metrics.RecordBudgetExceeded(record.Manifest.Id, reasonText);
                 _logger.LogWarning(
                     "Plugin {PluginId} exceeded host budgets ({Reason}). Quarantining.",
                     record.Manifest.Id,

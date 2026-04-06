@@ -135,6 +135,7 @@ public static class PluginHostExports
                 services.AddSingleton<PluginRepositoryInstallOrchestrator>();
                 services.AddSingleton<PluginEndpointAllocator>();
                 services.AddSingleton<PluginProcessManager>();
+                services.AddSingleton<PluginHostMetrics>();
                 services.AddSingleton<IWasmComponentInvoker, NativeInProcessWasmComponentInvoker>();
                 services.AddSingleton<IWasmPluginRuntimeHost, WasmPluginRuntimeHost>();
                 services.AddSingleton<IPluginSignatureVerifier, DelegatedPluginSignatureVerifier>();
@@ -1974,7 +1975,7 @@ public static class PluginHostExports
 
     private static string BuildDownloadedVideoSegmentPathInDirectory(string streamDirectory, int sequence)
     {
-        return BuildDownloadedVideoSegmentPathInDirectory(streamDirectory, sequence, ".bin");
+        return BuildDownloadedVideoSegmentPathInDirectory(streamDirectory, sequence, ".ts");
     }
 
     private static string BuildDownloadedVideoSegmentPathInDirectory(string streamDirectory, int sequence, string extension)
@@ -2178,7 +2179,9 @@ public static class PluginHostExports
             BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".bin"),
             BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".m4s"),
             BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".ts"),
-            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".mp4")
+            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".mp4"),
+            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".aac"),
+            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".mp3")
         };
 
         var path = candidates.FirstOrDefault(File.Exists);
@@ -2626,24 +2629,13 @@ public static class PluginHostExports
 
     private static string NormalizeSegmentExtension(string extension)
     {
-        var normalized = (extension ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            return ".bin";
-        }
-
-        if (!normalized.StartsWith('.'))
-        {
-            normalized = $".{normalized}";
-        }
-
-        return normalized;
+        return PluginVideoSegmentFileNaming.NormalizeSupportedSegmentExtension(extension);
     }
 
     private static bool IsSupportedSegmentExtension(string extension)
     {
         var normalized = NormalizeSegmentExtension(extension);
-        return normalized is ".bin" or ".m4s" or ".ts" or ".mp4";
+        return normalized is ".bin" or ".m4s" or ".ts" or ".mp4" or ".aac" or ".mp3";
     }
 
     private static IEnumerable<(string Path, string Name, int Sort)> EnumerateDownloadedVideoSegments(string streamDirectory)
@@ -2884,7 +2876,8 @@ public static class PluginHostExports
                     await throttler.WaitAsync(cancellationToken);
                     try
                     {
-                        var segmentPath = BuildDownloadedVideoSegmentPathInDirectory(stagingStreamRoot, i);
+                        var segmentExtension = PluginVideoSegmentFileNaming.ResolveSegmentExtension(segments[i].Uri, ".ts");
+                        var segmentPath = BuildDownloadedVideoSegmentPathInDirectory(stagingStreamRoot, i, segmentExtension);
                         var bytesWritten = await DownloadHlsSegmentToPathAsync(httpClient, segments[i], segmentPath, cancellationToken);
                         if (bytesWritten <= 0)
                         {

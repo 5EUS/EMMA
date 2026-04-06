@@ -46,6 +46,7 @@ builder.Services.AddSingleton<PluginRepositoryStore>();
 builder.Services.AddSingleton<PluginRepositoryCatalogClient>();
 builder.Services.AddSingleton<PluginRepositoryService>();
 builder.Services.AddSingleton<PluginRepositoryInstallOrchestrator>();
+builder.Services.AddSingleton<PluginHostMetrics>();
 builder.Services.AddSingleton<IWasmComponentInvoker, NativeInProcessWasmComponentInvoker>();
 builder.Services.AddSingleton<IWasmPluginRuntimeHost, WasmPluginRuntimeHost>();
 builder.Services.AddSingleton<IPluginSignatureVerifier, DelegatedPluginSignatureVerifier>();

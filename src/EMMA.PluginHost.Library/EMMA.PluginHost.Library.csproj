@@ -34,6 +34,8 @@
     <Compile Remove="..\EMMA.PluginHost\Services\PluginHostEndpoints.cs" />
     <Compile Remove="..\EMMA.PluginHost\Services\PagedPipelineEndpoints.cs" />
     <Compile Remove="..\EMMA.PluginHost\Services\VideoPipelineEndpoints.cs" />
+    <Compile Remove="..\EMMA.PluginHost\Services\PipelineErrorContract.cs" />
+    <Compile Remove="..\EMMA.PluginHost\Services\PipelineErrorJsonContext.cs" />
   </ItemGroup>
 
   <ItemGroup>
