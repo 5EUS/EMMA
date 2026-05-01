@@ -28,6 +28,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 media_type,
                 rating,
                 synopsis,
+                thumbnail_url,
                 language,
                 tags,
                 created_at,
@@ -39,6 +40,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 $mediaType,
                 $rating,
                 $synopsis,
+                $thumbnailUrl,
                 $language,
                 $tags,
                 $createdAt,
@@ -50,6 +52,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 media_type = excluded.media_type,
                 rating = excluded.rating,
                 synopsis = excluded.synopsis,
+                thumbnail_url = excluded.thumbnail_url,
                 language = excluded.language,
                 tags = excluded.tags,
                 updated_at = excluded.updated_at;
@@ -61,6 +64,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         command.Parameters.AddWithValue("$mediaType", media.MediaType.ToString().ToLowerInvariant());
         command.Parameters.AddWithValue("$rating", (object?)media.Rating ?? DBNull.Value);
         command.Parameters.AddWithValue("$synopsis", (object?)media.Synopsis ?? DBNull.Value);
+        command.Parameters.AddWithValue("$thumbnailUrl", (object?)media.ThumbnailUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("$language", (object?)media.Language ?? DBNull.Value);
         command.Parameters.AddWithValue("$tags", tagsJson);
         command.Parameters.AddWithValue("$createdAt", media.CreatedAtUtc.ToString("O"));
@@ -83,6 +87,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 media_type,
                 rating,
                 synopsis,
+                thumbnail_url,
                 language,
                 tags,
                 created_at,
@@ -116,6 +121,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 media_type,
                 rating,
                 synopsis,
+                thumbnail_url,
                 language,
                 tags,
                 created_at,
@@ -318,7 +324,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
 
     private static MediaMetadata ReadMedia(SqliteDataReader reader)
     {
-        var tagsJson = reader.IsDBNull(7) ? "[]" : reader.GetString(7);
+        var tagsJson = reader.IsDBNull(8) ? "[]" : reader.GetString(8);
         var tags = JsonSerializer.Deserialize(tagsJson, StorageJsonContext.Default.IReadOnlyListString)
                     ?? Array.Empty<string>();
 
@@ -330,9 +336,10 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
             reader.IsDBNull(4) ? null : reader.GetString(4),
             reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7),
             tags,
-            DateTimeOffset.Parse(reader.GetString(8)),
-            DateTimeOffset.Parse(reader.GetString(9)));
+            DateTimeOffset.Parse(reader.GetString(9)),
+            DateTimeOffset.Parse(reader.GetString(10)));
     }
 
     private static MediaChapterRecord ReadChapter(SqliteDataReader reader)
@@ -369,9 +376,20 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
 
     private static MediaType ParseMediaType(string value)
     {
-        return string.Equals(value, "video", StringComparison.OrdinalIgnoreCase)
-            ? MediaType.Video
-            : MediaType.Paged;
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
+        }
+
+        return MediaType.Paged;
     }
 
     private static async Task EnsureMediaRowExistsAsync(
@@ -392,6 +410,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 media_type,
                 rating,
                 synopsis,
+                thumbnail_url,
                 language,
                 tags,
                 created_at,
@@ -401,6 +420,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 $sourceId,
                 $title,
                 $mediaType,
+                NULL,
                 NULL,
                 NULL,
                 NULL,

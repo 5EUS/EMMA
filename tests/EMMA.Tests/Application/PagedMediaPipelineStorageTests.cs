@@ -114,6 +114,66 @@ public sealed class PagedMediaPipelineStorageTests
         Assert.Empty(media.Tags);
     }
 
+    [Theory]
+    [InlineData("audio")]
+    [InlineData("music")]
+    [InlineData("podcast")]
+    public async Task ListMediaAsync_ParsesAudioLikeLegacyMediaTypes(string legacyMediaType)
+    {
+        var tempDb = Path.Combine(Path.GetTempPath(), "emma-tests", Guid.NewGuid().ToString("N"), "emma.db");
+        Directory.CreateDirectory(Path.GetDirectoryName(tempDb)!);
+
+        var options = new StorageOptions(tempDb);
+        var initializer = new StorageInitializer(options);
+        await initializer.InitializeAsync(CancellationToken.None);
+
+        await using (var connection = new SqliteConnection($"Data Source={tempDb}"))
+        {
+            await connection.OpenAsync(CancellationToken.None);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                INSERT INTO media (
+                    id,
+                    source_id,
+                    title,
+                    media_type,
+                    rating,
+                    synopsis,
+                    language,
+                    tags,
+                    created_at,
+                    updated_at
+                ) VALUES (
+                    $id,
+                    $sourceId,
+                    $title,
+                    $mediaType,
+                    NULL,
+                    NULL,
+                    NULL,
+                    $tags,
+                    $createdAt,
+                    $updatedAt
+                );
+                """;
+            command.Parameters.AddWithValue("$id", $"legacy-{legacyMediaType}");
+            command.Parameters.AddWithValue("$sourceId", "legacy-source");
+            command.Parameters.AddWithValue("$title", "Legacy Audio Title");
+            command.Parameters.AddWithValue("$mediaType", legacyMediaType);
+            command.Parameters.AddWithValue("$tags", "[]");
+            command.Parameters.AddWithValue("$createdAt", DateTimeOffset.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            await command.ExecuteNonQueryAsync(CancellationToken.None);
+        }
+
+        var catalog = new SqliteMediaCatalogPort(options);
+
+        var items = await catalog.ListMediaAsync(10, CancellationToken.None);
+        var media = Assert.Single(items);
+        Assert.Equal(MediaType.Audio, media.MediaType);
+    }
+
     private sealed class StubSearchPort : IMediaSearchPort
     {
         public Task<IReadOnlyList<MediaSummary>> SearchAsync(string query, CancellationToken cancellationToken)

@@ -26,6 +26,7 @@ public sealed class WasmPluginRuntimeHostTests
             resolver,
             new FakeWasmComponentInvoker(),
             options,
+            new PluginHostMetrics(),
             NullLogger<WasmPluginRuntimeHost>.Instance);
 
         var pluginRoot = Path.Combine(sandboxRoot, "demo");
@@ -70,6 +71,7 @@ public sealed class WasmPluginRuntimeHostTests
             resolver,
             new FakeWasmComponentInvoker(),
             options,
+            new PluginHostMetrics(),
             NullLogger<WasmPluginRuntimeHost>.Instance);
 
         var pluginRoot = Path.Combine(sandboxRoot, "demo");
@@ -110,6 +112,52 @@ public sealed class WasmPluginRuntimeHostTests
         Assert.Equal(2, pages.Pages[2].Index);
     }
 
+    [Fact]
+    public async Task SearchAsync_MapsAudioMediaType_WhenWasmReturnsAudio()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "emma-wasm-tests", Guid.NewGuid().ToString("N"));
+        var sandboxRoot = Path.Combine(root, "sandbox");
+
+        var options = Options.Create(new PluginHostOptions
+        {
+            SandboxRootDirectory = sandboxRoot
+        });
+
+        var resolver = new PluginEntrypointResolver(options);
+        var host = new WasmPluginRuntimeHost(
+            resolver,
+            new FakeWasmComponentInvoker(),
+            options,
+            new PluginHostMetrics(),
+            NullLogger<WasmPluginRuntimeHost>.Instance);
+
+        var pluginRoot = Path.Combine(sandboxRoot, "demo");
+        Directory.CreateDirectory(pluginRoot);
+
+        var componentPath = Path.Combine(pluginRoot, "plugin.wasm");
+        await WriteWasmComponentHeaderAsync(componentPath);
+
+        var manifest = new PluginManifest(
+            "demo",
+            "Demo",
+            "1.0.0",
+            "grpc",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            new PluginManifestRuntime("1.0.0"));
+
+        var record = new PluginRecord(manifest, PluginHandshakeDefaults.NotChecked(), PluginRuntimeStatus.External());
+        var search = await host.SearchAsync(record, "audio-demo", CancellationToken.None);
+
+        var item = Assert.Single(search);
+        Assert.Equal(MediaType.Audio, item.MediaType);
+    }
+
     private static Task WriteWasmComponentHeaderAsync(string wasmPath)
     {
         return File.WriteAllBytesAsync(wasmPath, [0x00, 0x61, 0x73, 0x6D, 0x0D, 0x00, 0x01, 0x00]);
@@ -147,7 +195,7 @@ public sealed class WasmPluginRuntimeHostTests
 
                 return Task.FromResult(requestedOperation switch
                 {
-                    "search" => Success("[{\"id\":\"demo-1\",\"source\":\"demo\",\"title\":\"Demo Manga\",\"mediaType\":\"paged\"}]"),
+                    "search" => BuildSearchResult(argsJson),
                     "page" => BuildPageResult(argsJson),
                     "pages" => BuildPagesResult(argsJson),
                     _ => Error($"unsupported-operation:{requestedOperation}")
@@ -155,6 +203,15 @@ public sealed class WasmPluginRuntimeHostTests
             }
 
             throw new InvalidOperationException($"Unknown operation '{operation}'.");
+        }
+
+        private static string BuildSearchResult(string argsJson)
+        {
+            var query = ReadString(argsJson, "query", string.Empty);
+            var mediaType = query.Contains("audio", StringComparison.OrdinalIgnoreCase)
+                ? "audio"
+                : "paged";
+            return Success($"[{{\"id\":\"demo-1\",\"source\":\"demo\",\"title\":\"Demo Manga\",\"mediaType\":\"{mediaType}\"}}]");
         }
 
         private static string BuildPageResult(string argsJson)
@@ -189,6 +246,30 @@ public sealed class WasmPluginRuntimeHostTests
                     && value.TryGetInt32(out var parsed))
                 {
                     return parsed;
+                }
+            }
+            catch
+            {
+            }
+
+            return fallback;
+        }
+
+        private static string ReadString(string json, string property, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object
+                    && doc.RootElement.TryGetProperty(property, out var value)
+                    && value.ValueKind == JsonValueKind.String)
+                {
+                    return value.GetString() ?? fallback;
                 }
             }
             catch

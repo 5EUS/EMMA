@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 using EMMA.Application.Ports;
+using EMMA.Plugin.Common;
 using PluginContracts = EMMA.Contracts.Plugins;
 using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Http;
@@ -35,8 +36,10 @@ public static class PluginHostExports
     private const string PluginHostHandshakeOnStartupEnvVar = "PluginHost__HandshakeOnStartup";
     private const string RequireSignedPluginsEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS";
     private const string PluginSignatureRequireSignedEnvVar = "PluginSignature__RequireSignedPlugins";
-    private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
-    private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
+    private const string PluginSignatureDelegationDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_DELEGATION_DIR";
+    private const string PluginSignatureDelegationDirectoryConfigEnvVar = "PluginSignature__DelegationDirectory";
+    private const string PluginSignatureRootKeyDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_ROOT_KEY_DIR";
+    private const string PluginSignatureRootKeyDirectoryConfigEnvVar = "PluginSignature__RootKeyDirectory";
     private const string DevModeEnvVar = "EMMA_PLUGIN_DEV_MODE";
     private const string PluginHostConsoleLogsEnvVar = "EMMA_PLUGINHOST_CONSOLE_LOGS";
     private const string PluginHostLogLevelEnvVar = "EMMA_PLUGINHOST_LOG_LEVEL";
@@ -105,11 +108,18 @@ public static class PluginHostExports
                         typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RequireSignedPlugins))!
                             .SetValue(options, ResolveRequireSignedPlugins());
 
-                        var hmacKey = ResolvePluginSignatureHmacKey();
-                        if (!string.IsNullOrWhiteSpace(hmacKey))
+                        var delegationDirectory = ResolvePluginSignatureDelegationDirectory();
+                        if (!string.IsNullOrWhiteSpace(delegationDirectory))
                         {
-                            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.HmacKeyBase64))!
-                                .SetValue(options, hmacKey);
+                            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.DelegationDirectory))!
+                                .SetValue(options, delegationDirectory);
+                        }
+
+                        var rootKeyDirectory = ResolvePluginSignatureRootKeyDirectory();
+                        if (!string.IsNullOrWhiteSpace(rootKeyDirectory))
+                        {
+                            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RootKeyDirectory))!
+                                .SetValue(options, rootKeyDirectory);
                         }
                     });
 
@@ -125,9 +135,10 @@ public static class PluginHostExports
                 services.AddSingleton<PluginRepositoryInstallOrchestrator>();
                 services.AddSingleton<PluginEndpointAllocator>();
                 services.AddSingleton<PluginProcessManager>();
+                services.AddSingleton<PluginHostMetrics>();
                 services.AddSingleton<IWasmComponentInvoker, NativeInProcessWasmComponentInvoker>();
                 services.AddSingleton<IWasmPluginRuntimeHost, WasmPluginRuntimeHost>();
-                services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
+                services.AddSingleton<IPluginSignatureVerifier, DelegatedPluginSignatureVerifier>();
 
                 // Storage
                 services.AddSingleton(StorageOptions.Default);
@@ -281,10 +292,16 @@ public static class PluginHostExports
         return !IsDevelopmentMode();
     }
 
-    private static string? ResolvePluginSignatureHmacKey()
+    private static string? ResolvePluginSignatureDelegationDirectory()
     {
-        return Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
-            ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
+        return Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryConfigEnvVar);
+    }
+
+    private static string? ResolvePluginSignatureRootKeyDirectory()
+    {
+        return Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryConfigEnvVar);
     }
 
     private static bool IsDevelopmentMode()
@@ -336,6 +353,19 @@ public static class PluginHostExports
         return LogLevel.Warning;
     }
 
+    private static string ResolvePluginBuildType(PluginManifest manifest)
+    {
+        if (_serviceProvider?.GetService<IPluginEntrypointResolver>() is { } entrypointResolver
+            && entrypointResolver.TryResolveWasmComponent(manifest, out var componentPath))
+        {
+            return Path.GetExtension(componentPath).Equals(".cwasm", StringComparison.OrdinalIgnoreCase)
+                ? "cwasm"
+                : "wasm";
+        }
+
+        return "csharp";
+    }
+
     /// <summary>
     /// Shutdown the plugin host and release resources.
     /// </summary>
@@ -384,6 +414,11 @@ public static class PluginHostExports
                 Title: r.Manifest.Name ?? r.Manifest.Id,
                 Version: r.Manifest.Version ?? "1.0.0",
                 Author: r.Manifest.Author ?? "Unknown",
+                BuildType: ResolvePluginBuildType(r.Manifest),
+                ThumbnailAspectRatio: ResolveThumbnailAspectRatio(r.Manifest),
+                ThumbnailFit: r.Manifest.Thumbnail?.Fit,
+                ThumbnailWidth: r.Manifest.Thumbnail?.Width,
+                ThumbnailHeight: r.Manifest.Thumbnail?.Height,
                 SearchExperience: r.Manifest.SearchExperience
             )).ToList();
 
@@ -415,6 +450,30 @@ public static class PluginHostExports
             SetLastError(ex);
             return -1;
         }
+    }
+
+    private static double? ResolveThumbnailAspectRatio(PluginManifest manifest)
+    {
+        var thumbnail = manifest.Thumbnail;
+        if (thumbnail is null)
+        {
+            return null;
+        }
+
+        if (thumbnail.AspectRatio is { } aspect && aspect > 0)
+        {
+            return aspect;
+        }
+
+        if (thumbnail.Width is { } width
+            && thumbnail.Height is { } height
+            && width > 0
+            && height > 0)
+        {
+            return (double)width / height;
+        }
+
+        return null;
     }
 
     public static string? ListPluginRepositoriesJsonManaged()
@@ -920,13 +979,23 @@ public static class PluginHostExports
                 return null;
             }
 
-            var normalizedQuery = query ?? string.Empty;
+            var rawQuery = query ?? string.Empty;
+            var parsedQuery = PluginSearchQuery.Parse(rawQuery, fallbackQuery: rawQuery);
+            var normalizedQuery = parsedQuery.Query;
+            var isStructuredQuery = LooksLikeJson(rawQuery)
+                && (parsedQuery.Filters.Count > 0
+                    || parsedQuery.QueryAdditions.Count > 0
+                    || parsedQuery.MediaTypes.Count > 0
+                    || !string.IsNullOrWhiteSpace(parsedQuery.Sort)
+                    || parsedQuery.Page.HasValue
+                    || parsedQuery.PageSize.HasValue);
 
             var runtimeSearchStopwatch = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<MediaSummary> results;
             if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
             {
-                results = _wasmRuntime.SearchAsync(record, normalizedQuery, CancellationToken.None)
+                var wasmQuery = isStructuredQuery ? rawQuery : normalizedQuery;
+                results = _wasmRuntime.SearchAsync(record, wasmQuery, CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
             }
@@ -951,21 +1020,63 @@ public static class PluginHostExports
                 var channel = GetOrCreateChannel(address);
                 var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
                 var headers = BuildGrpcHeaders(record.Manifest.Id, resolvedCorrelationId!);
-                var response = client.SearchAsync(new PluginContracts.SearchRequest
+                var grpcQuery = isStructuredQuery ? rawQuery : normalizedQuery;
+                var request = new PluginContracts.SearchRequest
                 {
-                    Query = normalizedQuery,
+                    Query = grpcQuery,
                     Context = new PluginContracts.RequestContext
                     {
                         CorrelationId = resolvedCorrelationId,
                         DeadlineUtc = deadlineUtc.ToString("O")
                     }
-                }, headers: headers, cancellationToken: CancellationToken.None)
+                };
+
+                if (parsedQuery.MediaTypes.Count > 0)
+                {
+                    request.MediaTypes.AddRange(parsedQuery.MediaTypes);
+                }
+
+                foreach (var filter in parsedQuery.Filters)
+                {
+                    var grpcFilter = new PluginContracts.SearchFilter
+                    {
+                        Id = filter.Id,
+                        Operation = filter.Operation ?? string.Empty
+                    };
+                    grpcFilter.Values.AddRange(filter.Values);
+                    request.Filters.Add(grpcFilter);
+                }
+
+                foreach (var addition in parsedQuery.QueryAdditions)
+                {
+                    request.QueryAdditions.Add(new PluginContracts.SearchQueryAddition
+                    {
+                        Id = addition.Id,
+                        Value = addition.Value,
+                        Type = addition.Type ?? string.Empty
+                    });
+                }
+
+                if (!string.IsNullOrWhiteSpace(parsedQuery.Sort))
+                {
+                    request.Sort = parsedQuery.Sort;
+                }
+
+                if (parsedQuery.Page is int page && page >= 0)
+                {
+                    request.Page = page;
+                }
+
+                if (parsedQuery.PageSize is int pageSize && pageSize > 0)
+                {
+                    request.PageSize = pageSize;
+                }
+
+                var response = client.SearchAsync(request, headers: headers, cancellationToken: CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
 
-                results = response.Results
-                    .Select(MapPluginSearchSummary)
-                    .ToList();
+                results = [.. response.Results.Select(MapPluginSearchSummary)];
             }
 
             runtimeSearchStopwatch.Stop();
@@ -980,6 +1091,17 @@ public static class PluginHostExports
         {
             totalStopwatch.Stop();
         }
+    }
+
+    private static bool LooksLikeJson(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        return trimmed.StartsWith('{') || trimmed.StartsWith('[');
     }
 
     private static bool TryResolveWasmSearchRecord(string pluginId, out PluginRecord? record)
@@ -1383,11 +1505,12 @@ public static class PluginHostExports
         EnsureInitialized();
 
         var normalizedType = (job.MediaType ?? string.Empty).Trim().ToLowerInvariant();
-        return normalizedType switch
+        if (IsVideoLikeMediaType(normalizedType))
         {
-            "video" => await ExecuteVideoDownloadJobAsync(job, progress, cancellationToken),
-            _ => await ExecutePagedDownloadJobAsync(job, progress, cancellationToken)
-        };
+            return await ExecuteVideoDownloadJobAsync(job, progress, cancellationToken);
+        }
+
+        return await ExecutePagedDownloadJobAsync(job, progress, cancellationToken);
     }
 
     private static Task<DownloadExecutionResult> ExecutePagedDownloadJobAsync(
@@ -1852,7 +1975,7 @@ public static class PluginHostExports
 
     private static string BuildDownloadedVideoSegmentPathInDirectory(string streamDirectory, int sequence)
     {
-        return BuildDownloadedVideoSegmentPathInDirectory(streamDirectory, sequence, ".bin");
+        return BuildDownloadedVideoSegmentPathInDirectory(streamDirectory, sequence, ".ts");
     }
 
     private static string BuildDownloadedVideoSegmentPathInDirectory(string streamDirectory, int sequence, string extension)
@@ -1935,6 +2058,9 @@ public static class PluginHostExports
         switch (mediaType)
         {
             case "video":
+            case "audio":
+            case "music":
+            case "podcast":
                 {
                     var mediaRoot = BuildDownloadedVideoRootPath(job.PluginId, job.MediaId);
                     if (string.IsNullOrWhiteSpace(job.StreamId))
@@ -2053,7 +2179,9 @@ public static class PluginHostExports
             BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".bin"),
             BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".m4s"),
             BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".ts"),
-            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".mp4")
+            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".mp4"),
+            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".aac"),
+            BuildDownloadedVideoSegmentPath(pluginId, mediaId, streamId, sequence, ".mp3")
         };
 
         var path = candidates.FirstOrDefault(File.Exists);
@@ -2501,24 +2629,13 @@ public static class PluginHostExports
 
     private static string NormalizeSegmentExtension(string extension)
     {
-        var normalized = (extension ?? string.Empty).Trim().ToLowerInvariant();
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            return ".bin";
-        }
-
-        if (!normalized.StartsWith('.'))
-        {
-            normalized = $".{normalized}";
-        }
-
-        return normalized;
+        return PluginVideoSegmentFileNaming.NormalizeSupportedSegmentExtension(extension);
     }
 
     private static bool IsSupportedSegmentExtension(string extension)
     {
         var normalized = NormalizeSegmentExtension(extension);
-        return normalized is ".bin" or ".m4s" or ".ts" or ".mp4";
+        return normalized is ".bin" or ".m4s" or ".ts" or ".mp4" or ".aac" or ".mp3";
     }
 
     private static IEnumerable<(string Path, string Name, int Sort)> EnumerateDownloadedVideoSegments(string streamDirectory)
@@ -2759,7 +2876,8 @@ public static class PluginHostExports
                     await throttler.WaitAsync(cancellationToken);
                     try
                     {
-                        var segmentPath = BuildDownloadedVideoSegmentPathInDirectory(stagingStreamRoot, i);
+                        var segmentExtension = PluginVideoSegmentFileNaming.ResolveSegmentExtension(segments[i].Uri, ".ts");
+                        var segmentPath = BuildDownloadedVideoSegmentPathInDirectory(stagingStreamRoot, i, segmentExtension);
                         var bytesWritten = await DownloadHlsSegmentToPathAsync(httpClient, segments[i], segmentPath, cancellationToken);
                         if (bytesWritten <= 0)
                         {
@@ -3751,7 +3869,7 @@ public static class PluginHostExports
                     item.SourceId,
                     item.Title,
                     item.MediaType,
-                    null,
+                    item.ThumbnailUrl,
                     item.Synopsis))
                 .ToList();
 
@@ -3801,7 +3919,7 @@ public static class PluginHostExports
                     metadata.SourceId,
                     metadata.Title,
                     metadata.MediaType,
-                    null,
+                    metadata.ThumbnailUrl,
                     metadata.Synopsis));
             }
 
@@ -3856,6 +3974,12 @@ public static class PluginHostExports
                 }
 
                 var mediaType = metadata?.MediaType ?? MediaType.Paged;
+                var resolvedThumbnailUrl = metadata?.ThumbnailUrl;
+                if (string.IsNullOrWhiteSpace(resolvedThumbnailUrl))
+                {
+                    resolvedThumbnailUrl = ResolveThumbnailUrlFromSearch(sourceId, mediaId, metadata?.Title ?? mediaId);
+                }
+
                 var refreshFailed = false;
                 if (mediaType == MediaType.Paged)
                 {
@@ -3881,7 +4005,7 @@ public static class PluginHostExports
                         var newItemsCount = chapters.Count(chapter => !knownChapterIds.Contains(chapter.ChapterId));
                         if (newItemsCount > 0)
                         {
-                            var mediaTypeText = mediaType == MediaType.Video ? "video" : "paged";
+                            var mediaTypeText = ToMediaTypeString(mediaType);
                             var title = !string.IsNullOrWhiteSpace(metadata?.Title)
                                 ? metadata!.Title
                                 : mediaId;
@@ -3913,11 +4037,19 @@ public static class PluginHostExports
                         mediaType,
                         null,
                         null,
+                        string.IsNullOrWhiteSpace(resolvedThumbnailUrl) ? null : resolvedThumbnailUrl,
                         null,
                         [],
                         now,
                         now)
-                    : metadata with { UpdatedAtUtc = now };
+                    : metadata with
+                    {
+                        UpdatedAtUtc = now,
+                        SourceId = sourceId,
+                        ThumbnailUrl = string.IsNullOrWhiteSpace(metadata.ThumbnailUrl)
+                            ? (string.IsNullOrWhiteSpace(resolvedThumbnailUrl) ? null : resolvedThumbnailUrl)
+                            : metadata.ThumbnailUrl
+                    };
 
                 catalog.UpsertMediaAsync(metadataToPersist, CancellationToken.None)
                     .GetAwaiter()
@@ -4127,7 +4259,8 @@ public static class PluginHostExports
         string title,
         string mediaType,
         string userId = "Library",
-        string? description = null)
+        string? description = null,
+        string? thumbnailUrl = null)
     {
         ClearLastError();
 
@@ -4141,9 +4274,7 @@ public static class PluginHostExports
 
             EnsureInitialized();
 
-            var parsedMediaType = string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase)
-                ? MediaType.Video
-                : MediaType.Paged;
+            var parsedMediaType = ParseMediaType(mediaType);
             var now = DateTimeOffset.UtcNow;
             var normalizedUserId = ToLibraryStorageKey(userId);
 
@@ -4156,6 +4287,7 @@ public static class PluginHostExports
                     parsedMediaType,
                     null,
                     string.IsNullOrWhiteSpace(description) ? null : description,
+                    string.IsNullOrWhiteSpace(thumbnailUrl) ? null : thumbnailUrl,
                     null,
                     [],
                     now,
@@ -4240,7 +4372,7 @@ public static class PluginHostExports
                 ? DefaultProgressUserId
                 : userId;
 
-            if (string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase))
+            if (IsVideoLikeMediaType(mediaType))
             {
                 var video = progress.GetVideoProgressAsync(
                     mediaIdValue,
@@ -4255,8 +4387,9 @@ public static class PluginHostExports
                     return "null";
                 }
 
+                var responseMediaType = ToVideoLikeMediaTypeString(mediaType);
                 var payload = new MediaProgressResponse(
-                    "video",
+                    responseMediaType,
                     null,
                     null,
                     video.PositionSeconds,
@@ -4949,6 +5082,64 @@ public static class PluginHostExports
         return $"{pluginId}\u001f{mediaId}\u001f{chapterId}\u001f{pageIndex}";
     }
 
+    private static string? ResolveThumbnailUrlFromSearch(string sourceId, string mediaId, string title)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId))
+        {
+            return null;
+        }
+
+        try
+        {
+            var query = string.IsNullOrWhiteSpace(title)
+                ? mediaId
+                : title;
+            var json = SearchJsonManaged(sourceId, query, Guid.NewGuid().ToString("n"));
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                ClearLastError();
+                return null;
+            }
+
+            var parsed = JsonSerializer.Deserialize(json, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
+            if (parsed is null || parsed.Count == 0)
+            {
+                return null;
+            }
+
+            var mediaIdMatch = parsed.FirstOrDefault(item =>
+                string.Equals(item.Id.Value, mediaId, StringComparison.Ordinal));
+            if (!string.IsNullOrWhiteSpace(mediaIdMatch?.ThumbnailUrl))
+            {
+                return mediaIdMatch!.ThumbnailUrl;
+            }
+
+            var normalizedTitle = (title ?? string.Empty).Trim();
+            if (normalizedTitle.Length > 0)
+            {
+                var titleMatch = parsed.FirstOrDefault(item =>
+                    string.Equals(item.Title, normalizedTitle, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(titleMatch?.ThumbnailUrl))
+                {
+                    return titleMatch!.ThumbnailUrl;
+                }
+            }
+
+            return parsed
+                .Select(item => item.ThumbnailUrl)
+                .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            // Search failures during refresh should not poison the caller error state.
+            ClearLastError();
+        }
+    }
+
     private static GrpcChannel GetOrCreateChannel(Uri address)
     {
         return _grpcChannelCache.GetOrAdd(address.ToString(), _ => GrpcChannel.ForAddress(address));
@@ -4956,9 +5147,7 @@ public static class PluginHostExports
 
     private static MediaSummary MapPluginSearchSummary(PluginContracts.MediaSummary result)
     {
-        var mediaType = string.Equals(result.MediaType, "video", StringComparison.OrdinalIgnoreCase)
-            ? MediaType.Video
-            : MediaType.Paged;
+        var mediaType = ParseMediaType(result.MediaType);
 
         var thumbnailUrl = string.IsNullOrWhiteSpace(result.ThumbnailUrl)
             ? null
@@ -4968,13 +5157,75 @@ public static class PluginHostExports
             ? null
             : result.Description;
 
+        IReadOnlyDictionary<string, string>? metadata = null;
+        if (result.Metadata?.Count > 0)
+        {
+            var metadataDict = new Dictionary<string, string>();
+            foreach (var kvp in result.Metadata)
+            {
+                metadataDict[kvp.Key] = kvp.Value;
+            }
+            metadata = metadataDict;
+        }
+
         return new MediaSummary(
             MediaId.Create(result.Id ?? string.Empty),
             result.Source ?? string.Empty,
             result.Title ?? string.Empty,
             mediaType,
             thumbnailUrl,
-            description);
+            description,
+            metadata);
+    }
+
+    private static MediaType ParseMediaType(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
+        }
+
+        return MediaType.Paged;
+    }
+
+    private static bool IsVideoLikeMediaType(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        return string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ToMediaTypeString(MediaType mediaType)
+    {
+        return mediaType switch
+        {
+            MediaType.Video => "video",
+            MediaType.Audio => "audio",
+            _ => "paged"
+        };
+    }
+
+    private static string ToVideoLikeMediaTypeString(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return "audio";
+        }
+
+        return "video";
     }
 
     private static Metadata BuildGrpcHeaders(string pluginId, string correlationId)

@@ -4,6 +4,25 @@ EMMA is a headless, cross-platform runtime for aggregating multimedia from
 pluggable sources. It focuses on a hexagonal core, strong isolation for
 untrusted plugins, and streaming-friendly pipelines for paged and video media.
 
+## Current Implementation Status (2026-04-01)
+
+- Core hexagonal runtime is implemented (`EMMA.Domain`, `EMMA.Application`,
+	`EMMA.Infrastructure`, `EMMA.Bootstrap`).
+- Plugin host is implemented with process lifecycle management, handshake,
+	quarantine flows, repository/catalog services, and platform sandbox managers.
+- API surface is implemented via gRPC and REST in `EMMA.Api` and
+	`EMMA.ApiHost`, including API key auth and rate limiting.
+- SQLite-backed persistence is implemented for catalog, library, progress,
+	history, and download metadata in `EMMA.Storage`.
+- Native/AOT integration projects exist (`EMMA.Native`,
+	`EMMA.PluginHost.Library`, `EMMA.WasmRuntime.Native`) and are wired into
+	tooling scripts.
+- Video support is partial: contracts and plugin-host endpoints are present,
+	while full adaptive streaming orchestration is still in progress.
+- Hardening is partial: HMAC signing and quarantine logic are present,
+	but delegated trust, full sandbox enforcement parity, and richer
+	observability remain open.
+
 ## Goals
 
 - Provide a stable core runtime that stays UI-agnostic.
@@ -14,19 +33,22 @@ untrusted plugins, and streaming-friendly pipelines for paged and video media.
 
 ## Repository Structure (current)
 
-- Root gRPC host: bootstrap for local development and protocol validation.
-- [src](src/): planned core runtime, plugin host, and supporting projects.
-- [tests](tests/): unit and integration tests.
+- [src](src/): implemented runtime, hosts, plugin infrastructure, storage,
+  contracts, and native/AOT bridges.
+- [tests](tests/): unit and integration test suites for domain, application,
+  plugin host, API host, and plugin-common behavior.
 - [docs](docs/): design docs and milestones.
 
 ## Architecture Docs
 
 - System blueprint: [docs/architecture/system-blueprint.md](docs/architecture/system-blueprint.md)
 - Plugin system design: [docs/architecture/plugin-system-design.md](docs/architecture/plugin-system-design.md)
-- Plugin scaffold workflow: [docs/architecture/plugin-scaffold-workflow.md](docs/architecture/plugin-scaffold-workflow.md)
-- Media pipeline design: [docs/architecture/media-pipeline-design.md](docs/architecture/media-pipeline-design.md)
-- Solution structure: [docs/architecture/solution-structure.md](docs/architecture/solution-structure.md)
 - Implementation roadmap: [docs/architecture/implementation-roadmap.md](docs/architecture/implementation-roadmap.md)
+- Storage strategy: [docs/architecture/storage-strategy.md](docs/architecture/storage-strategy.md)
+- Milestone 5 status: [docs/architecture/milestone-5-api-surface.md](docs/architecture/milestone-5-api-surface.md)
+- Milestone 6 status: [docs/architecture/milestone-6-hardening-and-sandboxing.md](docs/architecture/milestone-6-hardening-and-sandboxing.md)
+- Plugin signing delegated trust model: [docs/architecture/plugin-signing-delegated-trust-model.md](docs/architecture/plugin-signing-delegated-trust-model.md)
+- Plugin scaffold workflow: [docs/architecture/plugin-scaffold-workflow.md](docs/architecture/plugin-scaffold-workflow.md)
 - Tooling scripts reference: [docs/architecture/tooling-scripts-reference.md](docs/architecture/tooling-scripts-reference.md)
 
 ## Getting Started
@@ -47,12 +69,19 @@ dotnet build
 dotnet run --project src/EMMA.Cli/EMMA.Cli.csproj
 ```
 
-The development host exposes a gRPC endpoint. See the default gRPC template
-message at http://localhost:5000/ for basic connectivity guidance.
-Run:
+### Run Plugin Host (development)
+
 ```bash
 dotnet run --project src/EMMA.PluginHost/EMMA.PluginHost.csproj
 ```
+
+### Run API Host (development)
+
+```bash
+dotnet run --project src/EMMA.ApiHost/EMMA.ApiHost.csproj
+```
+
+The API host fronts the plugin host and exposes gRPC plus REST paged endpoints.
 
 ### Tests
 
@@ -62,12 +91,12 @@ dotnet test
 
 ## Roadmap (high level)
 
-- Milestone 1: core runtime skeleton (domain + application).
-- Milestone 2: plugin host with gRPC IPC and sandboxing scaffolding.
-- Milestone 3: first paged media plugin and end-to-end flow.
-- Milestone 4: video pipeline with adaptive streaming support.
-- Milestone 5: external API surface (gRPC + optional REST).
-- Milestone 6: hardening, signing, and observability.
+- Milestone 1: substantially complete (core runtime and ports).
+- Milestone 2: substantially complete (plugin host and lifecycle).
+- Milestone 3: substantially complete (paged pipeline and plugin workflows).
+- Milestone 4: partial (video endpoints/contracts present; adaptive orchestration pending).
+- Milestone 5: in progress (gRPC/REST/auth/rate limiting implemented; versioning and standardization open).
+- Milestone 6: in progress (baseline signing/quarantine/sandbox scaffolding implemented; enforcement and observability expansion open).
 
 ## Contributing
 

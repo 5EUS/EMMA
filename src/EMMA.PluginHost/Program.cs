@@ -21,11 +21,18 @@ builder.Services.AddOptions<PluginSignatureOptions>()
         typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RequireSignedPlugins))!
             .SetValue(options, ResolveRequireSignedPlugins(builder.Configuration));
 
-        var configuredKey = ResolvePluginSignatureHmacKey();
-        if (!string.IsNullOrWhiteSpace(configuredKey))
+        var delegationDirectory = ResolvePluginSignatureDelegationDirectory();
+        if (!string.IsNullOrWhiteSpace(delegationDirectory))
         {
-            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.HmacKeyBase64))!
-                .SetValue(options, configuredKey);
+            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.DelegationDirectory))!
+                .SetValue(options, delegationDirectory);
+        }
+
+        var rootKeyDirectory = ResolvePluginSignatureRootKeyDirectory();
+        if (!string.IsNullOrWhiteSpace(rootKeyDirectory))
+        {
+            typeof(PluginSignatureOptions).GetProperty(nameof(PluginSignatureOptions.RootKeyDirectory))!
+                .SetValue(options, rootKeyDirectory);
         }
     });
 builder.Services.AddSingleton<PluginRegistry>();
@@ -39,9 +46,10 @@ builder.Services.AddSingleton<PluginRepositoryStore>();
 builder.Services.AddSingleton<PluginRepositoryCatalogClient>();
 builder.Services.AddSingleton<PluginRepositoryService>();
 builder.Services.AddSingleton<PluginRepositoryInstallOrchestrator>();
+builder.Services.AddSingleton<PluginHostMetrics>();
 builder.Services.AddSingleton<IWasmComponentInvoker, NativeInProcessWasmComponentInvoker>();
 builder.Services.AddSingleton<IWasmPluginRuntimeHost, WasmPluginRuntimeHost>();
-builder.Services.AddSingleton<IPluginSignatureVerifier, HmacPluginSignatureVerifier>();
+builder.Services.AddSingleton<IPluginSignatureVerifier, DelegatedPluginSignatureVerifier>();
 builder.Services.AddSingleton(StorageOptions.Default);
 builder.Services.AddSingleton<StorageInitializer>();
 builder.Services.AddSingleton<TempAssetCleanupService>();
@@ -121,10 +129,16 @@ static bool ResolveRequireSignedPlugins(IConfiguration configuration)
     return !IsDevelopmentMode();
 }
 
-static string? ResolvePluginSignatureHmacKey()
+static string? ResolvePluginSignatureDelegationDirectory()
 {
-    return Environment.GetEnvironmentVariable("EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64")
-        ?? Environment.GetEnvironmentVariable("PluginSignature__HmacKeyBase64");
+    return Environment.GetEnvironmentVariable("EMMA_PLUGIN_SIGNATURE_DELEGATION_DIR")
+        ?? Environment.GetEnvironmentVariable("PluginSignature__DelegationDirectory");
+}
+
+static string? ResolvePluginSignatureRootKeyDirectory()
+{
+    return Environment.GetEnvironmentVariable("EMMA_PLUGIN_SIGNATURE_ROOT_KEY_DIR")
+        ?? Environment.GetEnvironmentVariable("PluginSignature__RootKeyDirectory");
 }
 
 static bool IsDevelopmentMode()

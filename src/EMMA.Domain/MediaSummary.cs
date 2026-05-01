@@ -9,4 +9,5 @@ public sealed record MediaSummary(
     string Title,
     MediaType MediaType,
     string? ThumbnailUrl = null,
-    string? Description = null);
+    string? Description = null,
+    IReadOnlyDictionary<string, string>? Metadata = null);

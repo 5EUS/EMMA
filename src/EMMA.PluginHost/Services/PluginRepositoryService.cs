@@ -159,7 +159,7 @@ public sealed class PluginRepositoryService(
                 $"Release '{requested}' was not found for plugin '{plugin.PluginId}' in repository '{snapshot.Repository.Id}'.");
         }
 
-        return new PluginRepositorySelectionResult(plugin, release);
+        return new PluginRepositorySelectionResult(snapshot.Repository, plugin, release);
     }
 
     private async Task<PluginRepositoryCatalogSnapshot> RefreshCatalogAsync(

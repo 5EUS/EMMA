@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EMMA.Domain;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using Microsoft.Extensions.Options;
@@ -43,6 +44,7 @@ public sealed class WasmPluginRuntimeHost(
     IPluginEntrypointResolver entrypointResolver,
     IWasmComponentInvoker invoker,
     IOptions<PluginHostOptions> options,
+    PluginHostMetrics metrics,
     ILogger<WasmPluginRuntimeHost> logger) : IWasmPluginRuntimeHost
 {
     private const string HandshakeOperation = "handshake";
@@ -60,6 +62,7 @@ public sealed class WasmPluginRuntimeHost(
 
     private readonly IPluginEntrypointResolver _entrypointResolver = entrypointResolver;
     private readonly IWasmComponentInvoker _invoker = invoker;
+    private readonly PluginHostMetrics _metrics = metrics;
     private readonly ILogger<WasmPluginRuntimeHost> _logger = logger;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _batchPagesBackoffUntilByPlugin = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, SearchCacheEntry> _searchCache = new(StringComparer.Ordinal);
@@ -262,9 +265,7 @@ public sealed class WasmPluginRuntimeHost(
             MediaId.Create(item.Id),
             item.Source ?? record.Manifest.Id,
             item.Title,
-            string.Equals(item.MediaType, "video", StringComparison.OrdinalIgnoreCase)
-                ? MediaType.Video
-                : MediaType.Paged,
+            ParseMediaType(item.MediaType),
             string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
             string.IsNullOrWhiteSpace(item.Description) ? null : item.Description))
             .ToArray();
@@ -272,6 +273,24 @@ public sealed class WasmPluginRuntimeHost(
         _searchCache[searchCacheKey] = new SearchCacheEntry(mappedResults, DateTimeOffset.UtcNow);
 
         return mappedResults;
+    }
+
+    private static MediaType ParseMediaType(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
+        }
+
+        return MediaType.Paged;
     }
 
     public async Task<string> SearchJsonAsync(
@@ -692,14 +711,42 @@ public sealed class WasmPluginRuntimeHost(
         IReadOnlyList<string>? permittedDomains,
         CancellationToken cancellationToken)
     {
+        var pluginId = InferPluginIdFromComponentPath(componentPath);
+        var stopwatch = Stopwatch.StartNew();
         try
         {
-            return await _invoker.InvokeAsync(componentPath, operation, operationArgs, permittedDomains, cancellationToken);
+            var result = await _invoker.InvokeAsync(componentPath, operation, operationArgs, permittedDomains, cancellationToken);
+            _metrics.RecordWasmOperation(pluginId, operation, EmmaTelemetry.Outcomes.Ok, stopwatch.Elapsed.TotalMilliseconds);
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            _metrics.RecordWasmOperation(pluginId, operation, EmmaTelemetry.Outcomes.Cancelled, stopwatch.Elapsed.TotalMilliseconds);
+            throw;
         }
         catch (Exception ex)
         {
+            _metrics.RecordWasmOperation(pluginId, operation, EmmaTelemetry.Outcomes.Error, stopwatch.Elapsed.TotalMilliseconds);
             _logger.LogWarning(ex, "WASM operation {Operation} failed for {ComponentPath}", operation, componentPath);
             throw;
+        }
+    }
+
+    private static string InferPluginIdFromComponentPath(string componentPath)
+    {
+        if (string.IsNullOrWhiteSpace(componentPath))
+        {
+            return "unknown";
+        }
+
+        try
+        {
+            var parent = Path.GetFileName(Path.GetDirectoryName(componentPath));
+            return string.IsNullOrWhiteSpace(parent) ? "unknown" : parent;
+        }
+        catch
+        {
+            return "unknown";
         }
     }
 
@@ -907,13 +954,26 @@ public sealed class WasmPluginRuntimeHost(
         return trimmed.StartsWith('{') || trimmed.StartsWith('[') || trimmed.StartsWith('"');
     }
 
-    private static WasmQueryArgs BuildSearchArgs(PluginManifest manifest, string query)
+    private WasmQueryArgs BuildSearchArgs(PluginManifest manifest, string query)
     {
         var mediaTypes = manifest.MediaTypes?.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
         var search = manifest.SearchExperience;
         if (search is null)
         {
             return new WasmQueryArgs(query, mediaTypes);
+        }
+
+        if (LooksLikeJson(query) && TryDeserialize(query, out WasmQueryArgs? parsedArgs) && parsedArgs is not null)
+        {
+            var parsedMediaTypes = parsedArgs.MediaTypes is { Count: > 0 }
+                ? parsedArgs.MediaTypes
+                : mediaTypes;
+
+            return parsedArgs with
+            {
+                Query = parsedArgs.Query?.Trim() ?? string.Empty,
+                MediaTypes = parsedMediaTypes
+            };
         }
 
         var filters = (search.Filters ?? [])

@@ -128,7 +128,13 @@ public sealed record PluginManifestPermissions(
 /// </summary>
 public sealed record PluginManifestSignature(
     string Algorithm,
-    string Value);
+    string Value,
+    string? KeyId = null,
+    string? RepositoryId = null,
+    string? IssuedAtUtc = null,
+    string? ExpiresAtUtc = null,
+    string? ManifestDigestSha256 = null,
+    string? PayloadDigestSha256 = null);
 
 /// <summary>
 /// Shared JSON serializer defaults for manifest parsing.

@@ -101,5 +101,6 @@ public sealed record PluginRepositoryCatalogSnapshot(
     DateTimeOffset RetrievedAtUtc);
 
 public sealed record PluginRepositorySelectionResult(
+    PluginRepositoryRecord Repository,
     PluginRepositoryCatalogPlugin Plugin,
     PluginRepositoryCatalogRelease Release);

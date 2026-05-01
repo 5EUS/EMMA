@@ -21,6 +21,7 @@
     <ProjectReference Include="..\EMMA.Storage\EMMA.Storage.csproj" />
     <ProjectReference Include="..\EMMA.Domain\EMMA.Domain.csproj" />
     <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
+    <ProjectReference Include="..\EMMA.Plugin.Common\EMMA.Plugin.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios' or ('$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true')">
@@ -33,6 +34,8 @@
     <Compile Remove="..\EMMA.PluginHost\Services\PluginHostEndpoints.cs" />
     <Compile Remove="..\EMMA.PluginHost\Services\PagedPipelineEndpoints.cs" />
     <Compile Remove="..\EMMA.PluginHost\Services\VideoPipelineEndpoints.cs" />
+    <Compile Remove="..\EMMA.PluginHost\Services\PipelineErrorContract.cs" />
+    <Compile Remove="..\EMMA.PluginHost\Services\PipelineErrorJsonContext.cs" />
   </ItemGroup>
 
   <ItemGroup>

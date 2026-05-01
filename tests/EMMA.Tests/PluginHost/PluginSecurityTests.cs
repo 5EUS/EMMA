@@ -18,8 +18,7 @@ public sealed class PluginSecurityTests
         });
         var signatureOptions = Options.Create(new PluginSignatureOptions
         {
-            RequireSignedPlugins = true,
-            HmacKeyBase64 = Convert.ToBase64String(new byte[] { 1, 2, 3 })
+            RequireSignedPlugins = true
         });
         var verifier = new HmacPluginSignatureVerifier(signatureOptions);
         var resolver = new PluginEntrypointResolver(hostOptions);

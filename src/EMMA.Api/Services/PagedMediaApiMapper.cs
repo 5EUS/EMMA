@@ -58,6 +58,7 @@ internal static class PagedMediaApiMapper
     {
         return mediaType switch
         {
+            MediaType.Audio => ApiMediaType.Audio,
             MediaType.Video => ApiMediaType.Video,
             MediaType.Paged => ApiMediaType.Paged,
             _ => ApiMediaType.Unspecified
@@ -66,25 +67,11 @@ internal static class PagedMediaApiMapper
 
     public static ApiError CreateError(Exception ex)
     {
-        var error = ex switch
-        {
-            KeyNotFoundException => new ApiError { Code = "not_found" },
-            TimeoutException => new ApiError { Code = "timeout" },
-            OperationCanceledException => new ApiError { Code = "cancelled" },
-            InvalidOperationException => new ApiError { Code = "invalid_request" },
-            _ => new ApiError { Code = "upstream_failure" }
-        };
-
-        error.Message = string.IsNullOrWhiteSpace(ex.Message) ? "Request failed." : ex.Message;
-        return error;
+        return ApiErrorContract.FromException(ex);
     }
 
     public static ApiError InvalidRequest(string message)
     {
-        return new ApiError
-        {
-            Code = "invalid_request",
-            Message = message
-        };
+        return ApiErrorContract.InvalidRequest(message);
     }
 }

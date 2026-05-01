@@ -145,6 +145,29 @@ public sealed class PluginRepositoryCatalogClient(
         return (tempFilePath, sha256Hex, totalRead);
     }
 
+    public async Task<string> DownloadTextAsync(
+        string url,
+        int maxBytes,
+        CancellationToken cancellationToken)
+    {
+        var uri = ParseAndValidateRemoteUri(url, allowHttp: _options.AllowInsecureRepositoryHttp);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var httpClient = CreateHttpClient();
+        using var response = await httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+
+        if (response.StatusCode != HttpStatusCode.OK)
+        {
+            throw new InvalidDataException(
+                $"Request to '{url}' failed with status {(int)response.StatusCode}.");
+        }
+
+        return await ReadContentWithLimitAsync(response, maxBytes, cancellationToken);
+    }
+
     private HttpClient CreateHttpClient()
     {
         var handler = new SocketsHttpHandler

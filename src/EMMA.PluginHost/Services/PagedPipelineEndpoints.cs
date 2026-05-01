@@ -66,31 +66,17 @@ public static class PagedPipelineEndpoints
                 }
                 catch (TimeoutException ex)
                 {
-                    if (wasmLogger.IsEnabled(LogLevel.Warning))
-                    {
-                        wasmLogger.LogWarning(ex, "WASM search timed out for plugin {PluginId}", record.Manifest.Id);
-                    }
-
-                    return Results.Problem(
-                        detail: ex.Message,
-                        statusCode: StatusCodes.Status504GatewayTimeout);
+                    return PipelineErrorContract.ToResult(ex, "paged.search");
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    return Results.Problem(
-                        detail: $"WASM search timed out after {timeoutSeconds}s.",
-                        statusCode: StatusCodes.Status504GatewayTimeout);
+                    return PipelineErrorContract.ToResult(
+                        new TimeoutException($"WASM search timed out after {timeoutSeconds}s."),
+                        "paged.search");
                 }
                 catch (Exception ex)
                 {
-                    if (wasmLogger.IsEnabled(LogLevel.Error))
-                    {
-                        wasmLogger.LogError(ex, "WASM search failed for plugin {PluginId}", record.Manifest.Id);
-                    }
-
-                    return Results.Problem(
-                        detail: $"WASM search failed: {ex.Message}",
-                        statusCode: StatusCodes.Status500InternalServerError);
+                    return PipelineErrorContract.ToResult(ex, "paged.search");
                 }
             }
             else
@@ -146,34 +132,40 @@ public static class PagedPipelineEndpoints
             var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
+            try
+            {
+                IReadOnlyList<MediaChapter> chapters;
+                if (IsWasm)
+                {
+                    chapters = await wasmRuntimeHost.GetChaptersAsync(record, MediaId.Create(mediaId), cancellationToken);
+                }
+                else
+                {
+                    var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+                    var pipeline = CreatePipeline(
+                        record,
+                        Address!,
+                        options,
+                        catalog,
+                        pageAssetCache,
+                        pageAssetFetcher,
+                        loggerFactory,
+                        correlationId);
+                    chapters = await pipeline.GetChaptersAsync(MediaId.Create(mediaId), cancellationToken);
+                }
 
-            IReadOnlyList<MediaChapter> chapters;
-            if (IsWasm)
-            {
-                chapters = await wasmRuntimeHost.GetChaptersAsync(record, MediaId.Create(mediaId), cancellationToken);
+                return Results.Ok(chapters.Select(chapter => new
+                {
+                    Id = chapter.ChapterId,
+                    chapter.Number,
+                    chapter.Title,
+                    UploaderGroups = chapter.UploaderGroups ?? []
+                }));
             }
-            else
+            catch (Exception ex)
             {
-                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
-                var pipeline = CreatePipeline(
-                    record,
-                    Address!,
-                    options,
-                    catalog,
-                    pageAssetCache,
-                    pageAssetFetcher,
-                    loggerFactory,
-                    correlationId);
-                chapters = await pipeline.GetChaptersAsync(MediaId.Create(mediaId), cancellationToken);
+                return PipelineErrorContract.ToResult(ex, "paged.chapters");
             }
-
-            return Results.Ok(chapters.Select(chapter => new
-            {
-                Id = chapter.ChapterId,
-                chapter.Number,
-                chapter.Title,
-                UploaderGroups = chapter.UploaderGroups ?? []
-            }));
         });
 
         app.MapGet("/pipeline/paged/page", async (
@@ -205,28 +197,34 @@ public static class PagedPipelineEndpoints
             var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
-
-            var page = await GetPageAsync(
-                record,
-                Address,
-                IsWasm,
-                wasmRuntimeHost,
-                options,
-                catalog,
-                pageAssetCache,
-                pageAssetFetcher,
-                loggerFactory,
-                MediaId.Create(mediaId),
-                chapterId,
-                index ?? 0,
-                cancellationToken);
-
-            return Results.Ok(new
+            try
             {
-                Id = page.PageId,
-                page.Index,
-                ContentUri = page.ContentUri.ToString()
-            });
+                var page = await GetPageAsync(
+                    record,
+                    Address,
+                    IsWasm,
+                    wasmRuntimeHost,
+                    options,
+                    catalog,
+                    pageAssetCache,
+                    pageAssetFetcher,
+                    loggerFactory,
+                    MediaId.Create(mediaId),
+                    chapterId,
+                    index ?? 0,
+                    cancellationToken);
+
+                return Results.Ok(new
+                {
+                    Id = page.PageId,
+                    page.Index,
+                    ContentUri = page.ContentUri.ToString()
+                });
+            }
+            catch (Exception ex)
+            {
+                return PipelineErrorContract.ToResult(ex, "paged.page");
+            }
         });
 
         app.MapGet("/pipeline/paged/pages", async (
@@ -262,48 +260,54 @@ public static class PagedPipelineEndpoints
             var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
-
-            MediaPagesResult pages;
-            if (IsWasm)
+            try
             {
-                pages = await wasmRuntimeHost.GetPagesAsync(
-                    record,
-                    MediaId.Create(mediaId),
-                    chapterId,
-                    safeStartIndex,
-                    safeCount,
-                    cancellationToken);
-            }
-            else
-            {
-                var correlationId = PluginGrpcHelpers.CreateCorrelationId();
-                var pipeline = CreatePipeline(
-                    record,
-                    Address!,
-                    options,
-                    catalog,
-                    pageAssetCache,
-                    pageAssetFetcher,
-                    loggerFactory,
-                    correlationId);
-                pages = await pipeline.GetPagesAsync(
-                    MediaId.Create(mediaId),
-                    chapterId,
-                    safeStartIndex,
-                    safeCount,
-                    cancellationToken);
-            }
-
-            return Results.Ok(new
-            {
-                Pages = pages.Pages.Select(page => new
+                MediaPagesResult pages;
+                if (IsWasm)
                 {
-                    Id = page.PageId,
-                    page.Index,
-                    ContentUri = page.ContentUri.ToString()
-                }),
-                pages.ReachedEnd
-            });
+                    pages = await wasmRuntimeHost.GetPagesAsync(
+                        record,
+                        MediaId.Create(mediaId),
+                        chapterId,
+                        safeStartIndex,
+                        safeCount,
+                        cancellationToken);
+                }
+                else
+                {
+                    var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+                    var pipeline = CreatePipeline(
+                        record,
+                        Address!,
+                        options,
+                        catalog,
+                        pageAssetCache,
+                        pageAssetFetcher,
+                        loggerFactory,
+                        correlationId);
+                    pages = await pipeline.GetPagesAsync(
+                        MediaId.Create(mediaId),
+                        chapterId,
+                        safeStartIndex,
+                        safeCount,
+                        cancellationToken);
+                }
+
+                return Results.Ok(new
+                {
+                    Pages = pages.Pages.Select(page => new
+                    {
+                        Id = page.PageId,
+                        page.Index,
+                        ContentUri = page.ContentUri.ToString()
+                    }),
+                    pages.ReachedEnd
+                });
+            }
+            catch (Exception ex)
+            {
+                return PipelineErrorContract.ToResult(ex, "paged.pages");
+            }
         });
 
         app.MapGet("/pipeline/paged/page-asset", async (
@@ -335,31 +339,37 @@ public static class PagedPipelineEndpoints
             var record = Record!;
 
             using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
-
-            var page = await GetPageAsync(
-                record,
-                Address,
-                IsWasm,
-                wasmRuntimeHost,
-                options,
-                catalog,
-                pageAssetCache,
-                pageAssetFetcher,
-                loggerFactory,
-                MediaId.Create(mediaId),
-                chapterId,
-                index ?? 0,
-                cancellationToken);
-
-            var cacheKey = $"{record.Manifest.Id}:{page.PageId}:{page.ContentUri}";
-            var asset = await pageAssetCache.GetAsync(cacheKey, cancellationToken);
-            if (asset is null)
+            try
             {
-                asset = await pageAssetFetcher.FetchAsync(page.ContentUri, cancellationToken);
-                await pageAssetCache.SetAsync(cacheKey, asset, cancellationToken);
-            }
+                var page = await GetPageAsync(
+                    record,
+                    Address,
+                    IsWasm,
+                    wasmRuntimeHost,
+                    options,
+                    catalog,
+                    pageAssetCache,
+                    pageAssetFetcher,
+                    loggerFactory,
+                    MediaId.Create(mediaId),
+                    chapterId,
+                    index ?? 0,
+                    cancellationToken);
 
-            return Results.File(asset.Payload, asset.ContentType);
+                var cacheKey = $"{record.Manifest.Id}:{page.PageId}:{page.ContentUri}";
+                var asset = await pageAssetCache.GetAsync(cacheKey, cancellationToken);
+                if (asset is null)
+                {
+                    asset = await pageAssetFetcher.FetchAsync(page.ContentUri, cancellationToken);
+                    await pageAssetCache.SetAsync(cacheKey, asset, cancellationToken);
+                }
+
+                return Results.File(asset.Payload, asset.ContentType);
+            }
+            catch (Exception ex)
+            {
+                return PipelineErrorContract.ToResult(ex, "paged.page-asset");
+            }
         });
 
         return app;

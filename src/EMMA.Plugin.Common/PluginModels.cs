@@ -4,13 +4,16 @@ namespace EMMA.Plugin.Common;
 
 public sealed record HandshakeResponse(string version, string message);
 
+public sealed record MetadataItem(string key, string value);
+
 public sealed record SearchItem(
     string id,
     string source,
     string title,
     string mediaType,
     string? thumbnailUrl = null,
-    string? description = null);
+    string? description = null,
+    IReadOnlyList<MetadataItem>? metadata = null);
 
 public sealed record CapabilityItem(string name, string[] mediaTypes, string[] operations);
 

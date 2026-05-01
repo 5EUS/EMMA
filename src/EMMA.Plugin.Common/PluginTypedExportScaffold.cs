@@ -30,7 +30,7 @@ public static class PluginTypedExportScaffold
         Func<string, string?, string?> payloadProvider,
         bool useArgsJsonFallbackHint = true)
     {
-        var request = new OperationRequest(operation, mediaId, mediaType, argsJson, payloadJson);
+        var request = new OperationRequest(operation ?? string.Empty, mediaId, mediaType, argsJson, payloadJson);
         return router.Resolve(request, payloadProvider, useArgsJsonFallbackHint);
     }
 

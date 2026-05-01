@@ -1,4 +1,6 @@
 using EMMA.Api.Configuration;
+using EMMA.Contracts.Api.V1;
+using EMMA.Domain;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 
@@ -41,7 +43,15 @@ public sealed class ApiKeyAuthMiddleware
         if (!_validator.TryValidate(apiKey, out var identity))
         {
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsync("Unauthorized");
+            context.Response.ContentType = "application/json";
+            var error = new ApiError
+            {
+                Code = ErrorCodes.Unauthenticated,
+                Message = "Invalid API key."
+            };
+            await context.Response.WriteAsJsonAsync(
+                ApiErrorContract.ToEnvelope(error),
+                ApiErrorJsonContext.Default.ApiErrorEnvelope);
             return;
         }
 
