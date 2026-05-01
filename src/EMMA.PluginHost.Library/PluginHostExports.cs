@@ -5157,13 +5157,25 @@ public static class PluginHostExports
             ? null
             : result.Description;
 
+        IReadOnlyDictionary<string, string>? metadata = null;
+        if (result.Metadata?.Count > 0)
+        {
+            var metadataDict = new Dictionary<string, string>();
+            foreach (var kvp in result.Metadata)
+            {
+                metadataDict[kvp.Key] = kvp.Value;
+            }
+            metadata = metadataDict;
+        }
+
         return new MediaSummary(
             MediaId.Create(result.Id ?? string.Empty),
             result.Source ?? string.Empty,
             result.Title ?? string.Empty,
             mediaType,
             thumbnailUrl,
-            description);
+            description,
+            metadata);
     }
 
     private static MediaType ParseMediaType(string? value)
