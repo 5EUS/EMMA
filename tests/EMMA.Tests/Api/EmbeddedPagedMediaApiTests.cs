@@ -40,13 +40,42 @@ public sealed class EmbeddedPagedMediaApiTests
         Assert.Equal(ApiMediaType.Paged, response.Result.Items[0].MediaType);
     }
 
-    private sealed class StubSearchPort : IMediaSearchPort
+    [Fact]
+    public async Task SearchAsync_MapsAudioMediaType()
+    {
+        var searchPort = new StubSearchPort(MediaType.Audio);
+        var pagePort = new StubPageProviderPort();
+        var runtime = EmbeddedRuntimeFactory.Create(
+            searchPort,
+            pagePort,
+            new HostPolicyEvaluator(),
+            metadataCache: new InMemoryCachePort());
+
+        var api = new EmbeddedPagedMediaApi(runtime);
+
+        var response = await api.SearchAsync(new SearchRequest
+        {
+            Query = "audio-demo",
+            Context = new ApiRequestContext
+            {
+                CorrelationId = "test",
+                DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
+                ClientId = "local"
+            }
+        }, CancellationToken.None);
+
+        Assert.Equal(SearchResponse.OutcomeOneofCase.Result, response.OutcomeCase);
+        Assert.Single(response.Result.Items);
+        Assert.Equal(ApiMediaType.Audio, response.Result.Items[0].MediaType);
+    }
+
+    private sealed class StubSearchPort(MediaType mediaType = MediaType.Paged) : IMediaSearchPort
     {
         public Task<IReadOnlyList<MediaSummary>> SearchAsync(string query, CancellationToken cancellationToken)
         {
             IReadOnlyList<MediaSummary> results =
             [
-                new(MediaId.Create("demo-1"), "test", "Demo", MediaType.Paged)
+                new(MediaId.Create("demo-1"), "test", "Demo", mediaType)
             ];
             return Task.FromResult(results);
         }

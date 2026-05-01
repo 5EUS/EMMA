@@ -14,6 +14,8 @@ namespace EMMA.PluginHost.Library;
     PropertyNameCaseInsensitive = true,
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     WriteIndented = false)]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(MediaSummary))]
 [JsonSerializable(typeof(IReadOnlyList<MediaSummary>))]
 [JsonSerializable(typeof(List<MediaSummary>))]

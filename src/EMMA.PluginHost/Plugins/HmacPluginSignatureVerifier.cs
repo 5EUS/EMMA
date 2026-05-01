@@ -1,98 +1,26 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
+using EMMA.PluginHost.Configuration;
 
 namespace EMMA.PluginHost.Plugins;
 
-public sealed class HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions> options) : IPluginSignatureVerifier
+public sealed class HmacPluginSignatureVerifier(
+    IOptions<PluginSignatureOptions> options,
+    IOptions<PluginHostOptions> hostOptions,
+    ILogger<DelegatedPluginSignatureVerifier> logger) : IPluginSignatureVerifier
 {
-    private readonly PluginSignatureOptions _options = options.Value;
+    private readonly DelegatedPluginSignatureVerifier _inner = new(options, hostOptions, logger);
+
+    public HmacPluginSignatureVerifier(IOptions<PluginSignatureOptions> options)
+        : this(
+            options,
+            Options.Create(new PluginHostOptions()),
+            NullLogger<DelegatedPluginSignatureVerifier>.Instance)
+    {
+    }
 
     public bool Verify(PluginManifest manifest, out string? reason)
     {
-        reason = null;
-
-        var signature = manifest.Signature;
-        if (signature is null)
-        {
-            reason = "Plugin manifest signature is missing.";
-            return false;
-        }
-
-        if (!string.Equals(signature.Algorithm, "hmac-sha256", StringComparison.OrdinalIgnoreCase))
-        {
-            reason = "Unsupported signature algorithm.";
-            return false;
-        }
-
-        if (string.IsNullOrWhiteSpace(_options.HmacKeyBase64))
-        {
-            reason = "Plugin signature key not configured.";
-            return false;
-        }
-
-        if (!TryDecodeKey(_options.HmacKeyBase64, out var key))
-        {
-            reason = "Invalid plugin signature key.";
-            return false;
-        }
-
-        var payload = BuildPayload(manifest);
-        var computed = ComputeHmac(payload, key);
-
-        if (!CryptographicOperations.FixedTimeEquals(computed, DecodeSignature(signature.Value)))
-        {
-            reason = "Plugin signature mismatch.";
-            return false;
-        }
-
-        return true;
-    }
-
-    private static string BuildPayload(PluginManifest manifest)
-    {
-        var payload = string.Join("|",
-            manifest.Id ?? string.Empty,
-            manifest.Version ?? string.Empty,
-            manifest.Protocol ?? string.Empty);
-
-        return payload;
-    }
-
-    private static bool TryDecodeKey(string base64, out byte[] key)
-    {
-        try
-        {
-            key = Convert.FromBase64String(base64);
-            return true;
-        }
-        catch
-        {
-            key = [];
-            return false;
-        }
-    }
-
-    private static byte[] ComputeHmac(string payload, byte[] key)
-    {
-        using var hmac = new HMACSHA256(key);
-        return hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
-    }
-
-    private static byte[] DecodeSignature(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return [];
-        }
-
-        try
-        {
-            return Convert.FromBase64String(value);
-        }
-        catch
-        {
-            return [];
-        }
+        return _inner.Verify(manifest, out reason);
     }
 }

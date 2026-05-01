@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RID="${1:-}"
 EMMAUI_DIR="${2:-}"
+HOST_OS="$(uname -s 2>/dev/null || echo unknown)"
 
 if [[ -z "$RID" ]]; then
   echo "Usage: $0 <rid> [emmaui-dir]"
@@ -17,6 +18,15 @@ fi
 
 if [[ ! -d "$EMMAUI_DIR" ]]; then
   echo "emmaui directory does not exist: $EMMAUI_DIR"
+  exit 1
+fi
+
+if [[ "$RID" == win-* && "$HOST_OS" != CYGWIN* && "$HOST_OS" != MINGW* && "$HOST_OS" != MSYS* ]]; then
+  echo "RID '$RID' requires NativeAOT publish on Windows."
+  echo "Detected host OS: $HOST_OS"
+  echo ""
+  echo "You can still build the WASM runtime cross-platform, but EMMA.Native NativeAOT must run on Windows."
+  echo "Run this lane from Windows or run NativeAOT there and copy artifacts back."
   exit 1
 fi
 

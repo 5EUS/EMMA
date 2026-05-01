@@ -251,6 +251,7 @@ public sealed class PagedMediaPipeline(
                 item.MediaType,
                 null,
                 item.Description,
+                item.ThumbnailUrl,
                 null,
                 [],
                 now,

@@ -1,4 +1,5 @@
 using EMMA.Api.Configuration;
+using EMMA.Domain;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
 using Grpc.AspNetCore.Server;
@@ -38,7 +39,7 @@ public sealed class ApiKeyGrpcInterceptor(
         var apiKey = context.RequestHeaders?.Get(_options.HeaderName)?.Value;
         if (!_validator.TryValidate(apiKey, out var identity))
         {
-            throw new RpcException(new Status(StatusCode.Unauthenticated, "Invalid API key."));
+            throw new RpcException(new Status(StatusCode.Unauthenticated, $"{ErrorCodes.Unauthenticated}: Invalid API key."));
         }
 
         _identityAccessor.Current = identity;

@@ -6,6 +6,7 @@ using Grpc.Core.Interceptors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 
 namespace EMMA.Plugin.AspNetCore;
@@ -219,6 +220,11 @@ public static class PluginSdkHost
         {
             services.AddGrpc(grpc => grpc.Interceptors.Add<PluginRpcSecurityInterceptor>());
             services.AddOptions<PluginSdkSecurityOptions>();
+            services.TryAddSingleton<IPluginSdkMetrics>(_ =>
+            {
+                var pluginId = Environment.GetEnvironmentVariable("EMMA_PLUGIN_ID")?.Trim();
+                return new MeteredPluginSdkMetrics(string.IsNullOrWhiteSpace(pluginId) ? "unknown" : pluginId);
+            });
 
             if (configureSecurity is not null)
             {

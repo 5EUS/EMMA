@@ -6,5 +6,6 @@ namespace EMMA.Domain;
 public enum MediaType
 {
     Paged,
-    Video
+    Video,
+    Audio
 }

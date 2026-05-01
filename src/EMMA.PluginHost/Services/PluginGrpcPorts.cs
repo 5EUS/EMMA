@@ -76,9 +76,17 @@ internal sealed class PluginSearchPort(
 
     private static MediaType ParseMediaType(string? value)
     {
-        if (string.Equals(value, "video", StringComparison.OrdinalIgnoreCase))
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
         {
             return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
         }
 
         return MediaType.Paged;
@@ -247,7 +255,27 @@ internal sealed class PluginPageProviderPort(
     }
 }
 
-internal sealed record VideoStreamResult(string Id, string Label, string PlaylistUri);
+internal sealed record VideoStreamResult(
+    string Id,
+    string Label,
+    string PlaylistUri,
+    IReadOnlyDictionary<string, string>? RequestHeaders = null,
+    string? RequestCookies = null,
+    string? StreamType = null,
+    bool IsLive = false,
+    bool DrmProtected = false,
+    string? DrmScheme = null,
+    IReadOnlyList<VideoTrackResult>? AudioTracks = null,
+    IReadOnlyList<VideoTrackResult>? SubtitleTracks = null,
+    string? DefaultAudioTrackId = null,
+    string? DefaultSubtitleTrackId = null);
+
+internal sealed record VideoTrackResult(
+    string Id,
+    string Label,
+    string? Language = null,
+    string? Codec = null,
+    bool IsDefault = false);
 
 internal sealed record VideoSegmentResult(string ContentType, byte[] Payload);
 
@@ -286,7 +314,31 @@ internal sealed class PluginVideoProviderPort(
             .Select(stream => new VideoStreamResult(
                 stream.Id ?? string.Empty,
                 stream.Label ?? string.Empty,
-                stream.PlaylistUri ?? string.Empty))
+                stream.PlaylistUri ?? string.Empty,
+                stream.RequestHeaders?.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase),
+                string.IsNullOrWhiteSpace(stream.RequestCookies) ? null : stream.RequestCookies,
+                string.IsNullOrWhiteSpace(stream.StreamType) ? null : stream.StreamType,
+                stream.IsLive,
+                stream.DrmProtected,
+                string.IsNullOrWhiteSpace(stream.DrmScheme) ? null : stream.DrmScheme,
+                stream.AudioTracks
+                    .Select(track => new VideoTrackResult(
+                        track.Id ?? string.Empty,
+                        track.Label ?? string.Empty,
+                        string.IsNullOrWhiteSpace(track.Language) ? null : track.Language,
+                        string.IsNullOrWhiteSpace(track.Codec) ? null : track.Codec,
+                        track.IsDefault))
+                    .ToList(),
+                stream.SubtitleTracks
+                    .Select(track => new VideoTrackResult(
+                        track.Id ?? string.Empty,
+                        track.Label ?? string.Empty,
+                        string.IsNullOrWhiteSpace(track.Language) ? null : track.Language,
+                        string.IsNullOrWhiteSpace(track.Codec) ? null : track.Codec,
+                        track.IsDefault))
+                    .ToList(),
+                string.IsNullOrWhiteSpace(stream.DefaultAudioTrackId) ? null : stream.DefaultAudioTrackId,
+                string.IsNullOrWhiteSpace(stream.DefaultSubtitleTrackId) ? null : stream.DefaultSubtitleTrackId))
             .ToList();
 
         _logger.LogInformation(

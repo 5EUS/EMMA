@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Globalization;
+using System.Net;
+using System.Net.Http;
 using EMMA.Api;
 using EMMA.Application.Ports;
 using EMMA.Domain;
@@ -22,10 +24,14 @@ public static class NativeExports
     private const string RequireSignedPluginsFileEnvVar = "EMMA_REQUIRE_SIGNED_PLUGINS_FILE";
     private const string RequireSignedPluginsManifestFileName = ".plugin-signature-require-signed";
     private const string RequireSignedPluginsAppFileName = "plugin-signature-require-signed";
-    private const string PluginSignatureHmacKeyEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_BASE64";
-    private const string PluginSignatureHmacKeyConfigEnvVar = "PluginSignature__HmacKeyBase64";
-    private const string PluginSignatureHmacKeyFileEnvVar = "EMMA_PLUGIN_SIGNATURE_HMAC_KEY_FILE";
-    private const string PluginSignatureHmacKeyFileName = ".plugin-signature-hmac.key";
+    private const string PluginSignatureDelegationDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_DELEGATION_DIR";
+    private const string PluginSignatureDelegationDirectoryConfigEnvVar = "PluginSignature__DelegationDirectory";
+    private const string PluginSignatureDelegationDirectoryFileEnvVar = "EMMA_PLUGIN_SIGNATURE_DELEGATION_DIR_FILE";
+    private const string PluginSignatureDelegationDirectoryFileName = ".plugin-signature-delegation-dir";
+    private const string PluginSignatureRootKeyDirectoryEnvVar = "EMMA_PLUGIN_SIGNATURE_ROOT_KEY_DIR";
+    private const string PluginSignatureRootKeyDirectoryConfigEnvVar = "PluginSignature__RootKeyDirectory";
+    private const string PluginSignatureRootKeyDirectoryFileEnvVar = "EMMA_PLUGIN_SIGNATURE_ROOT_KEY_DIR_FILE";
+    private const string PluginSignatureRootKeyDirectoryFileName = ".plugin-signature-root-key-dir";
     private sealed class RuntimeState(EmbeddedRuntime runtime, InMemoryMediaStore store)
     {
         public EmbeddedRuntime Runtime { get; } = runtime;
@@ -43,6 +49,7 @@ public static class NativeExports
         int? ThumbnailHeight = null,
         string? SearchExperienceJson = null);
     private sealed record PluginPathConfiguration(string? ManifestsDirectory, string? PluginsDirectory);
+    private sealed record PluginHostConfiguration(string Mode, string? BaseUrl, string? ExecutablePath);
 
     private static readonly ConcurrentDictionary<int, RuntimeState> States = new();
     private static readonly Lock PluginHostInitLock = new();
@@ -55,6 +62,8 @@ public static class NativeExports
     private static PluginPathConfiguration _pluginPathConfiguration = new(null, null);
     private static bool _pluginHostInitialized = false;
     private static int _nativeLoggingConfigured = 0;
+    private static readonly HttpClient RemotePluginHostHttpClient = new();
+    private static PluginHostConfiguration _pluginHostConfiguration = new("local", null, null);
 
     // Don't use [ThreadStatic] - we need the error to be visible across threads for FFI
     private static string? _lastError;
@@ -264,6 +273,12 @@ public static class NativeExports
                 return IntPtr.Zero;
             }
 
+            if (TryGetRemotePluginHostBaseUri(out _))
+            {
+                // Remote plugin host does not currently expose library management endpoints.
+                return AllocUtf8("[]");
+            }
+
             EnsurePluginHostInitialized();
             var json = PluginHostExports.ListLibrariesJsonManaged();
             if (json == null)
@@ -292,6 +307,12 @@ public static class NativeExports
             if (!States.TryGetValue(handle, out _))
             {
                 SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            if (TryGetRemotePluginHostBaseUri(out _))
+            {
+                SetLastError("Create-library is not available when remote plugin host mode is enabled.");
                 return 0;
             }
 
@@ -328,6 +349,12 @@ public static class NativeExports
                 return 0;
             }
 
+            if (TryGetRemotePluginHostBaseUri(out _))
+            {
+                SetLastError("Delete-library is not available when remote plugin host mode is enabled.");
+                return 0;
+            }
+
             var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
 
             EnsurePluginHostInitialized();
@@ -361,6 +388,12 @@ public static class NativeExports
                 return 0;
             }
 
+            if (TryGetRemotePluginHostBaseUri(out _))
+            {
+                SetLastError("Reset-database is not available when remote plugin host mode is enabled.");
+                return 0;
+            }
+
             EnsurePluginHostInitialized();
             var reset = PluginHostExports.ResetDatabaseManaged();
             if (reset == 0)
@@ -390,6 +423,11 @@ public static class NativeExports
             {
                 SetLastError("Runtime handle not found.");
                 return IntPtr.Zero;
+            }
+
+            if (TryGetRemotePluginHostBaseUri(out _))
+            {
+                return AllocUtf8("[]");
             }
 
             var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
@@ -425,6 +463,11 @@ public static class NativeExports
                 return IntPtr.Zero;
             }
 
+            if (TryGetRemotePluginHostBaseUri(out _))
+            {
+                return AllocUtf8("[]");
+            }
+
             var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
 
             EnsurePluginHostInitialized();
@@ -452,8 +495,23 @@ public static class NativeExports
 
         try
         {
-            var plugins = DiscoverPlugins();
-            return AllocUtf8(BuildPluginsJson(plugins));
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                var remoteJson = HttpGetJson(remoteBaseUri, "/plugins/available");
+                var normalized = NormalizeRemotePluginsPayload(remoteJson);
+                return AllocUtf8(normalized);
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ListPluginsJsonManaged();
+            if (json == null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list plugins.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
         }
         catch (Exception ex)
         {
@@ -469,6 +527,12 @@ public static class NativeExports
 
         try
         {
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                var remoteJson = HttpGetJson(remoteBaseUri, "/plugins/repositories");
+                return AllocUtf8(remoteJson);
+            }
+
             EnsurePluginHostInitialized();
             var json = PluginHostExports.ListPluginRepositoriesJsonManaged();
             if (json == null)
@@ -498,12 +562,24 @@ public static class NativeExports
 
         try
         {
-            EnsurePluginHostInitialized();
-
             var catalogUrl = PtrToString(catalogUrlUtf8);
             var repositoryId = PtrToString(repositoryIdUtf8);
             var name = PtrToString(nameUtf8);
             var sourceRepositoryUrl = PtrToString(sourceRepositoryUrlUtf8);
+
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                var payload = BuildAddPluginRepositoryPayload(
+                    catalogUrl ?? string.Empty,
+                    repositoryId,
+                    name,
+                    sourceRepositoryUrl);
+
+                HttpSendJson(remoteBaseUri, "/plugins/repositories", HttpMethod.Post, payload);
+                return 1;
+            }
+
+            EnsurePluginHostInitialized();
 
             var result = PluginHostExports.AddPluginRepositoryManaged(
                 catalogUrl ?? string.Empty,
@@ -533,9 +609,15 @@ public static class NativeExports
 
         try
         {
-            EnsurePluginHostInitialized();
-
             var repositoryId = PtrToString(repositoryIdUtf8) ?? string.Empty;
+
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                HttpSendJson(remoteBaseUri, $"/plugins/repositories/{Uri.EscapeDataString(repositoryId)}", HttpMethod.Delete, null);
+                return 1;
+            }
+
+            EnsurePluginHostInitialized();
             var result = PluginHostExports.RemovePluginRepositoryManaged(repositoryId);
 
             if (result == 0)
@@ -560,9 +642,18 @@ public static class NativeExports
 
         try
         {
-            EnsurePluginHostInitialized();
-
             var repositoryId = PtrToString(repositoryIdUtf8) ?? string.Empty;
+
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                var refreshValue = refreshCatalog == 1 ? "true" : "false";
+                var remoteJson = HttpGetJson(
+                    remoteBaseUri,
+                    $"/plugins/repositories/{Uri.EscapeDataString(repositoryId)}/plugins?refresh={refreshValue}");
+                return AllocUtf8(remoteJson);
+            }
+
+            EnsurePluginHostInitialized();
             var json = PluginHostExports.ListRepositoryPluginsJsonManaged(repositoryId, refreshCatalog == 1);
             if (json == null)
             {
@@ -587,6 +678,13 @@ public static class NativeExports
 
         try
         {
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                var refreshValue = refreshCatalog == 1 ? "true" : "false";
+                var remoteJson = HttpGetJson(remoteBaseUri, $"/plugins/repository-plugins?refresh={refreshValue}");
+                return AllocUtf8(remoteJson);
+            }
+
             EnsurePluginHostInitialized();
 
             var json = PluginHostExports.ListAllRepositoryPluginsJsonManaged(refreshCatalog == 1);
@@ -618,11 +716,28 @@ public static class NativeExports
 
         try
         {
-            EnsurePluginHostInitialized();
-
             var repositoryId = PtrToString(repositoryIdUtf8) ?? string.Empty;
             var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
             var version = PtrToString(versionUtf8);
+
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                var payload = BuildInstallFromRepositoryPayload(
+                    repositoryId,
+                    pluginId,
+                    version,
+                    refreshCatalog == 1,
+                    rescanAfterInstall == 1);
+
+                var remoteJson = HttpSendJson(
+                    remoteBaseUri,
+                    "/plugins/install-from-repository",
+                    HttpMethod.Post,
+                    payload);
+                return AllocUtf8(remoteJson);
+            }
+
+            EnsurePluginHostInitialized();
 
             var json = PluginHostExports.InstallFromRepositoryJsonManaged(
                 repositoryId,
@@ -845,7 +960,7 @@ public static class NativeExports
                         var pathsChanged = !SameConfiguredPath(previousConfiguration.ManifestsDirectory, _pluginPathConfiguration.ManifestsDirectory)
                             || !SameConfiguredPath(previousConfiguration.PluginsDirectory, _pluginPathConfiguration.PluginsDirectory);
                         var signaturePolicyChanged = EnsureRequireSignedPluginsConfigured(currentManifestDirectory);
-                        var signatureKeyChanged = EnsurePluginSignatureKeyConfigured(currentManifestDirectory);
+                        var signatureKeyChanged = EnsurePluginSignatureTrustConfigured(currentManifestDirectory);
 
                         if (pathsChanged || signaturePolicyChanged || signatureKeyChanged)
                         {
@@ -875,6 +990,64 @@ public static class NativeExports
                         }
                     }
                 }
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_configure_host")]
+    public static int RuntimeConfigureHost(IntPtr executablePathUtf8, IntPtr baseUrlUtf8, IntPtr modeUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            var executablePath = NormalizeConfiguredPath(PtrToString(executablePathUtf8));
+            var baseUrlRaw = PtrToString(baseUrlUtf8)?.Trim();
+            var modeRaw = PtrToString(modeUtf8)?.Trim();
+
+            var normalizedMode = string.Equals(modeRaw, "remote", StringComparison.OrdinalIgnoreCase)
+                ? "remote"
+                : "local";
+
+            string? normalizedBaseUrl = null;
+            if (normalizedMode == "remote")
+            {
+                if (string.IsNullOrWhiteSpace(baseUrlRaw))
+                {
+                    SetLastError("Remote host mode requires a baseUrl.");
+                    return 0;
+                }
+
+                if (!Uri.TryCreate(baseUrlRaw, UriKind.Absolute, out var baseUri))
+                {
+                    SetLastError("Remote host baseUrl must be an absolute URL.");
+                    return 0;
+                }
+
+                normalizedBaseUrl = baseUri.ToString().TrimEnd('/');
+            }
+
+            var previous = _pluginHostConfiguration;
+            var updated = new PluginHostConfiguration(normalizedMode, normalizedBaseUrl, executablePath);
+            _pluginHostConfiguration = updated;
+
+            if (normalizedMode == "remote" && _pluginHostInitialized)
+            {
+                ShutdownPluginHost();
+            }
+
+            if (!string.Equals(previous.Mode, updated.Mode, StringComparison.Ordinal)
+                || !string.Equals(previous.BaseUrl, updated.BaseUrl, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(previous.ExecutablePath, updated.ExecutablePath, StringComparison.Ordinal))
+            {
+                LogInfo("plugin-host", $"Plugin host mode configured: mode={updated.Mode}, baseUrl={updated.BaseUrl ?? "<none>"}");
             }
 
             return 1;
@@ -1687,6 +1860,65 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library_v3")]
+    public static int RuntimeAddMediaToLibraryV3(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr descriptionUtf8,
+        IntPtr thumbnailUrlUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var description = PtrToString(descriptionUtf8);
+            var thumbnailUrl = PtrToString(thumbnailUrlUtf8);
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                "Library",
+                description,
+                thumbnailUrl);
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_remove_media_from_library")]
     public static int RuntimeRemoveMediaFromLibrary(int handle, IntPtr mediaIdUtf8)
     {
@@ -1821,6 +2053,67 @@ public static class NativeExports
                 mediaType,
                 libraryName,
                 description);
+
+            if (added == 0)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to add media to library.";
+                SetLastError(error);
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_add_media_to_library_for_library_v3")]
+    public static int RuntimeAddMediaToLibraryForLibraryV3(
+        int handle,
+        IntPtr mediaIdUtf8,
+        IntPtr sourceIdUtf8,
+        IntPtr titleUtf8,
+        IntPtr mediaTypeUtf8,
+        IntPtr libraryNameUtf8,
+        IntPtr descriptionUtf8,
+        IntPtr thumbnailUrlUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var mediaIdValue = PtrToString(mediaIdUtf8);
+            if (string.IsNullOrWhiteSpace(mediaIdValue))
+            {
+                SetLastError("mediaId is required.");
+                return 0;
+            }
+
+            var sourceId = PtrToString(sourceIdUtf8) ?? string.Empty;
+            var title = PtrToString(titleUtf8) ?? string.Empty;
+            var mediaType = PtrToString(mediaTypeUtf8) ?? "paged";
+            var libraryName = PtrToString(libraryNameUtf8) ?? "Library";
+            var description = PtrToString(descriptionUtf8);
+            var thumbnailUrl = PtrToString(thumbnailUrlUtf8);
+
+            EnsurePluginHostInitialized();
+            var added = PluginHostExports.AddMediaToLibraryManaged(
+                mediaIdValue,
+                sourceId,
+                title,
+                mediaType,
+                libraryName,
+                description,
+                thumbnailUrl);
 
             if (added == 0)
             {
@@ -2457,6 +2750,12 @@ public static class NativeExports
 
     private static void EnsurePluginHostInitialized()
     {
+        if (TryGetRemotePluginHostBaseUri(out _))
+        {
+            // Remote mode proxies supported calls directly over HTTP.
+            return;
+        }
+
         if (_pluginHostInitialized)
         {
             return;
@@ -2473,7 +2772,7 @@ public static class NativeExports
             var sandboxDirectory = ResolvePluginSandboxDirectory() ?? string.Empty;
 
             EnsureRequireSignedPluginsConfigured(manifestDirectory);
-            EnsurePluginSignatureKeyConfigured(manifestDirectory);
+            EnsurePluginSignatureTrustConfigured(manifestDirectory);
 
             var resultCode = PluginHostExports.InitializeManaged(manifestDirectory, sandboxDirectory);
 
@@ -2489,34 +2788,40 @@ public static class NativeExports
         }
     }
 
-    private static bool EnsurePluginSignatureKeyConfigured(string? manifestDirectory)
+    private static bool EnsurePluginSignatureTrustConfigured(string? manifestDirectory)
     {
-        var existingKey = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyEnvVar)
-            ?? Environment.GetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar);
+        var changed = false;
 
-        var resolvedKey = ResolvePluginSignatureKeyFromFiles(manifestDirectory);
-        if (string.IsNullOrWhiteSpace(resolvedKey))
+        var existingDelegationDirectory = Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryConfigEnvVar);
+        var resolvedDelegationDirectory = ResolvePluginSignatureDelegationDirectoryFromFiles(manifestDirectory);
+
+        if (!string.IsNullOrWhiteSpace(resolvedDelegationDirectory)
+            && !string.Equals(existingDelegationDirectory?.Trim(), resolvedDelegationDirectory, StringComparison.Ordinal))
         {
-            if (string.IsNullOrWhiteSpace(existingKey))
-            {
-                return false;
-            }
-
-            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, null);
-            Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, null);
-            LogInfo("plugin-host", "Cleared plugin signature key because no key file is present.");
-            return true;
+            Environment.SetEnvironmentVariable(PluginSignatureDelegationDirectoryEnvVar, resolvedDelegationDirectory);
+            Environment.SetEnvironmentVariable(PluginSignatureDelegationDirectoryConfigEnvVar, resolvedDelegationDirectory);
+            changed = true;
         }
 
-        if (string.Equals(existingKey?.Trim(), resolvedKey, StringComparison.Ordinal))
+        var existingRootKeyDirectory = Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryEnvVar)
+            ?? Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryConfigEnvVar);
+        var resolvedRootKeyDirectory = ResolvePluginSignatureRootKeyDirectoryFromFiles(manifestDirectory);
+
+        if (!string.IsNullOrWhiteSpace(resolvedRootKeyDirectory)
+            && !string.Equals(existingRootKeyDirectory?.Trim(), resolvedRootKeyDirectory, StringComparison.Ordinal))
         {
-            return false;
+            Environment.SetEnvironmentVariable(PluginSignatureRootKeyDirectoryEnvVar, resolvedRootKeyDirectory);
+            Environment.SetEnvironmentVariable(PluginSignatureRootKeyDirectoryConfigEnvVar, resolvedRootKeyDirectory);
+            changed = true;
         }
 
-        Environment.SetEnvironmentVariable(PluginSignatureHmacKeyEnvVar, resolvedKey);
-        Environment.SetEnvironmentVariable(PluginSignatureHmacKeyConfigEnvVar, resolvedKey);
-        LogInfo("plugin-host", "Loaded plugin signature key from configured key file.");
-        return true;
+        if (changed)
+        {
+            LogInfo("plugin-host", "Loaded delegated plugin signature trust configuration.");
+        }
+
+        return changed;
     }
 
     private static bool EnsureRequireSignedPluginsConfigured(string? manifestDirectory)
@@ -2617,11 +2922,11 @@ public static class NativeExports
         }
     }
 
-    private static string? ResolvePluginSignatureKeyFromFiles(string? manifestDirectory)
+    private static string? ResolvePluginSignatureDelegationDirectoryFromFiles(string? manifestDirectory)
     {
         var candidatePaths = new List<string>();
 
-        var explicitPath = Environment.GetEnvironmentVariable(PluginSignatureHmacKeyFileEnvVar);
+        var explicitPath = Environment.GetEnvironmentVariable(PluginSignatureDelegationDirectoryFileEnvVar);
         if (!string.IsNullOrWhiteSpace(explicitPath))
         {
             candidatePaths.Add(explicitPath);
@@ -2629,18 +2934,38 @@ public static class NativeExports
 
         if (!string.IsNullOrWhiteSpace(manifestDirectory))
         {
-            candidatePaths.Add(Path.Combine(manifestDirectory, PluginSignatureHmacKeyFileName));
+            candidatePaths.Add(Path.Combine(manifestDirectory, PluginSignatureDelegationDirectoryFileName));
+            candidatePaths.Add(Path.Combine(manifestDirectory, "trust"));
+            candidatePaths.Add(Path.Combine(manifestDirectory, "delegations"));
+
+            var manifestParent = Path.GetDirectoryName(manifestDirectory);
+            if (!string.IsNullOrWhiteSpace(manifestParent))
+            {
+                candidatePaths.Add(Path.Combine(manifestParent, "trust"));
+                candidatePaths.Add(Path.Combine(manifestParent, "delegations"));
+            }
         }
 
         var support = GetApplicationSupportDirectories().FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(support))
         {
-            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-hmac.key"));
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-trust"));
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-delegations"));
         }
 
         foreach (var path in candidatePaths)
         {
-            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            if (Directory.Exists(path))
+            {
+                return path;
+            }
+
+            if (!File.Exists(path))
             {
                 continue;
             }
@@ -2648,7 +2973,70 @@ public static class NativeExports
             try
             {
                 var value = File.ReadAllText(path).Trim();
-                if (!string.IsNullOrWhiteSpace(value))
+                if (!string.IsNullOrWhiteSpace(value) && Directory.Exists(value))
+                {
+                    return value;
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ResolvePluginSignatureRootKeyDirectoryFromFiles(string? manifestDirectory)
+    {
+        var candidatePaths = new List<string>();
+
+        var explicitPath = Environment.GetEnvironmentVariable(PluginSignatureRootKeyDirectoryFileEnvVar);
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            candidatePaths.Add(explicitPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifestDirectory))
+        {
+            candidatePaths.Add(Path.Combine(manifestDirectory, PluginSignatureRootKeyDirectoryFileName));
+            candidatePaths.Add(Path.Combine(manifestDirectory, "trust", "roots"));
+
+            var manifestParent = Path.GetDirectoryName(manifestDirectory);
+            if (!string.IsNullOrWhiteSpace(manifestParent))
+            {
+                candidatePaths.Add(Path.Combine(manifestParent, "trust", "roots"));
+            }
+        }
+
+        var support = GetApplicationSupportDirectories().FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(support))
+        {
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-trust", "roots"));
+            candidatePaths.Add(Path.Combine(support, "emmaui", "plugin-signature-root-keys"));
+        }
+
+        foreach (var path in candidatePaths)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                continue;
+            }
+
+            if (Directory.Exists(path))
+            {
+                return path;
+            }
+
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                var value = File.ReadAllText(path).Trim();
+                if (!string.IsNullOrWhiteSpace(value) && Directory.Exists(value))
                 {
                     return value;
                 }
@@ -2732,6 +3120,289 @@ public static class NativeExports
         }
 
         LogDebug("timing", message);
+    }
+
+    private static bool TryGetRemotePluginHostBaseUri(out Uri baseUri)
+    {
+        baseUri = default!;
+        var config = _pluginHostConfiguration;
+        if (!string.Equals(config.Mode, "remote", StringComparison.OrdinalIgnoreCase)
+            || string.IsNullOrWhiteSpace(config.BaseUrl))
+        {
+            return false;
+        }
+
+        if (Uri.TryCreate(config.BaseUrl, UriKind.Absolute, out var parsed)
+            && parsed is not null)
+        {
+            baseUri = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string HttpGetJson(Uri baseUri, string relativePath)
+    {
+        var requestUri = BuildRequestUri(baseUri, relativePath);
+        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+        using var response = RemotePluginHostHttpClient.Send(request);
+        return ReadHttpJsonBody(response, requestUri);
+    }
+
+    private static string HttpSendJson(Uri baseUri, string relativePath, HttpMethod method, string? jsonBody)
+    {
+        var requestUri = BuildRequestUri(baseUri, relativePath);
+        using var request = new HttpRequestMessage(method, requestUri);
+        if (!string.IsNullOrWhiteSpace(jsonBody))
+        {
+            request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+        }
+
+        using var response = RemotePluginHostHttpClient.Send(request);
+        return ReadHttpJsonBody(response, requestUri);
+    }
+
+    private static Uri BuildRequestUri(Uri baseUri, string relativePath)
+    {
+        var normalizedBase = baseUri.ToString().TrimEnd('/') + "/";
+        var normalizedPath = relativePath.TrimStart('/');
+        return new Uri(new Uri(normalizedBase, UriKind.Absolute), normalizedPath);
+    }
+
+    private static string ReadHttpJsonBody(HttpResponseMessage response, Uri requestUri)
+    {
+        var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        if (response.IsSuccessStatusCode)
+        {
+            return string.IsNullOrWhiteSpace(body) ? "{}" : body;
+        }
+
+        var details = string.IsNullOrWhiteSpace(body)
+            ? "<empty response>"
+            : body;
+        throw new HttpRequestException(
+            $"Remote plugin host request failed ({(int)response.StatusCode} {response.StatusCode}) at {requestUri}: {details}",
+            null,
+            response.StatusCode);
+    }
+
+    private static string NormalizeRemotePluginsPayload(string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return "[]";
+            }
+
+            var mapped = new List<PluginSummary>();
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var id = ReadJsonString(item, "id");
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    continue;
+                }
+
+                var loaded = ReadJsonBool(item, "loaded");
+                if (loaded is false)
+                {
+                    continue;
+                }
+
+                var thumbnailAspectRatio = ReadJsonDouble(item, "thumbnailAspectRatio");
+                var thumbnailFit = ReadJsonString(item, "thumbnailFit");
+                var thumbnailWidth = ReadJsonInt(item, "thumbnailWidth");
+                var thumbnailHeight = ReadJsonInt(item, "thumbnailHeight");
+
+                if (TryGetJsonProperty(item, "thumbnail", out var thumbnail)
+                    && thumbnail.ValueKind == JsonValueKind.Object)
+                {
+                    thumbnailAspectRatio ??= ReadJsonDouble(thumbnail, "aspectRatio");
+                    thumbnailFit ??= ReadJsonString(thumbnail, "fit");
+                    thumbnailWidth ??= ReadJsonInt(thumbnail, "width");
+                    thumbnailHeight ??= ReadJsonInt(thumbnail, "height");
+                }
+
+                if ((thumbnailAspectRatio is null || thumbnailAspectRatio <= 0)
+                    && thumbnailWidth is { } width
+                    && thumbnailHeight is { } height
+                    && width > 0
+                    && height > 0)
+                {
+                    thumbnailAspectRatio = (double)width / height;
+                }
+
+                mapped.Add(new PluginSummary(
+                    id,
+                    ReadJsonString(item, "title")
+                        ?? ReadJsonString(item, "name")
+                        ?? id,
+                    ReadJsonString(item, "version") ?? string.Empty,
+                    ReadJsonString(item, "buildType") ?? "csharp",
+                    thumbnailAspectRatio,
+                    thumbnailFit,
+                    thumbnailWidth,
+                    thumbnailHeight));
+            }
+
+            return BuildPluginsJson(mapped);
+        }
+        catch
+        {
+            return "[]";
+        }
+    }
+
+    private static string BuildAddPluginRepositoryPayload(
+        string catalogUrl,
+        string? repositoryId,
+        string? name,
+        string? sourceRepositoryUrl)
+    {
+        var sb = new StringBuilder();
+        sb.Append('{');
+        AppendJsonProperty(sb, "catalogUrl", catalogUrl);
+        sb.Append(',');
+        AppendJsonNullableStringProperty(sb, "repositoryId", repositoryId);
+        sb.Append(',');
+        AppendJsonNullableStringProperty(sb, "name", name);
+        sb.Append(',');
+        AppendJsonNullableStringProperty(sb, "sourceRepositoryUrl", sourceRepositoryUrl);
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    private static string BuildInstallFromRepositoryPayload(
+        string repositoryId,
+        string pluginId,
+        string? version,
+        bool refreshCatalog,
+        bool rescanAfterInstall)
+    {
+        var sb = new StringBuilder();
+        sb.Append('{');
+        AppendJsonProperty(sb, "repositoryId", repositoryId);
+        sb.Append(',');
+        AppendJsonProperty(sb, "pluginId", pluginId);
+        sb.Append(',');
+        AppendJsonNullableStringProperty(sb, "version", version);
+        sb.Append(',');
+        AppendJsonBooleanProperty(sb, "refreshCatalog", refreshCatalog);
+        sb.Append(',');
+        AppendJsonBooleanProperty(sb, "rescanAfterInstall", rescanAfterInstall);
+        sb.Append('}');
+        return sb.ToString();
+    }
+
+    private static string? ReadJsonString(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static int? ReadJsonInt(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            if (value.TryGetInt32(out var intValue))
+            {
+                return intValue;
+            }
+
+            if (value.TryGetDouble(out var doubleValue))
+            {
+                return (int)doubleValue;
+            }
+        }
+
+        if (value.ValueKind == JsonValueKind.String
+            && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private static double? ReadJsonDouble(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var numeric))
+        {
+            return numeric;
+        }
+
+        if (value.ValueKind == JsonValueKind.String
+            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private static bool TryGetJsonProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        if (element.TryGetProperty(propertyName, out value))
+        {
+            return true;
+        }
+
+        foreach (var item in element.EnumerateObject())
+        {
+            if (string.Equals(item.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = item.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static bool? ReadJsonBool(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(value.GetString(), out var parsed) => parsed,
+            _ => null
+        };
     }
 
     private static bool ShouldLogVerboseTimingDetails()
@@ -3276,6 +3947,26 @@ public static class NativeExports
         AppendJsonString(sb, name);
         sb.Append(':');
         AppendJsonString(sb, value);
+    }
+
+    private static void AppendJsonNullableStringProperty(StringBuilder sb, string name, string? value)
+    {
+        AppendJsonString(sb, name);
+        sb.Append(':');
+        if (value is null)
+        {
+            sb.Append("null");
+            return;
+        }
+
+        AppendJsonString(sb, value);
+    }
+
+    private static void AppendJsonBooleanProperty(StringBuilder sb, string name, bool value)
+    {
+        AppendJsonString(sb, name);
+        sb.Append(':');
+        sb.Append(value ? "true" : "false");
     }
 
     private static void AppendJsonNumberProperty(StringBuilder sb, string name, long value)

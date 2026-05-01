@@ -1,6 +1,10 @@
+using System.Collections.Generic;
+
 namespace EMMA.Plugin.Common;
 
 public sealed record HandshakeResponse(string version, string message);
+
+public sealed record MetadataItem(string key, string value);
 
 public sealed record SearchItem(
     string id,
@@ -8,7 +12,8 @@ public sealed record SearchItem(
     string title,
     string mediaType,
     string? thumbnailUrl = null,
-    string? description = null);
+    string? description = null,
+    IReadOnlyList<MetadataItem>? metadata = null);
 
 public sealed record CapabilityItem(string name, string[] mediaTypes, string[] operations);
 
@@ -48,6 +53,26 @@ public sealed record NetworkBenchmarkResult(string query, int payloadBytes, int 
 
 public sealed record ChapterOperationItem(string id, int number, string title, string[] uploaderGroups);
 
-public sealed record VideoStreamOperationItem(string id, string label, string playlistUri);
+public sealed record VideoTrackOperationItem(
+    string id,
+    string label,
+    string? language = null,
+    string? codec = null,
+    bool isDefault = false);
+
+public sealed record VideoStreamOperationItem(
+    string id,
+    string label,
+    string playlistUri,
+    IReadOnlyDictionary<string, string>? requestHeaders = null,
+    string? requestCookies = null,
+    string? streamType = null,
+    bool isLive = false,
+    bool drmProtected = false,
+    string? drmScheme = null,
+    IReadOnlyList<VideoTrackOperationItem>? audioTracks = null,
+    IReadOnlyList<VideoTrackOperationItem>? subtitleTracks = null,
+    string? defaultAudioTrackId = null,
+    string? defaultSubtitleTrackId = null);
 
 public sealed record VideoSegmentOperationItem(string contentType, string payload);

@@ -58,7 +58,8 @@ public sealed class PluginBudgetWatcherTests
             signatureOptions,
             verifier,
             NullLogger<PluginProcessManager>.Instance);
-        var watcher = new PluginBudgetWatcher(registry, processManager, options, NullLogger<PluginBudgetWatcher>.Instance);
+        var metrics = new PluginHostMetrics();
+        var watcher = new PluginBudgetWatcher(registry, processManager, options, metrics, NullLogger<PluginBudgetWatcher>.Instance);
 
         await using var run = new BudgetWatchRun(watcher);
         await run.StartAsync();
@@ -118,7 +119,8 @@ public sealed class PluginBudgetWatcherTests
             signatureOptions,
             verifier,
             NullLogger<PluginProcessManager>.Instance);
-        var watcher = new PluginBudgetWatcher(registry, processManager, options, NullLogger<PluginBudgetWatcher>.Instance);
+        var metrics = new PluginHostMetrics();
+        var watcher = new PluginBudgetWatcher(registry, processManager, options, metrics, NullLogger<PluginBudgetWatcher>.Instance);
 
         await using var run = new BudgetWatchRun(watcher);
         await run.StartAsync();

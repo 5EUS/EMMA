@@ -7,40 +7,47 @@
 - Introduce an embedded mode composition root for in-process usage.
 - Preserve AOT trimming and stable API contracts.
 
+## Current Status (2026-04-01)
+
+In progress. Core API hosting is implemented and operational for paged media.
+The remaining work is primarily API maturity (versioning, consistency,
+documentation depth), plus broader video parity.
+
 ## Work items
 
 1) API contracts
-   - Define gRPC service contracts for search, chapters, pages, and video segments.
-   - Add API versioning and compatibility annotations.
-   - Provide DTOs that decouple external contracts from domain models.
-   - Standardize error and status mapping with stable codes.
+   - Done: gRPC contracts for paged APIs are in place and consumed.
+   - Done: shared request context and provider contracts exist.
+   - Open: API versioning and compatibility/deprecation annotations.
+   - Open: stronger cross-surface (gRPC + REST) error/status standardization.
 
 2) Transport and hosting
-   - Create `EMMA.Api` project with gRPC service implementations.
-   - Add optional REST endpoints via minimal API where feasible.
-   - Add request correlation and structured logging per call.
-   - Ensure endpoints are compatible with Native AOT.
+   - Done: `EMMA.Api` and `EMMA.ApiHost` are implemented.
+   - Done: minimal REST endpoints for paged flows are implemented.
+   - Done: request correlation and structured logging are present.
+   - In progress: continue validating AOT compatibility across deployment lanes.
 
 3) Authentication and rate limiting
-   - Implement API key authentication and configurable key store.
-   - Add per-client rate limiting and global concurrency caps.
-   - Propagate client identity into request context for policy checks.
+   - Done: API key auth middleware/interceptor and key validation are implemented.
+   - Done: per-client fixed-window limits and global concurrency limiter are implemented.
+   - In progress: continue policy integration depth and operational tuning.
 
 4) Embedded mode
-   - Add an embedded composition root for local integration.
-   - Expose in-process API adapters for unit tests and local apps.
-   - Ensure the same policy and cache behavior as the hosted API.
+   - Done: embedded runtime composition root is implemented.
+   - Done: in-process pipeline usage is wired through API services.
+   - In progress: keep behavior parity validation between host and embedded paths.
 
 5) Documentation and samples
-   - Provide API usage examples and a simple client snippet.
-   - Document versioning and deprecation policy.
+   - In progress: architecture docs and README are being refreshed.
+   - Open: versioning/deprecation policy doc.
+   - Open: expand client snippets and usage examples.
 
-## Validation plan
+## Validation Status
 
-- Contract tests to verify stable request/response shapes.
-- Authentication tests for allow/deny and rate limit enforcement.
-- AOT publish for the API host with trimming enabled.
-- Embedded mode tests using in-process adapters.
+- Done: API host test coverage includes gRPC paged calls and page-asset proxying.
+- Done: auth and throttling behavior are exercised in API host tests.
+- In progress: additional contract compatibility regression suites.
+- In progress: broader AOT publish validation across all targeted RIDs.
 
 ## Dependencies
 
@@ -54,4 +61,4 @@
 
 ## Status
 
-Not started.
+In progress.
