@@ -128,6 +128,7 @@ public sealed class WasmPluginRuntimeHostTests
             resolver,
             new FakeWasmComponentInvoker(),
             options,
+            new PluginHostMetrics(),
             NullLogger<WasmPluginRuntimeHost>.Instance);
 
         var pluginRoot = Path.Combine(sandboxRoot, "demo");
