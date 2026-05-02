@@ -56,9 +56,40 @@ esac
 
 SOURCE_FILE="$AOT_DIR/$ARTIFACT_NAME"
 if [[ ! -f "$SOURCE_FILE" ]]; then
-  echo "Expected artifact not found: $SOURCE_FILE"
-  echo "Run ./scripts/publish-native-aot.sh $RID first (or pass a custom AOT dir)."
-  exit 1
+  # Accept legacy/default NativeAOT output names and normalize to expected destination name.
+  ALT_SOURCE_FILE=""
+  case "$RID" in
+    win-*)
+      if [[ "$ARTIFACT_NAME" == "emma_native.dll" && -f "$AOT_DIR/EMMA.Native.dll" ]]; then
+        ALT_SOURCE_FILE="$AOT_DIR/EMMA.Native.dll"
+      elif [[ "$ARTIFACT_NAME" == "emma_native.lib" && -f "$AOT_DIR/EMMA.Native.lib" ]]; then
+        ALT_SOURCE_FILE="$AOT_DIR/EMMA.Native.lib"
+      fi
+      ;;
+    linux-*)
+      if [[ "$ARTIFACT_NAME" == "libemma_native.so" && -f "$AOT_DIR/EMMA.Native.so" ]]; then
+        ALT_SOURCE_FILE="$AOT_DIR/EMMA.Native.so"
+      elif [[ "$ARTIFACT_NAME" == "libemma_native.a" && -f "$AOT_DIR/EMMA.Native.a" ]]; then
+        ALT_SOURCE_FILE="$AOT_DIR/EMMA.Native.a"
+      fi
+      ;;
+    osx-*)
+      if [[ "$ARTIFACT_NAME" == "libemma_native.dylib" && -f "$AOT_DIR/EMMA.Native.dylib" ]]; then
+        ALT_SOURCE_FILE="$AOT_DIR/EMMA.Native.dylib"
+      elif [[ "$ARTIFACT_NAME" == "libemma_native.a" && -f "$AOT_DIR/EMMA.Native.a" ]]; then
+        ALT_SOURCE_FILE="$AOT_DIR/EMMA.Native.a"
+      fi
+      ;;
+  esac
+
+  if [[ -n "$ALT_SOURCE_FILE" ]]; then
+    SOURCE_FILE="$ALT_SOURCE_FILE"
+    echo "Info: using alternate artifact name: $SOURCE_FILE"
+  else
+    echo "Expected artifact not found: $SOURCE_FILE"
+    echo "Run ./scripts/publish-native-aot.sh $RID first (or pass a custom AOT dir)."
+    exit 1
+  fi
 fi
 
 declare -a DEST_DIRS=()
