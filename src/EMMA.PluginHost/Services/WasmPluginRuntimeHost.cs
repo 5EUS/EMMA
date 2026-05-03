@@ -261,13 +261,29 @@ public sealed class WasmPluginRuntimeHost(
             return [];
         }
 
-        var mappedResults = searchItems.Select(item => new MediaSummary(
-            MediaId.Create(item.Id),
-            item.Source ?? record.Manifest.Id,
-            item.Title,
-            ParseMediaType(item.MediaType),
-            string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
-            string.IsNullOrWhiteSpace(item.Description) ? null : item.Description))
+        var mappedResults = searchItems.Select(item => 
+        {
+            var metadataDict = item.Metadata is { Count: > 0 }
+                ? item.Metadata.ToDictionary(metadata => metadata.key, metadata => metadata.value, StringComparer.OrdinalIgnoreCase)
+                : null;
+            
+            if (metadataDict is null)
+            {
+                _logger.LogWarning(
+                    "WASM search item has no metadata: id={Id}, source={Source}",
+                    item.Id,
+                    item.Source);
+            }
+            
+            return new MediaSummary(
+                MediaId.Create(item.Id),
+                item.Source ?? record.Manifest.Id,
+                item.Title,
+                ParseMediaType(item.MediaType),
+                string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+                string.IsNullOrWhiteSpace(item.Description) ? null : item.Description,
+                metadataDict);
+        })
             .ToArray();
 
         _searchCache[searchCacheKey] = new SearchCacheEntry(mappedResults, DateTimeOffset.UtcNow);

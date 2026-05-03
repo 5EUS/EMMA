@@ -2587,6 +2587,33 @@ public static class NativeExports
                 sb.Append(',');
                 AppendJsonProperty(sb, "description", item.Description!);
             }
+            if (item.Metadata is { Count: > 0 })
+            {
+                sb.Append(',');
+                sb.Append('"');
+                sb.Append("metadata");
+                sb.Append('"');
+                sb.Append(':');
+                sb.Append('[');
+
+                var metadataIndex = 0;
+                foreach (var metadata in item.Metadata)
+                {
+                    if (metadataIndex > 0)
+                    {
+                        sb.Append(',');
+                    }
+
+                    sb.Append('{');
+                    AppendJsonProperty(sb, "key", metadata.Key);
+                    sb.Append(',');
+                    AppendJsonProperty(sb, "value", metadata.Value);
+                    sb.Append('}');
+                    metadataIndex++;
+                }
+
+                sb.Append(']');
+            }
             sb.Append('}');
         }
 

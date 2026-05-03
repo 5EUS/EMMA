@@ -812,9 +812,10 @@ public static class PluginHostExports
             string json;
             if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
             {
-                json = _wasmRuntime.SearchJsonAsync(record, normalizedQuery, CancellationToken.None)
+                var results = _wasmRuntime.SearchAsync(record, normalizedQuery, CancellationToken.None)
                     .GetAwaiter()
                     .GetResult();
+                json = JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
             }
             else
             {

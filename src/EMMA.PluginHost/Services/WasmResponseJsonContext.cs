@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EMMA.Plugin.Common;
 
 namespace EMMA.PluginHost.Services;
 
@@ -15,6 +16,9 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
+[JsonSerializable(typeof(MetadataItem))]
+[JsonSerializable(typeof(IReadOnlyList<MetadataItem>))]
+[JsonSerializable(typeof(List<MetadataItem>))]
 [JsonSerializable(typeof(WasmSearchItem))]
 [JsonSerializable(typeof(IReadOnlyList<WasmSearchItem>))]
 [JsonSerializable(typeof(List<WasmSearchItem>))]
@@ -54,7 +58,14 @@ public partial class WasmResponseJsonContext : JsonSerializerContext
 /// <summary>
 /// Search result item returned from WASM component.
 /// </summary>
-public sealed record WasmSearchItem(string Id, string? Source, string Title, string? MediaType, string? ThumbnailUrl = null, string? Description = null);
+public sealed record WasmSearchItem(
+    string Id,
+    string? Source,
+    string Title,
+    string? MediaType,
+    string? ThumbnailUrl = null,
+    string? Description = null,
+    [property: JsonPropertyName("metadata")] IReadOnlyList<MetadataItem>? Metadata = null);
 
 /// <summary>
 /// Health/handshake response from WASM component.
