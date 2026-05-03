@@ -3915,13 +3915,48 @@ public static class PluginHostExports
                     continue;
                 }
 
+                var metadataDict = new Dictionary<string, string>();
+                
+                // Parse the metadata attributes JSON
+                if (!string.IsNullOrWhiteSpace(metadata.Attributes))
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(metadata.Attributes);
+                        var root = doc.RootElement;
+                        if (root.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        {
+                            // Extract all metadata fields
+                            foreach (var prop in root.EnumerateObject())
+                            {
+                                var value = prop.Value.ValueKind switch
+                                {
+                                    JsonValueKind.String => prop.Value.GetString(),
+                                    JsonValueKind.Array => 
+                                        string.Join(", ", prop.Value.EnumerateArray().Select(v => v.GetString())),
+                                    _ => prop.Value.ToString(),
+                                };
+                                if (!string.IsNullOrEmpty(value))
+                                {
+                                    metadataDict[prop.Name] = value;
+                                }
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        // Not valid JSON, skip
+                    }
+                }
+
                 results.Add(new MediaSummary(
                     metadata.Id,
                     metadata.SourceId,
                     metadata.Title,
                     metadata.MediaType,
                     metadata.ThumbnailUrl,
-                    metadata.Synopsis));
+                    metadata.Synopsis,
+                    metadataDict.Count > 0 ? metadataDict : null));
             }
 
             return JsonSerializer.Serialize(results, PluginHostExportsJsonContext.Default.IReadOnlyListMediaSummary);
@@ -4279,7 +4314,51 @@ public static class PluginHostExports
             var now = DateTimeOffset.UtcNow;
             var normalizedUserId = ToLibraryStorageKey(userId);
 
+            // Parse combined JSON to extract description and metadata
+            string? extractedDescription = null;
+            var metadataJson = new Dictionary<string, object?>();
+
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                try
+                {
+                    using var doc = System.Text.Json.JsonDocument.Parse(description);
+                    var root = doc.RootElement;
+                    if (root.ValueKind == System.Text.Json.JsonValueKind.Object)
+                    {
+                        // Copy all fields to metadata, but extract description separately
+                        foreach (var prop in root.EnumerateObject())
+                        {
+                            if (prop.Name.Equals("description", StringComparison.OrdinalIgnoreCase))
+                            {
+                                extractedDescription = prop.Value.GetString();
+                            }
+                            else
+                            {
+                                metadataJson[prop.Name] = prop.Value.ValueKind switch
+                                {
+                                    System.Text.Json.JsonValueKind.String => prop.Value.GetString(),
+                                    System.Text.Json.JsonValueKind.Array => 
+                                        prop.Value.EnumerateArray().Select(v => v.GetString()).ToList(),
+                                    _ => prop.Value.ToString(),
+                                };
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // If JSON parsing fails, treat as plain description
+                    extractedDescription = description;
+                }
+            }
+
             var mediaCatalog = _serviceProvider!.GetRequiredService<IMediaCatalogPort>();
+            // Store metadata as JSON in the Attributes field
+            var attributesJsonString = metadataJson.Count > 0
+                ? SerializeMetadataAttributes(metadataJson)
+                : null;
+            
             mediaCatalog.UpsertMediaAsync(
                 new MediaMetadata(
                     MediaId.Create(mediaId),
@@ -4287,12 +4366,13 @@ public static class PluginHostExports
                     title ?? string.Empty,
                     parsedMediaType,
                     null,
-                    string.IsNullOrWhiteSpace(description) ? null : description,
+                    extractedDescription,
                     string.IsNullOrWhiteSpace(thumbnailUrl) ? null : thumbnailUrl,
                     null,
                     [],
                     now,
-                    now),
+                    now,
+                    attributesJsonString),
                 CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
@@ -5326,6 +5406,119 @@ public static class PluginHostExports
         }
 
         SQLitePCL.Batteries_V2.Init();
+    }
+
+    private static string SerializeMetadataAttributes(Dictionary<string, object?> metadata)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            foreach (var entry in metadata)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Key))
+                {
+                    continue;
+                }
+
+                WriteJsonValue(writer, entry.Key, entry.Value);
+            }
+
+            writer.WriteEndObject();
+        }
+
+        return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void WriteJsonValue(Utf8JsonWriter writer, string propertyName, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                writer.WriteNull(propertyName);
+                return;
+            case string text:
+                writer.WriteString(propertyName, text);
+                return;
+            case bool boolean:
+                writer.WriteBoolean(propertyName, boolean);
+                return;
+            case int int32:
+                writer.WriteNumber(propertyName, int32);
+                return;
+            case long int64:
+                writer.WriteNumber(propertyName, int64);
+                return;
+            case double floatingPoint:
+                writer.WriteNumber(propertyName, floatingPoint);
+                return;
+            case decimal decimalValue:
+                writer.WriteNumber(propertyName, decimalValue);
+                return;
+            case IReadOnlyList<string> stringList:
+                writer.WritePropertyName(propertyName);
+                writer.WriteStartArray();
+                foreach (var item in stringList)
+                {
+                    writer.WriteStringValue(item);
+                }
+                writer.WriteEndArray();
+                return;
+            case IEnumerable<string> enumerableStrings:
+                writer.WritePropertyName(propertyName);
+                writer.WriteStartArray();
+                foreach (var item in enumerableStrings)
+                {
+                    writer.WriteStringValue(item);
+                }
+                writer.WriteEndArray();
+                return;
+            case Dictionary<string, object?> dictionary:
+                writer.WritePropertyName(propertyName);
+                writer.WriteStartObject();
+                foreach (var nestedEntry in dictionary)
+                {
+                    if (string.IsNullOrWhiteSpace(nestedEntry.Key))
+                    {
+                        continue;
+                    }
+
+                    WriteJsonValue(writer, nestedEntry.Key, nestedEntry.Value);
+                }
+                writer.WriteEndObject();
+                return;
+            case IDictionary<string, object?> mutableDictionary:
+                writer.WritePropertyName(propertyName);
+                writer.WriteStartObject();
+                foreach (var nestedEntry in mutableDictionary)
+                {
+                    if (string.IsNullOrWhiteSpace(nestedEntry.Key))
+                    {
+                        continue;
+                    }
+
+                    WriteJsonValue(writer, nestedEntry.Key, nestedEntry.Value);
+                }
+                writer.WriteEndObject();
+                return;
+            case IReadOnlyDictionary<string, object?> nestedDictionary:
+                writer.WritePropertyName(propertyName);
+                writer.WriteStartObject();
+                foreach (var nestedEntry in nestedDictionary)
+                {
+                    if (string.IsNullOrWhiteSpace(nestedEntry.Key))
+                    {
+                        continue;
+                    }
+
+                    WriteJsonValue(writer, nestedEntry.Key, nestedEntry.Value);
+                }
+                writer.WriteEndObject();
+                return;
+            default:
+                writer.WriteString(propertyName, value.ToString());
+                return;
+        }
     }
 
     private static string? PtrToString(IntPtr ptr)
