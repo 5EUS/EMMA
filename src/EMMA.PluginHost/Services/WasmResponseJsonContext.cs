@@ -42,6 +42,7 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(IReadOnlyList<WasmCapabilityItem>))]
 [JsonSerializable(typeof(List<WasmCapabilityItem>))]
 [JsonSerializable(typeof(WasmQueryArgs))]
+[JsonSerializable(typeof(WasmEnrichMediaArgs))]
 [JsonSerializable(typeof(WasmSearchFilterArg))]
 [JsonSerializable(typeof(WasmSearchQueryAdditionArg))]
 [JsonSerializable(typeof(IReadOnlyList<WasmSearchFilterArg>))]
@@ -144,6 +145,13 @@ public sealed record WasmSearchQueryAdditionArg(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("value")] string Value,
     [property: JsonPropertyName("type")] string? Type = null);
+
+/// <summary>
+/// Arguments for on-demand search metadata enrichment.
+/// </summary>
+public sealed record WasmEnrichMediaArgs(
+    [property: JsonPropertyName("itemIds")] IReadOnlyList<string> ItemIds,
+    [property: JsonPropertyName("baseItems")] IReadOnlyList<WasmSearchItem>? BaseItems = null);
 
 /// <summary>
 /// Benchmark args for invoke operations.

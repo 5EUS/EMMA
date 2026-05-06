@@ -1162,6 +1162,62 @@ public static class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_enrich_media_json")]
+    public static IntPtr RuntimeEnrichMediaJson(int handle, IntPtr mediaJsonUtf8)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string pluginIdForLog = "<none>";
+        var responseBytesForLog = 0;
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var mediaJson = PtrToString(mediaJsonUtf8) ?? string.Empty;
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var enrichedJson = PluginHostExports.EnrichMediaJsonManaged(activePluginId, mediaJson);
+            if (enrichedJson is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host enrichment returned null.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            responseBytesForLog = Encoding.UTF8.GetByteCount(enrichedJson);
+            success = true;
+            return AllocUtf8(enrichedJson);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "enrich-media",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, responseBytes={responseBytesForLog}, success={success}",
+                forceInfo: true);
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_chapters_json")]
     public static IntPtr RuntimeGetChaptersJson(int handle, IntPtr mediaIdUtf8)
     {

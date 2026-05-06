@@ -28,6 +28,16 @@ namespace EMMA.PluginHost.Library;
 /// </summary>
 public static class PluginHostExports
 {
+    public sealed record EnrichedMediaSummaryResponse(
+        string Id,
+        string SourceId,
+        string Source,
+        string Title,
+        string MediaType,
+        string? ThumbnailUrl,
+        string? Description,
+        IReadOnlyDictionary<string, string>? Metadata);
+
     private readonly record struct HlsSegmentSpec(Uri Uri, long? RangeOffset, long? RangeLength, double DurationSeconds);
 
     private const string DefaultProgressUserId = "local";
@@ -903,6 +913,95 @@ public static class PluginHostExports
             return _wasmRuntime.BenchmarkAsync(snapshotRecord, normalizedIterations, CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Enrich a selected media item with extra metadata for the active plugin.
+    /// For WASM plugins this calls the on-demand enrichment path; for other plugins
+    /// it returns the original media summary unchanged.
+    /// </summary>
+    public static string? EnrichMediaJsonManaged(string pluginId, string mediaJson, string? correlationId = null)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (!TryResolvePlugin(pluginId, out var record, out var address))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(mediaJson))
+            {
+                SetLastError("Media payload is required.");
+                return null;
+            }
+
+            using var doc = JsonDocument.Parse(mediaJson);
+            var root = doc.RootElement;
+            var mediaId = ReadJsonString(root, "id") ?? ReadJsonString(root, "mediaId");
+            if (string.IsNullOrWhiteSpace(mediaId))
+            {
+                SetLastError("Invalid media payload: id is required.");
+                return null;
+            }
+
+            var sourceId = ReadJsonString(root, "sourceId") ?? ReadJsonString(root, "source") ?? string.Empty;
+            var title = ReadJsonString(root, "title") ?? string.Empty;
+            var mediaType = ReadJsonString(root, "mediaType") ?? string.Empty;
+            var thumbnailUrl = ReadJsonString(root, "thumbnailUrl") ?? ReadJsonString(root, "thumbnail_url");
+            var description = ReadJsonString(root, "description");
+            var metadata = ReadJsonObjectAsDictionary(root, "metadata") ?? ReadJsonObjectAsDictionary(root, "attributes");
+
+            var media = new MediaSummary(
+                MediaId.Create(mediaId),
+                sourceId,
+                title,
+                ParseMediaType(mediaType),
+                thumbnailUrl,
+                description,
+                metadata);
+
+            if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+            {
+                var enriched = _wasmRuntime
+                    .EnrichSearchMetadataAsync(record, [media.Id.Value], [media], CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+
+                var selected = enriched.FirstOrDefault() ?? media;
+                return JsonSerializer.Serialize(
+                    new EnrichedMediaSummaryResponse(
+                        selected.Id.Value,
+                        selected.SourceId,
+                        selected.SourceId,
+                        selected.Title,
+                        selected.MediaType.ToString().ToLowerInvariant(),
+                        selected.ThumbnailUrl,
+                        selected.Description,
+                        selected.Metadata),
+                    PluginHostExportsJsonContext.Default.EnrichedMediaSummaryResponse);
+            }
+
+            return JsonSerializer.Serialize(
+                new EnrichedMediaSummaryResponse(
+                    media.Id.Value,
+                    media.SourceId,
+                    media.SourceId,
+                    media.Title,
+                    media.MediaType.ToString().ToLowerInvariant(),
+                    media.ThumbnailUrl,
+                    media.Description,
+                    media.Metadata),
+                PluginHostExportsJsonContext.Default.EnrichedMediaSummaryResponse);
         }
         catch (Exception ex)
         {
@@ -5519,6 +5618,54 @@ public static class PluginHostExports
                 writer.WriteString(propertyName, value.ToString());
                 return;
         }
+    }
+
+    private static string? ReadJsonString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString(),
+            JsonValueKind.Number => property.ToString(),
+            JsonValueKind.True => bool.TrueString,
+            JsonValueKind.False => bool.FalseString,
+            _ => null,
+        };
+    }
+
+    private static Dictionary<string, string>? ReadJsonObjectAsDictionary(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property)
+            || property.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var dictionary = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in property.EnumerateObject())
+        {
+            var key = entry.Name.Trim();
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                continue;
+            }
+
+            dictionary[key] = entry.Value.ValueKind switch
+            {
+                JsonValueKind.String => entry.Value.GetString() ?? string.Empty,
+                JsonValueKind.Number => entry.Value.ToString(),
+                JsonValueKind.True => bool.TrueString,
+                JsonValueKind.False => bool.FalseString,
+                JsonValueKind.Null => string.Empty,
+                _ => entry.Value.ToString(),
+            };
+        }
+
+        return dictionary.Count == 0 ? null : dictionary;
     }
 
     private static string? PtrToString(IntPtr ptr)

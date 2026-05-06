@@ -24,6 +24,7 @@ public interface IWasmPluginRuntimeHost
     Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken);
     Task<MediaPage> GetPageAsync(PluginRecord record, MediaId mediaId, string chapterId, int pageIndex, CancellationToken cancellationToken);
     Task<MediaPagesResult> GetPagesAsync(PluginRecord record, MediaId mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken);
+    Task<IReadOnlyList<MediaSummary>> EnrichSearchMetadataAsync(PluginRecord record, IEnumerable<string> mediaIds, IReadOnlyList<MediaSummary>? baseItems = null, CancellationToken cancellationToken = default);
 }
 
 public interface IWasmComponentInvoker
@@ -54,6 +55,7 @@ public sealed class WasmPluginRuntimeHost(
     private const string PageOperation = "page";
     private const string PagesOperation = "pages";
     private const string InvokeOperation = "invoke";
+    private const string EnrichSearchMetadataOperation = "enrich-search-metadata";
     private const string BenchmarkNetworkOperation = "benchmark-network";
     private const string PagedMediaType = "paged";
     private const string VideoMediaType = "video";
@@ -439,6 +441,96 @@ public sealed class WasmPluginRuntimeHost(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray()
                 ?? []))];
+    }
+
+    public async Task<IReadOnlyList<MediaSummary>> EnrichSearchMetadataAsync(
+        PluginRecord record,
+        IEnumerable<string> mediaIds,
+        IReadOnlyList<MediaSummary>? baseItems = null,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = mediaIds?.ToList() ?? [];
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var componentPath = ResolveComponentPath(record.Manifest);
+        var baseWasmItems = baseItems is { Count: > 0 }
+            ? baseItems.Select(ToWasmSearchItem).ToList()
+            : null;
+        var argsJson = SerializeJson(new WasmEnrichMediaArgs(ids, baseWasmItems));
+
+        var enrichStopwatch = Stopwatch.StartNew();
+        var operationResult = await RunInvokeOperationWithResultAsync(
+            componentPath,
+            operation: EnrichSearchMetadataOperation,
+            mediaId: null,
+            mediaType: null,
+            argsJson: argsJson,
+            permittedDomains: record.Manifest.Permissions?.Domains,
+            cancellationToken: cancellationToken);
+        enrichStopwatch.Stop();
+
+        var enrichedItems = DeserializeJson<IReadOnlyList<WasmSearchItem>>(
+            operationResult.PayloadJson ?? string.Empty);
+
+        if (enrichedItems is null || enrichedItems.Count == 0)
+        {
+            return baseItems ?? [];
+        }
+
+        _logger.LogDebug(
+            "WASM enrichment completed for {PluginId}: {ItemCount} items enriched in {ElapsedMs}ms",
+            record.Manifest.Id,
+            enrichedItems.Count,
+            enrichStopwatch.ElapsedMilliseconds);
+
+        var mappedResults = enrichedItems.Select(item =>
+        {
+            var metadataDict = item.Metadata is { Count: > 0 }
+                ? item.Metadata.ToDictionary(metadata => metadata.key, metadata => metadata.value, StringComparer.OrdinalIgnoreCase)
+                : null;
+
+            return new MediaSummary(
+                MediaId.Create(item.Id),
+                item.Source ?? record.Manifest.Id,
+                item.Title,
+                ParseMediaType(item.MediaType),
+                string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+                string.IsNullOrWhiteSpace(item.Description) ? null : item.Description,
+                metadataDict);
+        })
+            .ToArray();
+
+        return mappedResults;
+    }
+
+    private static string ParseMediaTypeForWasm(MediaType mediaType)
+    {
+        return mediaType switch
+        {
+            MediaType.Video => "video",
+            MediaType.Audio => "audio",
+            MediaType.Paged => "paged",
+            _ => "paged"
+        };
+    }
+
+    private static WasmSearchItem ToWasmSearchItem(MediaSummary item)
+    {
+        var metadata = item.Metadata is { Count: > 0 }
+            ? item.Metadata.Select(kvp => new MetadataItem(kvp.Key, kvp.Value)).ToList()
+            : null;
+
+        return new WasmSearchItem(
+            item.Id.Value,
+            item.SourceId,
+            item.Title,
+            ParseMediaTypeForWasm(item.MediaType),
+            item.ThumbnailUrl,
+            item.Description,
+            metadata);
     }
 
     public async Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(
