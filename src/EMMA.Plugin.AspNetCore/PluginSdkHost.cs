@@ -284,7 +284,11 @@ public static class PluginSdkHost
 
         var app = PluginAspNetHost.Create(args, hostOptions, services =>
         {
-            services.AddGrpc(grpc => grpc.Interceptors.Add<PluginRpcSecurityInterceptor>());
+            services.AddGrpc(grpc =>
+            {
+                grpc.Interceptors.Add<PluginRpcSecurityInterceptor>();
+                grpc.EnableDetailedErrors = PluginEnvironment.IsDevelopmentMode();
+            });
             services.AddOptions<PluginSdkSecurityOptions>();
             services.TryAddSingleton<IPluginSdkMetrics>(_ =>
             {
