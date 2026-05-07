@@ -312,5 +312,10 @@ public sealed class PluginHandshakeTests
         {
             throw new NotSupportedException();
         }
+
+        public Task<IReadOnlyList<EMMA.Domain.MediaSummary>> EnrichSearchMetadataAsync(PluginRecord record, IEnumerable<string> mediaIds, IReadOnlyList<EMMA.Domain.MediaSummary>? results, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyList<EMMA.Domain.MediaSummary>>(results ?? []);
+        }
     }
 }

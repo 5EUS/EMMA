@@ -121,3 +121,135 @@ Security and resilience notes:
 - Responses are normalized and validated by the host before entering core
   runtime.
 - Circuit breaker per plugin prevents cascade failures.
+
+## 6) Plugin SDK Helpers (EMMA.Plugin.Common)
+
+The SDK provides a set of reusable, production-ready helpers in the `EMMA.Plugin.Common`
+package. These helpers encapsulate patterns used consistently across all plugin transports
+(ASP.NET, WASM, future protocols) and reduce boilerplate while ensuring best practices.
+
+### Payload Resolution Contract
+
+**`PluginPayloadResolvers`** implements a consistent precedence for operation payloads:
+
+1. **Provided payload** (from host request)
+   - Highest priority; contains request-specific data.
+2. **Fetched or hint payload** (computed locally or from factory)
+   - Used when no provided payload is available.
+3. **Host bridge payload** (fallback to host provider)
+   - Used when local resolution fails.
+4. **Empty/null** (if all sources exhausted)
+   - Safe default for optional payloads.
+
+```csharp
+// Simple fetch pattern (for payload computation)
+var payload = ResolveProvidedOrFetched(
+    provided: requestPayload,
+    fetch: () => ComputePayloadLocally()
+);
+
+// Host bridge pattern (with deferred hint factory)
+var payload = ResolveProvidedOrHostPayload(
+    provided: requestPayload,
+    operation: currentOperation,
+    hintFactory: (op) => DeriveHintFromOperation(op),
+    payloadProvider: (op) => HostBridge.GetPayload(op)
+);
+```
+
+**See tests:** `PluginPayloadResolversTests.cs` documents the precedence contract with
+comprehensive test cases.
+
+### Search URL Resolution Pattern
+
+**`PluginSearchUrlResolver`** centralizes search URL construction across transports:
+
+```csharp
+var searchUrl = PluginSearchUrlResolver.ResolveSearchAbsoluteUrl(
+    parsedQuery: new PluginSearchQuery { SearchText = "manga" },
+    queryResolver: (text) => MyProvider.ResolveSearchQuery(text),
+    urlBuilder: (baseUrl, queryStr) => $"{baseUrl}/search?{queryStr}",
+    payloadProvider: (op) => HostBridge.GetPayload(op),
+    operation: currentOperation
+);
+```
+
+This pattern keeps provider-specific search logic isolated and testable.
+
+**See tests:** `PluginSearchUrlResolverTests.cs` verifies URL resolution contracts.
+
+### Pagination Merge Pattern
+
+**`PluginWasmPagingJsonHelpers`** provides utilities for handling large feeds:
+
+- `MergeChapterFeedPages()`: Combines paginated results into a single response
+- `SerializePageForCli()`: Formats single page for WASM output
+- `SerializePagesForCli()`: Formats multiple pages for WASM output
+- `MapChapterOperationItems()`: Normalizes raw chapter data to contract types
+
+Used by both WASM and ASP.NET transports to handle media feeds that exceed
+single-request limits.
+
+### Operation Dispatch Pattern
+
+**`PluginOperationDispatcher`** provides type-safe routing and error handling:
+
+```csharp
+var dispatcher = new PluginOperationDispatcher();
+
+// Register operation handlers
+dispatcher.Register<SearchRequest, SearchResponse>(
+    operationId: "search",
+    handler: (request, op) => HandleSearch(request, op)
+);
+
+// Dispatch with automatic error handling
+var response = dispatcher.Dispatch<SearchResponse>(
+    operationId: "search",
+    operation: currentOp,
+    request: searchRequest
+);
+```
+
+Ensures consistent error formatting, logging, and payload resolution across all operations.
+
+**See tests:** `PluginOperationDispatcherTests.cs` verifies dispatch contracts.
+
+### Type-Safe WASM Invoke Pattern
+
+**`PluginInvokeHelper`** provides generic, type-safe dispatch for WIT component exports:
+
+```csharp
+// Dispatch table (in Program.cs)
+private static readonly IReadOnlyDictionary<string, Delegate> WasmDispatch 
+    = new Dictionary<string, Delegate>(StringComparer.Ordinal)
+{
+    [PluginOperationNames.Search] = 
+        (Func<string, string, SearchItem[]>)(
+            (query, payload) => OperationHost.Search(query, payload)
+        ),
+    // ... other operations
+};
+
+// Type-safe invoke with automatic argument marshaling
+public static SearchItem[] search(string query, string payload) 
+    => PluginInvokeHelper.Invoke2<string, string, SearchItem[]>(
+        WasmDispatch, 
+        PluginOperationNames.Search, 
+        query, 
+        payload
+    );
+```
+
+Eliminates manual type casting and reduces error-prone reflection code.
+
+### When to Use These Helpers
+
+- **Always use `PluginPayloadResolvers`** for operation payloads
+- **Always use `PluginOperationDispatcher`** for operation routing
+- **Always use `PluginSearchUrlResolver`** for search URL construction
+- **Always use `PluginWasmPagingJsonHelpers`** for large feeds
+- **Always use `PluginInvokeHelper`** for WASM WIT exports
+
+These are production-ready, tested, and maintained by the EMMA team. Do not reimplement
+these patterns; doing so increases maintenance burden and fragmentation across plugins.

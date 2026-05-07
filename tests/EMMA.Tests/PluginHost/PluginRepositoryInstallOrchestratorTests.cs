@@ -709,5 +709,10 @@ public sealed class PluginRepositoryInstallOrchestratorTests
         {
             throw new NotSupportedException();
         }
+
+        public Task<IReadOnlyList<MediaSummary>> EnrichSearchMetadataAsync(PluginRecord record, IEnumerable<string> mediaIds, IReadOnlyList<MediaSummary>? results, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyList<MediaSummary>>(results ?? []);
+        }
     }
 }

@@ -30,4 +30,24 @@ public static class PluginPayloadResolvers
 
         return payloadProvider(operation, payloadHint) ?? string.Empty;
     }
+
+    public static string ResolveProvidedOrHostPayload(
+        string? payloadJson,
+        string operation,
+        Func<string?> payloadHintFactory,
+        Func<string, string?, string?> payloadProvider)
+    {
+        if (!string.IsNullOrWhiteSpace(payloadJson))
+        {
+            return payloadJson;
+        }
+
+        var payloadHint = payloadHintFactory();
+        if (string.IsNullOrWhiteSpace(payloadHint))
+        {
+            return string.Empty;
+        }
+
+        return payloadProvider(operation, payloadHint) ?? string.Empty;
+    }
 }
