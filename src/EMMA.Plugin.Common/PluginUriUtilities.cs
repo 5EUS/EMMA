@@ -27,13 +27,14 @@ public static class PluginUriUtilities
 
     public static string BuildAbsoluteUrl(Uri baseUri, string relativePath, IReadOnlyList<string> queryParameters)
     {
+        var trimmedBase = baseUri.ToString().TrimEnd('/');
         var path = relativePath.StartsWith('/') ? relativePath : $"/{relativePath}";
         if (queryParameters.Count == 0)
         {
-            return $"{baseUri}{path}";
+            return $"{trimmedBase}{path}";
         }
 
-        return $"{baseUri}{path}?{string.Join("&", queryParameters)}";
+        return $"{trimmedBase}{path}?{string.Join("&", queryParameters)}";
     }
 
     public static string EncodePathSegment(string value)

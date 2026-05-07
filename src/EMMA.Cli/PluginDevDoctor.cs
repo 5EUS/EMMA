@@ -76,7 +76,7 @@ public sealed class PluginDevDoctor
             {
                 diagnostics.Add(new PluginDevDiagnostic(
                     $"doctor.artifacts.{target.ToString().ToLowerInvariant()}.missing",
-                    $"Target '{target}' is inferred but no current artifacts were found. A build step is likely required before direct execution phases are added."));
+                    $"Target '{target}' is inferred but no current artifacts were found. A build step is likely required before local execution can run."));
             }
         }
 
@@ -95,7 +95,25 @@ public sealed class PluginDevDoctor
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.profile.host_bridge_target_metadata",
-                $"Profile '{activeProfile.Name}' is currently using host-bridge execution. The inferred runtime target '{activeProfile.RuntimeTarget}' is metadata for upcoming direct-run phases."));
+                $"Profile '{activeProfile.Name}' is currently using host-bridge execution. The inferred runtime target '{activeProfile.RuntimeTarget}' is metadata for an externally managed host or fallback workflow."));
+        }
+
+        if (activeProfile.ExecutionMode == PluginExecutionMode.Direct
+            && activeProfile.RuntimeTarget is PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows)
+        {
+            if (!IsRunnableOnCurrentHost(activeProfile.RuntimeTarget))
+            {
+                diagnostics.Add(new PluginDevDiagnostic(
+                    "doctor.profile.native_platform_fallback_required",
+                    $"Profile '{activeProfile.Name}' targets {activeProfile.RuntimeTarget}, but the current host OS cannot run that native artifact directly. Use 'host-bridge' or validate the package on a matching machine.",
+                    true));
+            }
+            else
+            {
+                diagnostics.Add(new PluginDevDiagnostic(
+                    "doctor.profile.native_local_ready",
+                    $"Profile '{activeProfile.Name}' can use local native process execution on this host OS when a published artifact is available."));
+            }
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
@@ -107,5 +125,15 @@ public sealed class PluginDevDoctor
         }
 
         return diagnostics;
+    }
+
+    private static bool IsRunnableOnCurrentHost(PluginRuntimeTarget target)
+    {
+        return target switch
+        {
+            PluginRuntimeTarget.Linux => RuntimeInformation.IsOSPlatform(OSPlatform.Linux),
+            PluginRuntimeTarget.Windows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
+            _ => true
+        };
     }
 }

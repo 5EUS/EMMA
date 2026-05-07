@@ -102,13 +102,61 @@ public sealed class PluginDevSessionFactory
                 runtime,
                 api);
 
-            var componentPath = buildService.ResolveWasmArtifactPath(tempSession)
-                ?? throw new InvalidOperationException("Direct WASM profile could not resolve a built .wasm component artifact.");
             var runtimeLibraryPath = PluginDevRuntimeLibraryResolver.Resolve(discovery.RootDirectory);
-            return new WasmCliRuntimeAdapter(discovery.RootDirectory, componentPath, runtimeLibraryPath, discovery.PermittedDomains);
+            return new DeferredWasmRuntimeAdapter(
+                discovery.RootDirectory,
+                runtimeLibraryPath,
+                discovery.PermittedDomains,
+                () => buildService.ResolveWasmArtifactPath(tempSession));
+        }
+
+        if (profile.ExecutionMode == PluginExecutionMode.Direct
+            && profile.RuntimeTarget is PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows)
+        {
+            if (!IsNativeTargetRunnable(profile.RuntimeTarget))
+            {
+                return new UnsupportedRuntimeAdapter(
+                    $"native-{profile.RuntimeTarget.ToString().ToLowerInvariant()}-unavailable",
+                    $"Profile '{profile.Name}' targets {profile.RuntimeTarget}, but local direct execution is not supported on this host OS. Use 'host-bridge' or validate the packaged artifact on a matching machine.");
+            }
+
+            var buildService = new PluginDevBuildService();
+            var tempSession = new PluginDevSession(
+                discovery.RootDirectory,
+                discovery,
+                availableProfiles,
+                profile,
+                runtimeAdapter: null!,
+                buildService,
+                scenarioRunner: null!,
+                runtime,
+                api);
+
+            var entryPointPath = buildService.ResolveNativeEntrypointPath(tempSession);
+            if (string.IsNullOrWhiteSpace(entryPointPath))
+            {
+                return new UnsupportedRuntimeAdapter(
+                    $"native-{profile.RuntimeTarget.ToString().ToLowerInvariant()}-missing-artifact",
+                    $"Profile '{profile.Name}' could not resolve a published native entrypoint. Run 'build' for the active profile first.");
+            }
+
+            return new NativeProcessRuntimeAdapter(
+                entryPointPath,
+                new Uri(profile.HostUrl, UriKind.Absolute),
+                profile.RuntimeTarget);
         }
 
         return new HostBridgeRuntimeAdapter(runtime, api);
+    }
+
+    private static bool IsNativeTargetRunnable(PluginRuntimeTarget target)
+    {
+        return target switch
+        {
+            PluginRuntimeTarget.Linux => OperatingSystem.IsLinux(),
+            PluginRuntimeTarget.Windows => OperatingSystem.IsWindows(),
+            _ => true
+        };
     }
 
     private static PluginDevProfile ResolveProfile(
@@ -181,7 +229,7 @@ public sealed class PluginDevSessionFactory
                 ResolvePluginId(null, discovery),
                 ResolveHostUrl(null),
                 target,
-                target == PluginRuntimeTarget.Wasm ? PluginExecutionMode.Direct : PluginExecutionMode.HostBridge,
+                target is PluginRuntimeTarget.Wasm or PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows ? PluginExecutionMode.Direct : PluginExecutionMode.HostBridge,
                 Array.Empty<string>(),
                 configPath,
                 artifactPath,

@@ -32,10 +32,12 @@ Environment:
 	profile using the current environment variables.
 - When a nearby plugin project is found, the CLI infers `wasm-dev`,
 	`linux-dev`, and `windows-dev` profiles where the project metadata supports
-	them, even before direct runtime adapters are implemented.
-- `wasm-dev` now uses a direct runtime adapter that shells into the plugin's
-	existing `PluginTransport=Wasm` CLI surface instead of going through the host
-	bridge.
+	them.
+- `wasm-dev` now uses a direct native runtime adapter against the built WASM
+	component artifact.
+- `linux-dev` and `windows-dev` now use a local native-process adapter when the
+	current host OS can run the selected target. On unsupported hosts, `doctor`
+	explains the fallback path.
 - `session` prints the resolved session state, profile, diagnostics, and host
 	configuration.
 - `doctor` prints discovery results, inferred profiles, artifact candidates,
@@ -45,8 +47,19 @@ Environment:
 
 - `build` runs a normalized `dotnet publish` plan for the active `wasm-dev`
 	profile.
+- `build` also runs normalized native publish plans for `linux-dev` and
+	`windows-dev`.
 - `pack` creates a simple WASM plugin package zip from the discovered manifest
 	and resolved `.wasm` artifact.
 - `reload` reports the reload semantics for the active runtime adapter.
 - `scenario paged-smoke [query]` runs a built-in search -> chapters -> page
 	smoke flow against the active runtime.
+
+## Native development commands
+
+- `linux-dev` and `windows-dev` reuse the same command surface as `wasm-dev`
+	for search, chapters, page, reload, and `scenario paged-smoke`.
+- Native direct execution launches the published plugin executable locally and
+	reuses the host-bridge API against the configured `HostUrl`.
+- `reload` restarts the managed native plugin process for native direct
+	profiles.
