@@ -5,13 +5,11 @@ namespace EMMA.Cli;
 
 public class MyCommands
 {
-    private readonly PluginDevSession _session;
-    private readonly IPluginDevRuntimeAdapter _runtime;
+    private readonly PluginDevApplication _application;
 
     public MyCommands()
     {
-        _session = PluginDevSessionHolder.RequireCurrent();
-        _runtime = _session.RuntimeAdapter;
+        _application = PluginDevApplicationHolder.RequireCurrent();
     }
 
     /// <summary>
@@ -21,7 +19,7 @@ public class MyCommands
     [Command("search")]
     public async Task SearchAsync(string query)
     {
-        var response = await _runtime.SearchAsync(query, CancellationToken.None);
+        var response = await _application.SearchAsync(query, CancellationToken.None);
 
         foreach (var item in response)
         {
@@ -48,7 +46,7 @@ public class MyCommands
     [Command("chapters")]
     public async Task ChaptersAsync(string id)
     {
-        var response = await _runtime.GetChaptersAsync(id, CancellationToken.None);
+        var response = await _application.GetChaptersAsync(id, CancellationToken.None);
         foreach (var item in response)
         {
             CommandContextHolder.Context.AddResult(new SimpleResult(
@@ -72,7 +70,7 @@ public class MyCommands
                             try
                             {
                                 var startIndex = 0;
-                                var pagesResult = await _runtime.GetPagesAsync(id, item.id, startIndex, 10000, CancellationToken.None);
+                                var pagesResult = await _application.GetPagesAsync(id, item.id, startIndex, 10000, CancellationToken.None);
                                 for (int p = 0; p < pagesResult.Count; p++)
                                 {
                                     var pageIndex = startIndex + p;
@@ -108,13 +106,14 @@ public class MyCommands
     [Command("page-asset")]
     public async Task PageAssetAsync(string mid, string cid)
     {
-        if (!_runtime.SupportsPageAsset)
+        var session = _application.GetSessionSnapshot();
+        if (!session.SupportsPageAsset)
         {
-            Console.WriteLine($"Page asset is not supported by runtime adapter '{_runtime.Name}'.");
+            Console.WriteLine($"Page asset is not supported by runtime adapter '{session.RuntimeAdapterName}'.");
             return;
         }
 
-        var response = await _runtime.GetPageAssetAsync(mid, cid, CancellationToken.None);
+        var response = await _application.GetPageAssetAsync(mid, cid, CancellationToken.None);
         if (response is null)
         {
             Console.WriteLine("Page asset returned no payload.");
@@ -145,7 +144,7 @@ public class MyCommands
     [Command("page")]
     public async Task PageAsync(string mid, string cid, int index)
     {
-        var response = await _runtime.GetPageAsync(mid, cid, index, CancellationToken.None);
+        var response = await _application.GetPageAsync(mid, cid, index, CancellationToken.None);
 
         if (response is null)
         {
@@ -164,35 +163,37 @@ public class MyCommands
     [Command("session")]
     public void Session()
     {
-        Console.WriteLine($"Session ID: {_session.Id}");
-        Console.WriteLine($"State: {_session.State}");
-        Console.WriteLine($"Working Directory: {_session.WorkingDirectory}");
-        Console.WriteLine($"Profile: {_session.Profile.Name}");
-        Console.WriteLine($"Plugin ID: {_session.Profile.PluginId}");
-        Console.WriteLine($"Host URL: {_session.Profile.HostUrl}");
-        Console.WriteLine($"Runtime Target: {_session.Profile.RuntimeTarget}");
-        Console.WriteLine($"Execution Mode: {_session.Profile.ExecutionMode}");
-        Console.WriteLine($"Runtime Adapter: {_session.RuntimeAdapter.Name}");
-        Console.WriteLine($"Profile Source: {(_session.Profile.IsInferred ? "inferred" : "configured")}");
+        var session = _application.GetSessionSnapshot();
 
-        if (!string.IsNullOrWhiteSpace(_session.Profile.ArtifactPath))
+        Console.WriteLine($"Session ID: {session.Id}");
+        Console.WriteLine($"State: {session.State}");
+        Console.WriteLine($"Working Directory: {session.WorkingDirectory}");
+        Console.WriteLine($"Profile: {session.Profile.Name}");
+        Console.WriteLine($"Plugin ID: {session.Profile.PluginId}");
+        Console.WriteLine($"Host URL: {session.Profile.HostUrl}");
+        Console.WriteLine($"Runtime Target: {session.Profile.RuntimeTarget}");
+        Console.WriteLine($"Execution Mode: {session.Profile.ExecutionMode}");
+        Console.WriteLine($"Runtime Adapter: {session.RuntimeAdapterName}");
+        Console.WriteLine($"Profile Source: {(session.Profile.IsInferred ? "inferred" : "configured")}");
+
+        if (!string.IsNullOrWhiteSpace(session.Profile.ArtifactPath))
         {
-            Console.WriteLine($"Artifact Path: {_session.Profile.ArtifactPath}");
+            Console.WriteLine($"Artifact Path: {session.Profile.ArtifactPath}");
         }
 
-        if (_session.Profile.WatchGlobs.Count > 0)
+        if (session.Profile.WatchGlobs.Count > 0)
         {
-            Console.WriteLine($"Watch Globs: {string.Join(", ", _session.Profile.WatchGlobs)}");
+            Console.WriteLine($"Watch Globs: {string.Join(", ", session.Profile.WatchGlobs)}");
         }
 
-        Console.WriteLine($"Discovery Root: {_session.Discovery.RootDirectory}");
-        Console.WriteLine($"Manifest: {_session.Discovery.ManifestPath ?? "<not found>"}");
-        Console.WriteLine($"Project: {_session.Discovery.ProjectFilePath ?? "<not found>"}");
+        Console.WriteLine($"Discovery Root: {session.RootDirectory}");
+        Console.WriteLine($"Manifest: {session.ManifestPath ?? "<not found>"}");
+        Console.WriteLine($"Project: {session.ProjectFilePath ?? "<not found>"}");
 
-        if (_session.AvailableProfiles.Count > 0)
+        if (session.AvailableProfiles.Count > 0)
         {
             Console.WriteLine("Available Profiles:");
-            foreach (var profile in _session.AvailableProfiles)
+            foreach (var profile in session.AvailableProfiles)
             {
                 var source = profile.IsInferred ? "inferred" : "configured";
                 var artifactSuffix = string.IsNullOrWhiteSpace(profile.ArtifactPath) ? string.Empty : $" artifact={profile.ArtifactPath}";
@@ -200,13 +201,13 @@ public class MyCommands
             }
         }
 
-        if (_session.Diagnostics.Count == 0)
+        if (session.Diagnostics.Count == 0)
         {
             return;
         }
 
         Console.WriteLine("Diagnostics:");
-        foreach (var diagnostic in _session.Diagnostics)
+        foreach (var diagnostic in session.Diagnostics)
         {
             var level = diagnostic.IsError ? "error" : "info";
             Console.WriteLine($"  [{level}] {diagnostic.Code}: {diagnostic.Message}");
@@ -216,7 +217,8 @@ public class MyCommands
     [Command("build")]
     public async Task BuildAsync()
     {
-        var plan = _session.BuildService.GetBuildPlan(_session);
+        var session = PluginDevSessionHolder.RequireCurrent();
+        var plan = session.BuildService.GetBuildPlan(session);
         if (plan is null)
         {
             Console.WriteLine("No normalized build plan is available for the active profile.");
@@ -224,14 +226,14 @@ public class MyCommands
         }
 
         Console.WriteLine($"Running build plan '{plan.Name}'...");
-        var output = await _session.BuildService.BuildAsync(_session, CancellationToken.None);
+        var output = await _application.BuildAsync(CancellationToken.None);
         Console.WriteLine(output);
     }
 
     [Command("pack")]
     public Task PackAsync()
     {
-        var result = _session.BuildService.PackWasm(_session);
+        var result = _application.Pack();
         Console.WriteLine($"Package: {result.PackagePath}");
         Console.WriteLine($"Manifest: {result.ManifestPath}");
         Console.WriteLine($"Artifact: {result.ArtifactPath}");
@@ -241,14 +243,14 @@ public class MyCommands
     [Command("reload")]
     public async Task ReloadAsync()
     {
-        var message = await _session.RuntimeAdapter.ReloadAsync(CancellationToken.None);
+        var message = await _application.ReloadAsync(CancellationToken.None);
         Console.WriteLine(message);
     }
 
     [Command("scenario")]
     public async Task ScenarioAsync(string name, string? query = null)
     {
-        var result = await _session.ScenarioRunner.RunAsync(_session, name, query, CancellationToken.None);
+        var result = await _application.RunScenarioAsync(name, query, CancellationToken.None);
         foreach (var message in result.Messages)
         {
             Console.WriteLine(message);
@@ -266,49 +268,57 @@ public class MyCommands
     [Command("doctor")]
     public void Doctor()
     {
+        var session = _application.GetSessionSnapshot();
         Console.WriteLine("Plugin development doctor");
-        Console.WriteLine($"  Root: {_session.Discovery.RootDirectory}");
-        Console.WriteLine($"  Manifest: {_session.Discovery.ManifestPath ?? "<not found>"}");
-        Console.WriteLine($"  Project: {_session.Discovery.ProjectFilePath ?? "<not found>"}");
-        Console.WriteLine($"  Plugin ID: {_session.Discovery.PluginId ?? _session.Profile.PluginId}");
+        Console.WriteLine($"  Root: {session.RootDirectory}");
+        Console.WriteLine($"  Manifest: {session.ManifestPath ?? "<not found>"}");
+        Console.WriteLine($"  Project: {session.ProjectFilePath ?? "<not found>"}");
+        Console.WriteLine($"  Plugin ID: {session.PluginId}");
 
-        if (!string.IsNullOrWhiteSpace(_session.Discovery.PluginName))
+        if (!string.IsNullOrWhiteSpace(session.PluginName))
         {
-            Console.WriteLine($"  Plugin Name: {_session.Discovery.PluginName}");
+            Console.WriteLine($"  Plugin Name: {session.PluginName}");
         }
 
-        if (_session.Discovery.MediaTypes.Count > 0)
+        if (session.MediaTypes.Count > 0)
         {
-            Console.WriteLine($"  Media Types: {string.Join(", ", _session.Discovery.MediaTypes)}");
+            Console.WriteLine($"  Media Types: {string.Join(", ", session.MediaTypes)}");
         }
 
-        if (_session.Discovery.SupportedTargets.Count > 0)
+        if (session.SupportedTargets.Count > 0)
         {
-            Console.WriteLine($"  Supported Targets: {string.Join(", ", _session.Discovery.SupportedTargets)}");
+            Console.WriteLine($"  Supported Targets: {string.Join(", ", session.SupportedTargets)}");
         }
 
-        if (_session.Discovery.ArtifactCandidates.Count > 0)
+        if (session.ArtifactCandidates.Count > 0)
         {
             Console.WriteLine("  Artifact Candidates:");
-            foreach (var artifact in _session.Discovery.ArtifactCandidates)
+            foreach (var artifact in session.ArtifactCandidates)
             {
                 var status = artifact.Exists ? "present" : "missing";
                 Console.WriteLine($"    - {artifact.Target} [{artifact.Kind}] {status}: {artifact.Path}");
             }
         }
 
-        if (_session.Diagnostics.Count == 0)
+        if (session.Diagnostics.Count == 0)
         {
             Console.WriteLine("  No diagnostics.");
             return;
         }
 
         Console.WriteLine("  Diagnostics:");
-        foreach (var diagnostic in _session.Diagnostics)
+        foreach (var diagnostic in session.Diagnostics)
         {
             var level = diagnostic.IsError ? "error" : "info";
             Console.WriteLine($"    [{level}] {diagnostic.Code}: {diagnostic.Message}");
         }
+    }
+
+    [Command("serve")]
+    public async Task ServeAsync([Argument] int port = 5075)
+    {
+        Console.WriteLine($"Serving plugin dev UI at http://127.0.0.1:{port}");
+        await PluginDevLocalServer.RunAsync(_application, port, CancellationToken.None);
     }
 
     /// <summary>
@@ -329,6 +339,7 @@ public class MyCommands
         Console.WriteLine("  chapters -i <mediaId>                          List chapters of a media");
         Console.WriteLine("  page-asset -mi <mediaId> -ci <chapterId>       Get a chapter page asset");
         Console.WriteLine("  page -mi <mediaId> -ci <chapterId> -i <index>  Get a chapter page");
+        Console.WriteLine("  serve [port]                                   Start the local session API and browser UI");
         Console.WriteLine("  help                                           Show this help message");
         return Task.CompletedTask;
     }

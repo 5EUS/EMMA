@@ -19,12 +19,12 @@ public sealed class PluginDevSessionFactory
     private readonly PluginDevBuildService _buildService = new();
     private readonly PluginDevScenarioRunner _scenarioRunner = new();
 
-    public PluginDevSession Create(string workingDirectory)
+    public PluginDevSession Create(string workingDirectory, string? requestedProfileName = null)
     {
         var loadResult = _configLoader.Load(workingDirectory);
         var discovery = _discoveryService.Discover(workingDirectory);
         var availableProfiles = BuildAvailableProfiles(loadResult, discovery);
-        var profile = ResolveProfile(loadResult, availableProfiles);
+        var profile = ResolveProfile(loadResult, availableProfiles, requestedProfileName);
 
         var httpClient = new HttpClient { BaseAddress = new Uri(profile.HostUrl, UriKind.Absolute) };
         var pluginPort = new PluginHostPagedMediaPort(
@@ -161,9 +161,12 @@ public sealed class PluginDevSessionFactory
 
     private static PluginDevProfile ResolveProfile(
         PluginDevConfigLoadResult loadResult,
-        IReadOnlyList<PluginDevProfile> availableProfiles)
+        IReadOnlyList<PluginDevProfile> availableProfiles,
+        string? requestedProfileName = null)
     {
-        var requestedProfile = Environment.GetEnvironmentVariable("EMMA_PLUGIN_PROFILE")?.Trim();
+        var requestedProfile = string.IsNullOrWhiteSpace(requestedProfileName)
+            ? Environment.GetEnvironmentVariable("EMMA_PLUGIN_PROFILE")?.Trim()
+            : requestedProfileName.Trim();
         var profileName = FirstNonEmpty(
                 requestedProfile,
                 loadResult.Document.DefaultProfile,

@@ -42,6 +42,8 @@ Environment:
 	configuration.
 - `doctor` prints discovery results, inferred profiles, artifact candidates,
 	and pre-launch diagnostics.
+- `serve [port]` starts a local session API and lightweight browser UI on top
+	of the same backend used by the CLI commands.
 
 ## WASM development commands
 
@@ -63,3 +65,12 @@ Environment:
 	reuses the host-bridge API against the configured `HostUrl`.
 - `reload` restarts the managed native plugin process for native direct
 	profiles.
+
+## Session API and UI
+
+- `serve [port]` hosts a local HTTP API and browser UI for the current working
+	directory.
+- The browser UI supports profile selection, build/reload actions, scenario
+	execution, session inspection, and a lightweight operation log feed.
+- The CLI and the local API both execute through the same session application
+	service so Phase 5 does not create a parallel orchestration path.

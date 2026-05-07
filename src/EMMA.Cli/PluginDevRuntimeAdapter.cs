@@ -30,6 +30,8 @@ public sealed record PluginDevPackResult(string PackagePath, string ManifestPath
 
 public sealed record PluginDevScenarioResult(string Name, bool Succeeded, IReadOnlyList<string> Messages);
 
+public sealed record PluginDevRuntimeLogLine(string Level, string Message);
+
 public interface IPluginDevRuntimeAdapter
 {
     string Name { get; }
@@ -43,6 +45,11 @@ public interface IPluginDevRuntimeAdapter
     Task<IReadOnlyList<PageItem>> GetPagesAsync(string mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken);
     Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken);
     Task<string> ReloadAsync(CancellationToken cancellationToken);
+}
+
+public interface IPluginDevRuntimeLogSource
+{
+    IReadOnlyList<PluginDevRuntimeLogLine> DrainRuntimeLogs();
 }
 
 public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPagedMediaApi api) : IPluginDevRuntimeAdapter
@@ -169,7 +176,7 @@ public sealed class DeferredWasmRuntimeAdapter(
     string rootDirectory,
     string runtimeLibraryPath,
     IReadOnlyList<string> permittedDomains,
-    Func<string?> resolveComponentPath) : IPluginDevRuntimeAdapter
+    Func<string?> resolveComponentPath) : IPluginDevRuntimeAdapter, IPluginDevRuntimeLogSource
 {
     private readonly Lazy<WasmCliRuntimeAdapter> _inner = new(() =>
     {
@@ -200,6 +207,9 @@ public sealed class DeferredWasmRuntimeAdapter(
 
     public Task<string> ReloadAsync(CancellationToken cancellationToken)
         => _inner.Value.ReloadAsync(cancellationToken);
+
+    public IReadOnlyList<PluginDevRuntimeLogLine> DrainRuntimeLogs()
+        => _inner.IsValueCreated ? _inner.Value.DrainRuntimeLogs() : [];
 }
 
 public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
@@ -552,7 +562,7 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
     }
 }
 
-public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
+public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter, IPluginDevRuntimeLogSource
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -563,6 +573,8 @@ public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
     private readonly string _componentPath;
     private readonly string _runtimeLibraryPath;
     private readonly IReadOnlyList<string> _permittedDomains;
+    private readonly Lock _runtimeLogLock = new();
+    private readonly List<PluginDevRuntimeLogLine> _runtimeLogs = [];
 
     public WasmCliRuntimeAdapter(string rootDirectory, string componentPath, string runtimeLibraryPath, IReadOnlyList<string> permittedDomains)
     {
@@ -639,7 +651,46 @@ public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
             throw new InvalidOperationException($"Resolved WASM component was not found: {_componentPath}");
         }
 
-        return await Task.Run(() => NativeWasmRuntimeBindings.Invoke(_componentPath, operation, operationArgs, _permittedDomains), cancellationToken);
+        return await Task.Run(() =>
+        {
+            try
+            {
+                return NativeWasmRuntimeBindings.Invoke(_componentPath, operation, operationArgs, _permittedDomains);
+            }
+            finally
+            {
+                CaptureRuntimeLogs();
+            }
+        }, cancellationToken);
+    }
+
+    public IReadOnlyList<PluginDevRuntimeLogLine> DrainRuntimeLogs()
+    {
+        lock (_runtimeLogLock)
+        {
+            if (_runtimeLogs.Count == 0)
+            {
+                return [];
+            }
+
+            var drained = _runtimeLogs.ToArray();
+            _runtimeLogs.Clear();
+            return drained;
+        }
+    }
+
+    private void CaptureRuntimeLogs()
+    {
+        var captured = NativeWasmRuntimeBindings.TakeLastStdio();
+        if (captured.Count == 0)
+        {
+            return;
+        }
+
+        lock (_runtimeLogLock)
+        {
+            _runtimeLogs.AddRange(captured);
+        }
     }
 
     private async Task<T?> InvokeTypedOperationAsync<T>(
@@ -770,6 +821,33 @@ public static class NativeWasmRuntimeBindings
         }
     }
 
+    public static IReadOnlyList<PluginDevRuntimeLogLine> TakeLastStdio()
+    {
+        var ptr = TakeLastStdioNative();
+        if (ptr == IntPtr.Zero)
+        {
+            return [];
+        }
+
+        try
+        {
+            var json = PtrToString(ptr);
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return [];
+            }
+
+            return JsonSerializer.Deserialize<PluginDevRuntimeLogLine[]>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? [];
+        }
+        finally
+        {
+            FreeString(ptr);
+        }
+    }
+
     private static string? PtrToString(IntPtr ptr)
     {
         return ptr == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(ptr);
@@ -786,6 +864,9 @@ public static class NativeWasmRuntimeBindings
 
     [DllImport("emma_wasm_runtime", EntryPoint = "emma_wasm_runtime_free_string", CallingConvention = CallingConvention.Cdecl)]
     private static extern void FreeString(IntPtr value);
+
+    [DllImport("emma_wasm_runtime", EntryPoint = "emma_wasm_runtime_take_last_stdio", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr TakeLastStdioNative();
 }
 
 public sealed class PluginDevBuildService

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use std::{sync::mpsc, thread};
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, OptLevel, Store, Strategy};
+use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::p2::{IoView, WasiCtx, WasiCtxBuilder, WasiView};
 use wasmtime_wasi_http::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::body::HyperOutgoingBody;
@@ -32,6 +33,8 @@ struct RunnerState {
     http_ctx: WasiHttpCtx,
     table: ResourceTable,
     permitted_domains: Vec<String>,
+    stdout: MemoryOutputPipe,
+    stderr: MemoryOutputPipe,
 }
 
 impl WasiView for RunnerState {
@@ -79,11 +82,18 @@ static WORKER_CACHE: OnceLock<Mutex<HashMap<String, Arc<WorkerHandle>>>> = OnceL
 static HANDLE_CACHE: OnceLock<Mutex<HashMap<u64, String>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 static LAST_TIMING: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+static LAST_STDIO: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static HOST_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 struct InvokeAttemptOutput {
     json: String,
     timing: String,
+}
+
+#[derive(Serialize)]
+struct RuntimeLogEntry {
+    level: &'static str,
+    message: String,
 }
 
 struct WorkerRequest {
@@ -119,6 +129,57 @@ fn take_last_timing() -> Option<String> {
         .lock()
         .ok()
         .and_then(|mut guard| guard.take())
+}
+
+fn set_last_stdio(value: Option<String>) {
+    if let Ok(mut guard) = LAST_STDIO
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+    {
+        *guard = value;
+    }
+}
+
+fn take_last_stdio() -> Option<String> {
+    LAST_STDIO
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take())
+}
+
+fn serialize_runtime_logs(entries: &[RuntimeLogEntry]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+
+    serde_json::to_string(entries).ok()
+}
+
+fn collect_runtime_logs(state: &RunnerState) -> Vec<RuntimeLogEntry> {
+    let mut entries = Vec::new();
+    append_runtime_logs(&mut entries, "info", state.stdout.contents().as_ref());
+    append_runtime_logs(&mut entries, "error", state.stderr.contents().as_ref());
+    entries
+}
+
+fn append_runtime_logs(entries: &mut Vec<RuntimeLogEntry>, level: &'static str, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+
+    let text = String::from_utf8_lossy(bytes);
+    for line in text.lines() {
+        let message = line.trim_end();
+        if message.is_empty() {
+            continue;
+        }
+
+        entries.push(RuntimeLogEntry {
+            level,
+            message: message.to_string(),
+        });
+    }
 }
 
 fn get_engine() -> Result<&'static Engine> {
@@ -558,6 +619,18 @@ fn get_host_http_client() -> Option<&'static reqwest::blocking::Client> {
     HOST_HTTP_CLIENT.get()
 }
 
+fn apply_emma_environment(builder: &mut WasiCtxBuilder) -> Result<()> {
+    for (key, value) in env::vars() {
+        if !key.starts_with("EMMA_") {
+            continue;
+        }
+
+        builder.env(&key, &value);
+    }
+
+    Ok(())
+}
+
 fn fetch_host_payload(state: &RunnerState, absolute_url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(absolute_url).ok()?;
     let host = parsed.host_str()?;
@@ -580,6 +653,8 @@ fn invoke_typed_operation(
     operation_args: &[String],
     permitted_domains: &[String],
 ) -> Result<Option<InvokeAttemptOutput>> {
+    set_last_stdio(None);
+
     let typed_pre = &context.typed_pre;
 
     if operation != "handshake"
@@ -591,139 +666,152 @@ fn invoke_typed_operation(
     }
 
     let op_start = Instant::now();
+    let stdout = MemoryOutputPipe::new(1024 * 1024);
+    let stderr = MemoryOutputPipe::new(1024 * 1024);
+    let mut wasi = WasiCtxBuilder::new();
+    wasi.stdout(stdout.clone());
+    wasi.stderr(stderr.clone());
+    apply_emma_environment(&mut wasi)?;
     let state = RunnerState {
-        wasi_ctx: WasiCtxBuilder::new().build(),
+        wasi_ctx: wasi.build(),
         http_ctx: WasiHttpCtx::new(),
         table: ResourceTable::new(),
         permitted_domains: permitted_domains.to_vec(),
+        stdout,
+        stderr,
     };
 
     let mut store = Store::new(context.engine, state);
     store.set_epoch_deadline(1);
 
-    let instance = context
-        .runtime
-        .block_on(async { typed_pre.instantiate_async(&mut store).await })
-        .context("failed to instantiate typed world")?;
+    let json = (|| -> Result<String> {
+        let instance = context
+            .runtime
+            .block_on(async { typed_pre.instantiate_async(&mut store).await })
+            .context("failed to instantiate typed world")?;
 
-    let guest = instance.emma_plugin_plugin();
+        let guest = instance.emma_plugin_plugin();
 
-    let json = match operation {
-        "handshake" => {
-            let response = context
-                .runtime
-                .block_on(async { guest.call_handshake(&mut store).await })
-                .context("typed handshake failed")?;
-            serde_json::to_string(&serde_json::json!({
-                "version": response.version,
-                "message": response.message,
-            }))
-            .context("failed to serialize typed handshake response")?
-        }
-        "capabilities" => {
-            let capabilities = context
-                .runtime
-                .block_on(async { guest.call_capabilities(&mut store).await })
-                .context("typed capabilities failed")?;
-            let value = capabilities
-                .into_iter()
-                .map(|item| {
-                    serde_json::json!({
-                        "name": item.name,
-                        "mediaTypes": item.media_types,
-                        "operations": item.operations,
+        match operation {
+            "handshake" => {
+                let response = context
+                    .runtime
+                    .block_on(async { guest.call_handshake(&mut store).await })
+                    .context("typed handshake failed")?;
+                serde_json::to_string(&serde_json::json!({
+                    "version": response.version,
+                    "message": response.message,
+                }))
+                .context("failed to serialize typed handshake response")
+            }
+            "capabilities" => {
+                let capabilities = context
+                    .runtime
+                    .block_on(async { guest.call_capabilities(&mut store).await })
+                    .context("typed capabilities failed")?;
+                let value = capabilities
+                    .into_iter()
+                    .map(|item| {
+                        serde_json::json!({
+                            "name": item.name,
+                            "mediaTypes": item.media_types,
+                            "operations": item.operations,
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
-            serde_json::to_string(&value).context("failed to serialize typed capabilities")?
-        }
-        "invoke" => {
-            let nested_operation = operation_args.get(0).cloned().unwrap_or_default();
-            let media_id = operation_args
-                .get(1)
-                .filter(|value| !value.trim().is_empty())
-                .cloned();
-            let media_type = operation_args
-                .get(2)
-                .filter(|value| !value.trim().is_empty())
-                .cloned();
-            let args_json = operation_args
-                .get(3)
-                .filter(|value| !value.trim().is_empty())
-                .cloned();
+                    .collect::<Vec<_>>();
+                serde_json::to_string(&value).context("failed to serialize typed capabilities")
+            }
+            "invoke" => {
+                let nested_operation = operation_args.get(0).cloned().unwrap_or_default();
+                let media_id = operation_args
+                    .get(1)
+                    .filter(|value| !value.trim().is_empty())
+                    .cloned();
+                let media_type = operation_args
+                    .get(2)
+                    .filter(|value| !value.trim().is_empty())
+                    .cloned();
+                let args_json = operation_args
+                    .get(3)
+                    .filter(|value| !value.trim().is_empty())
+                    .cloned();
 
-            let request = typed_bindings::exports::emma::plugin::plugin::MediaOperationRequest {
-                operation: nested_operation,
-                media_id,
-                media_type,
-                args_json,
-                payload_json: None,
-            };
+                let request = typed_bindings::exports::emma::plugin::plugin::MediaOperationRequest {
+                    operation: nested_operation,
+                    media_id,
+                    media_type,
+                    args_json,
+                    payload_json: None,
+                };
 
-            let response = context
-                .runtime
-                .block_on(async { guest.call_invoke(&mut store, &request).await })
-                .context("typed invoke call failed")?;
+                let response = context
+                    .runtime
+                    .block_on(async { guest.call_invoke(&mut store, &request).await })
+                    .context("typed invoke call failed")?;
 
-            let operation_result = match response {
-                Ok(ok) => serde_json::json!({
-                    "isError": false,
-                    "error": null,
-                    "contentType": ok.content_type,
-                    "payloadJson": ok.payload_json,
-                }),
-                Err(typed_bindings::exports::emma::plugin::plugin::OperationError::UnsupportedOperation(message)) => serde_json::json!({
-                    "isError": true,
-                    "error": format!("unsupported-operation:{}", message),
-                    "contentType": "application/problem+json",
-                    "payloadJson": "",
-                }),
-                Err(typed_bindings::exports::emma::plugin::plugin::OperationError::InvalidArguments(message)) => serde_json::json!({
-                    "isError": true,
-                    "error": format!("invalid-arguments:{}", message),
-                    "contentType": "application/problem+json",
-                    "payloadJson": "",
-                }),
-                Err(typed_bindings::exports::emma::plugin::plugin::OperationError::Failed(message)) => serde_json::json!({
-                    "isError": true,
-                    "error": format!("failed:{}", message),
-                    "contentType": "application/problem+json",
-                    "payloadJson": "",
-                }),
-            };
+                let operation_result = match response {
+                    Ok(ok) => serde_json::json!({
+                        "isError": false,
+                        "error": null,
+                        "contentType": ok.content_type,
+                        "payloadJson": ok.payload_json,
+                    }),
+                    Err(typed_bindings::exports::emma::plugin::plugin::OperationError::UnsupportedOperation(message)) => serde_json::json!({
+                        "isError": true,
+                        "error": format!("unsupported-operation:{}", message),
+                        "contentType": "application/problem+json",
+                        "payloadJson": "",
+                    }),
+                    Err(typed_bindings::exports::emma::plugin::plugin::OperationError::InvalidArguments(message)) => serde_json::json!({
+                        "isError": true,
+                        "error": format!("invalid-arguments:{}", message),
+                        "contentType": "application/problem+json",
+                        "payloadJson": "",
+                    }),
+                    Err(typed_bindings::exports::emma::plugin::plugin::OperationError::Failed(message)) => serde_json::json!({
+                        "isError": true,
+                        "error": format!("failed:{}", message),
+                        "contentType": "application/problem+json",
+                        "payloadJson": "",
+                    }),
+                };
 
-            serde_json::to_string(&operation_result)
-                .context("failed to serialize typed invoke operation result")?
-        }
-        "chapters" => {
-            let media_id = operation_args
-                .first()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| anyhow!("typed chapters requires media id argument"))?;
-            let payload_json = operation_args.get(1).cloned().unwrap_or_default();
+                serde_json::to_string(&operation_result)
+                    .context("failed to serialize typed invoke operation result")
+            }
+            "chapters" => {
+                let media_id = operation_args
+                    .first()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| anyhow!("typed chapters requires media id argument"))?;
+                let payload_json = operation_args.get(1).cloned().unwrap_or_default();
 
-            let chapters = context
-                .runtime
-                .block_on(async { guest.call_chapters(&mut store, media_id, &payload_json).await })
-                .context("typed chapters failed")?;
+                let chapters = context
+                    .runtime
+                    .block_on(async { guest.call_chapters(&mut store, media_id, &payload_json).await })
+                    .context("typed chapters failed")?;
 
-            let value = chapters
-                .into_iter()
-                .map(|item| {
-                    serde_json::json!({
-                        "id": item.id,
-                        "number": item.number,
-                        "title": item.title,
-                        "uploaderGroups": item.uploader_groups,
+                let value = chapters
+                    .into_iter()
+                    .map(|item| {
+                        serde_json::json!({
+                            "id": item.id,
+                            "number": item.number,
+                            "title": item.title,
+                            "uploaderGroups": item.uploader_groups,
+                        })
                     })
-                })
-                .collect::<Vec<_>>();
+                    .collect::<Vec<_>>();
 
-            serde_json::to_string(&value).context("failed to serialize typed chapters")?
+                serde_json::to_string(&value).context("failed to serialize typed chapters")
+            }
+            _ => Ok(String::new()),
         }
-        _ => return Ok(None),
-    };
+    })();
+
+    set_last_stdio(serialize_runtime_logs(&collect_runtime_logs(store.data())));
+    let json = json?;
 
     Ok(Some(InvokeAttemptOutput {
         json,
@@ -958,6 +1046,14 @@ pub extern "C" fn emma_wasm_runtime_free_string(ptr: *mut c_char) {
 #[no_mangle]
 pub extern "C" fn emma_wasm_runtime_take_last_timing() -> *mut c_char {
     match take_last_timing() {
+        Some(value) => to_c_string(value),
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn emma_wasm_runtime_take_last_stdio() -> *mut c_char {
+    match take_last_stdio() {
         Some(value) => to_c_string(value),
         None => std::ptr::null_mut(),
     }

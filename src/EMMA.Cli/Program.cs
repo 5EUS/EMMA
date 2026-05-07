@@ -5,6 +5,8 @@ var sessionFactory = new PluginDevSessionFactory();
 var session = sessionFactory.Create(Environment.CurrentDirectory);
 session.TransitionTo(PluginDevSessionState.Starting);
 PluginDevSessionHolder.SetCurrent(session);
+var pluginApplication = new PluginDevApplication(sessionFactory, Environment.CurrentDirectory, session);
+PluginDevApplicationHolder.SetCurrent(pluginApplication);
 
 var app = ConsoleApp.Create();
 app.Add<MyCommands>();
