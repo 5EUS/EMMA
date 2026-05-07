@@ -225,8 +225,8 @@ public sealed class PluginDevApplication
         {
             var output = await session.BuildService.BuildAsync(session, cancellationToken);
             var syncMessage = session.BuildService.SyncBuildArtifacts(session);
-            RecordInfo($"Build completed using plan '{plan.Name}'.");
             RecordInfo(output);
+            RecordInfo($"Build completed using plan '{plan.Name}'.");
             if (!string.IsNullOrWhiteSpace(syncMessage))
             {
                 RecordInfo(syncMessage);
@@ -411,13 +411,19 @@ public sealed class PluginDevApplication
                     var buildOutput = await session.BuildService.BuildAsync(session, CancellationToken.None);
                     var syncMessage = session.BuildService.SyncBuildArtifacts(session);
                     RememberWatchBuildArtifactPath(plan.ArtifactPath ?? session.Profile.ArtifactPath);
-                    buildMessage = string.IsNullOrWhiteSpace(buildOutput)
-                        ? $"Watch build completed using plan '{plan.Name}'."
-                        : $"Watch build completed using plan '{plan.Name}'.\n{buildOutput}";
+                    var buildParts = new List<string>(3);
+                    if (!string.IsNullOrWhiteSpace(buildOutput))
+                    {
+                        buildParts.Add(buildOutput);
+                    }
+
+                    buildParts.Add($"Watch build completed using plan '{plan.Name}'.");
                     if (!string.IsNullOrWhiteSpace(syncMessage))
                     {
-                        buildMessage = $"{buildMessage}\n{syncMessage}";
+                        buildParts.Add(syncMessage);
                     }
+
+                    buildMessage = string.Join("\n", buildParts);
                     RecordInfo(buildMessage);
                 }
             }

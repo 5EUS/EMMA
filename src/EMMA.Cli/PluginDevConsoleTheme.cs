@@ -2,6 +2,8 @@ namespace EMMA.Cli;
 
 internal static class PluginDevConsoleTheme
 {
+    private const string AnsiEscapePrefix = "\u001b[";
+
     public static void WriteDiagnostic(string indent, PluginDevDiagnostic diagnostic)
     {
         ArgumentNullException.ThrowIfNull(diagnostic);
@@ -39,6 +41,12 @@ internal static class PluginDevConsoleTheme
         Console.Write("] ");
         WriteColored(entry.TimestampUtc.ToString("HH:mm:ss"), ConsoleColor.DarkGray);
         Console.Write(" ");
+        if (ContainsAnsiEscape(entry.Message))
+        {
+            Console.WriteLine(entry.Message);
+            return;
+        }
+
         WriteColoredLine(entry.Message, GetSeverityColor(entry.Level));
     }
 
@@ -79,4 +87,7 @@ internal static class PluginDevConsoleTheme
         Console.WriteLine(value);
         Console.ForegroundColor = original;
     }
+
+    private static bool ContainsAnsiEscape(string? value)
+        => !string.IsNullOrEmpty(value) && value.Contains(AnsiEscapePrefix, StringComparison.Ordinal);
 }

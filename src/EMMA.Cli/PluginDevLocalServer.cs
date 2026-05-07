@@ -639,6 +639,7 @@ internal static class PluginDevLocalUi
       --muted: #655f55;
       --accent: #0f766e;
       --accent-2: #d97706;
+      --success: #15803d;
       --info: #0f766e;
       --warning: #b45309;
       --error: #b91c1c;
@@ -690,6 +691,7 @@ internal static class PluginDevLocalUi
       display: grid;
       grid-template-columns: 360px 1fr;
       gap: 20px;
+      align-items: start;
     }
     .card {
       background: var(--panel);
@@ -704,7 +706,9 @@ internal static class PluginDevLocalUi
     .stack {
       display: grid;
       gap: 18px;
+      align-content: start;
     }
+    .stack > .card { align-self: start; }
     .section-title {
       margin: 0 0 12px;
       font-size: 15px;
@@ -714,6 +718,13 @@ internal static class PluginDevLocalUi
     }
     .kv { display: grid; gap: 8px; min-width: 0; }
     .kv div { display: grid; gap: 3px; min-width: 0; }
+    .watch-panel {
+      display: grid;
+      gap: 8px;
+      max-height: 280px;
+      overflow: auto;
+      padding-right: 4px;
+    }
     .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
     .value {
       font-size: 14px;
@@ -757,15 +768,28 @@ internal static class PluginDevLocalUi
       padding: 10px 12px;
       background: rgba(255,255,255,0.55);
       min-width: 0;
+      position: relative;
     }
     .diag-item { border-left-width: 6px; }
     .log-item { border-left-width: 6px; }
     .diag-item.info { border-color: rgba(15,118,110,0.2); background: rgba(240,253,250,0.88); }
     .diag-item.warning { border-color: rgba(180,83,9,0.24); background: rgba(255,247,237,0.88); }
     .diag-item.error { border-color: rgba(185,28,28,0.24); background: rgba(254,242,242,0.88); }
+    .log-item.success { border-color: rgba(21,128,61,0.24); background: rgba(240,253,244,0.92); }
     .log-item.info { border-color: rgba(15,118,110,0.2); background: rgba(240,253,250,0.88); }
     .log-item.warning { border-color: rgba(180,83,9,0.24); background: rgba(255,247,237,0.88); }
     .log-item.error { border-color: rgba(185,28,28,0.24); background: rgba(254,242,242,0.88); }
+    .log-item.recent::before {
+      content: '';
+      position: absolute;
+      left: -1px;
+      top: -1px;
+      bottom: -1px;
+      width: 4px;
+      background: var(--accent-2);
+      border-radius: 14px 0 0 14px;
+      pointer-events: none;
+    }
     .meta-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; }
     .chip {
       border-radius: 999px;
@@ -776,6 +800,7 @@ internal static class PluginDevLocalUi
       letter-spacing: 0.08em;
       border: 1px solid transparent;
     }
+    .chip.success { color: var(--success); background: rgba(21,128,61,0.12); border-color: rgba(21,128,61,0.18); }
     .chip.info { color: var(--info); background: rgba(15,118,110,0.1); border-color: rgba(15,118,110,0.16); }
     .chip.warning { color: var(--warning); background: rgba(217,119,6,0.12); border-color: rgba(217,119,6,0.18); }
     .chip.error { color: var(--error); background: rgba(185,28,28,0.12); border-color: rgba(185,28,28,0.18); }
@@ -887,6 +912,7 @@ internal static class PluginDevLocalUi
       font-size: 12px;
       line-height: 1.5;
     }
+    .ansi-bold { font-weight: 700; }
     .diag-message {
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -934,7 +960,7 @@ internal static class PluginDevLocalUi
           </div>
           <div>
             <h2 class="section-title">Watch</h2>
-            <div class="kv" id="watch-meta"></div>
+            <div class="kv watch-panel" id="watch-meta"></div>
             <div class="control-row">
               <button id="watch-start-btn">Start watch</button>
               <button id="watch-stop-btn">Stop watch</button>
@@ -1017,6 +1043,8 @@ internal static class PluginDevLocalUi
     let consoleDraft = '';
     let consoleSuggestionValues = [];
     let consoleAutocompletePinned = false;
+    let hasRenderedLogsOnce = false;
+    let seenLogKeys = new Set();
 
     const severityRank = { info: 0, warning: 1, error: 2 };
 
@@ -1205,6 +1233,143 @@ internal static class PluginDevLocalUi
       return (item.severity || item.level || (item.isError ? 'error' : 'info') || 'info').toLowerCase();
     }
 
+    function normalizeLogSeverity(entry) {
+      const baseSeverity = normalizeSeverity(entry);
+      if (baseSeverity !== 'info') {
+        return baseSeverity;
+      }
+
+      const message = (entry.message || '').trim().toLowerCase();
+      if (!message) {
+        return baseSeverity;
+      }
+
+      if (message.startsWith('build completed')
+          || message.startsWith('watch build completed')
+          || message.startsWith('watch reload completed')
+          || message.startsWith('pack completed')
+          || message.startsWith('opened pack directory')
+          || message.startsWith('reloaded')
+          || message.startsWith('scenario ') && message.endsWith(' completed.')) {
+        return 'success';
+      }
+
+      return baseSeverity;
+    }
+
+    function getLogEntryKey(entry) {
+      return `${entry.timestampUtc || ''}|${entry.level || ''}|${entry.message || ''}`;
+    }
+
+    function isRecentLogEntry(entry, isFirstRender, hasSeenEntry) {
+      const timestamp = Date.parse(entry.timestampUtc || '');
+      const ageMs = Number.isNaN(timestamp)
+        ? Number.POSITIVE_INFINITY
+        : Date.now() - timestamp;
+
+      if (ageMs <= 15000) {
+        return true;
+      }
+
+      return !isFirstRender && !hasSeenEntry;
+    }
+
+    function appendAnsiText(container, value) {
+      const text = value || '';
+      const oscStripped = text.replace(/\u001b\][^\u0007]*(\u0007|\u001b\\)/g, '');
+      const parts = oscStripped.split(/(\u001b\[[0-9;]*m)/g);
+      let state = createAnsiState();
+
+      parts.forEach(part => {
+        if (!part) {
+          return;
+        }
+
+        const sgrMatch = part.match(/^\u001b\[([0-9;]*)m$/);
+        if (sgrMatch) {
+          state = applyAnsiCodes(state, sgrMatch[1]);
+          return;
+        }
+
+        const span = document.createElement('span');
+        if (state.color) {
+          span.style.color = state.color;
+        }
+        if (state.bold) {
+          span.classList.add('ansi-bold');
+        }
+        span.textContent = part;
+        container.appendChild(span);
+      });
+    }
+
+    function createAnsiState() {
+      return { color: '', bold: false };
+    }
+
+    function applyAnsiCodes(state, codeText) {
+      const next = { ...state };
+      const codes = codeText
+        ? codeText.split(';').map(value => Number.parseInt(value || '0', 10)).filter(value => !Number.isNaN(value))
+        : [0];
+
+      if (!codes.length) {
+        codes.push(0);
+      }
+
+      codes.forEach(code => {
+        if (code === 0) {
+          next.color = '';
+          next.bold = false;
+          return;
+        }
+
+        if (code === 1) {
+          next.bold = true;
+          return;
+        }
+
+        if (code === 22) {
+          next.bold = false;
+          return;
+        }
+
+        if (code === 39) {
+          next.color = '';
+          return;
+        }
+
+        const mappedColor = mapAnsiColor(code);
+        if (mappedColor) {
+          next.color = mappedColor;
+        }
+      });
+
+      return next;
+    }
+
+    function mapAnsiColor(code) {
+      switch (code) {
+        case 30: return '#1f2937';
+        case 31: return '#dc2626';
+        case 32: return '#16a34a';
+        case 33: return '#d97706';
+        case 34: return '#2563eb';
+        case 35: return '#c026d3';
+        case 36: return '#0891b2';
+        case 37: return '#e5e7eb';
+        case 90: return '#6b7280';
+        case 91: return '#ef4444';
+        case 92: return '#22c55e';
+        case 93: return '#f59e0b';
+        case 94: return '#60a5fa';
+        case 95: return '#e879f9';
+        case 96: return '#22d3ee';
+        case 97: return '#f9fafb';
+        default: return '';
+      }
+    }
+
     function normalizeDiagnosticsLevel(level) {
       return severityRank[level] === undefined ? 'info' : level;
     }
@@ -1354,14 +1519,22 @@ internal static class PluginDevLocalUi
         return;
       }
 
+      const isFirstRender = !hasRenderedLogsOnce;
+      const currentKeys = new Set();
       entries.slice().reverse().forEach(entry => {
         const node = document.createElement('div');
-        const severity = normalizeSeverity(entry);
-        node.className = `log-item ${severity}`;
+        const severity = normalizeLogSeverity(entry);
+        const key = getLogEntryKey(entry);
+        currentKeys.add(key);
+        const recent = isRecentLogEntry(entry, isFirstRender, seenLogKeys.has(key));
+        node.className = `log-item ${severity}${recent ? ' recent' : ''}`;
         node.innerHTML = `<div class="log-meta"><div class="meta-chips"><span class="chip ${severity}">${severity}</span></div><span>${new Date(entry.timestampUtc).toLocaleTimeString()}</span></div><div class="log-message"></div>`;
-        node.querySelector('.log-message').textContent = entry.message;
+        appendAnsiText(node.querySelector('.log-message'), entry.message);
         logs.appendChild(node);
       });
+
+      seenLogKeys = currentKeys;
+      hasRenderedLogsOnce = true;
     }
 
     function deriveStatusLabel(session, entries) {

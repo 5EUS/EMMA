@@ -1259,10 +1259,13 @@ public sealed class PluginDevBuildService
         var result = await PluginDevProcessRunner.RunAsync(plan.WorkingDirectory, plan.Command, plan.Arguments, cancellationToken);
         if (result.ExitCode != 0)
         {
+            var userFacingOutput = PluginDevBuildException.FormatProcessOutput(result);
+            var detailedOutput = PluginDevBuildException.FormatDetailedProcessOutput(result);
             throw new PluginDevBuildException(
                 plan.Name,
                 result.ExitCode,
-                PluginDevBuildException.FormatProcessOutput(result));
+                userFacingOutput,
+                detailedOutput);
         }
 
         return string.IsNullOrWhiteSpace(result.StandardOutput)
@@ -2639,19 +2642,26 @@ public sealed record PluginDevProcessResult(int ExitCode, string StandardOutput,
 
 public sealed class PluginDevBuildException : InvalidOperationException
 {
-    public PluginDevBuildException(string planName, int exitCode, string formattedOutput)
-        : base($"Build failed using plan '{planName}' with exit code {exitCode}.\n{formattedOutput}")
+    public PluginDevBuildException(string planName, int exitCode, string userFacingOutput, string formattedOutput)
+        : base($"Build failed using plan '{planName}' with exit code {exitCode}.\n{userFacingOutput}")
     {
         PlanName = planName;
         ExitCode = exitCode;
+        UserFacingOutput = userFacingOutput;
         FormattedOutput = formattedOutput;
     }
 
     public string PlanName { get; }
     public int ExitCode { get; }
+    public string UserFacingOutput { get; }
     public string FormattedOutput { get; }
 
     public static string FormatProcessOutput(PluginDevProcessResult result)
+        => BuildRelevantExcerpt(result) is { Length: > 0 } relevantExcerpt
+            ? relevantExcerpt
+            : FormatDetailedProcessOutput(result);
+
+    public static string FormatDetailedProcessOutput(PluginDevProcessResult result)
     {
         var sections = new List<string>();
 
@@ -2665,12 +2675,163 @@ public sealed class PluginDevBuildException : InvalidOperationException
             sections.Add($"stderr:\n{result.StandardError.Trim()}");
         }
 
-        if (sections.Count == 0)
+        return sections.Count == 0
+            ? "The build process did not emit any stdout or stderr output."
+            : string.Join("\n\n", sections);
+    }
+
+    private static string BuildRelevantExcerpt(PluginDevProcessResult result)
+    {
+        var stderrExcerpt = BuildRelevantExcerpt("stderr", result.StandardError);
+        if (!string.IsNullOrWhiteSpace(stderrExcerpt))
         {
-            return "The build process did not emit any stdout or stderr output.";
+            return stderrExcerpt;
         }
 
-        return string.Join("\n\n", sections);
+        var stdoutExcerpt = BuildRelevantExcerpt("stdout", result.StandardOutput);
+        return stdoutExcerpt;
+    }
+
+    private static string BuildRelevantExcerpt(string label, string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return string.Empty;
+        }
+
+        var lines = content
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n');
+
+        var exactErrorBlock = FindTrailingExactErrorBlock(lines);
+        if (exactErrorBlock.Length > 0)
+        {
+            return string.Join(Environment.NewLine, exactErrorBlock);
+        }
+
+        var lastInterestingIndex = FindLastInterestingLine(lines);
+        if (lastInterestingIndex < 0)
+        {
+            return $"{label}:\n{TakeTailBlock(lines)}";
+        }
+
+        var startIndex = FindBlockStart(lines, lastInterestingIndex);
+        var block = TrimBlock(lines, startIndex, lastInterestingIndex + 1);
+        if (block.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        return $"{label}:\n{string.Join(Environment.NewLine, block)}";
+    }
+
+    private static string[] FindTrailingExactErrorBlock(string[] lines)
+    {
+        var block = new List<string>();
+
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var line = lines[index].Trim();
+            if (line.Length == 0)
+            {
+                if (block.Count == 0)
+                {
+                    continue;
+                }
+
+                continue;
+            }
+
+            if (IsExactCompilerErrorLine(line))
+            {
+                block.Add(line);
+                continue;
+            }
+
+            if (block.Count > 0)
+            {
+                break;
+            }
+        }
+
+        block.Reverse();
+        return [.. block];
+    }
+
+    private static bool IsExactCompilerErrorLine(string line)
+    {
+        return line.Contains(": error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("error CS", StringComparison.OrdinalIgnoreCase)
+            || line.Contains(" error CS", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int FindLastInterestingLine(string[] lines)
+    {
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var line = lines[index].Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (IsInterestingBuildFailureLine(line))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool IsInterestingBuildFailureLine(string line)
+    {
+        return line.Contains(": error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains(" error ", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("error:", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("undefined", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("unable to", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("could not", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("not found", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int FindBlockStart(string[] lines, int endIndex)
+    {
+        var startIndex = Math.Max(0, endIndex - 11);
+        for (var index = endIndex; index >= startIndex; index--)
+        {
+            if (string.IsNullOrWhiteSpace(lines[index]))
+            {
+                return Math.Min(endIndex, index + 1);
+            }
+        }
+
+        return startIndex;
+    }
+
+    private static string[] TrimBlock(string[] lines, int startIndex, int endExclusive)
+    {
+        var block = lines[startIndex..endExclusive]
+            .SkipWhile(string.IsNullOrWhiteSpace)
+            .ToArray();
+
+        var trimmedLength = block.Length;
+        while (trimmedLength > 0 && string.IsNullOrWhiteSpace(block[trimmedLength - 1]))
+        {
+            trimmedLength -= 1;
+        }
+
+        return trimmedLength == block.Length ? block : block[..trimmedLength];
+    }
+
+    private static string TakeTailBlock(string[] lines)
+    {
+        var tail = TrimBlock(lines, Math.Max(0, lines.Length - 12), lines.Length);
+        return tail.Length == 0
+            ? string.Empty
+            : string.Join(Environment.NewLine, tail);
     }
 }
 
@@ -2695,6 +2856,9 @@ public static class PluginDevProcessRunner
         {
             startInfo.ArgumentList.Add(argument);
         }
+
+        startInfo.Environment["DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION"] = "1";
+        startInfo.Environment["DOTNET_CLI_CONTEXT_ANSI_PASS_THRU"] = "true";
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
