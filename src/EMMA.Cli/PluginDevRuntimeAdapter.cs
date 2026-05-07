@@ -1163,7 +1163,7 @@ public sealed class PluginDevBuildService
         return new PluginDevBuildPlan(
             "wasm-build",
             rootDirectory,
-            "sh",
+            "bash",
             [
                 "-lc",
                 $"set -euo pipefail; rm -rf {quotedProjectDirectory}/bin {quotedProjectDirectory}/obj {quotedPublishDirectory}; mkdir -p {quotedPublishDirectory}; dotnet restore {quotedProjectPath} --no-cache --force-evaluate --runtime wasi-wasm >/dev/null; publish_none_log={quotedPublishDirectory}/publish-nativecodegen-none.log; if ! {wasiSdkPrefix} dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=none -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -o {quotedPublishDirectory} 2>&1 | tee \"$publish_none_log\"; then if grep -q 'native/.*\\.wasm\" because it was not found' \"$publish_none_log\"; then echo 'WASM publish produced no native artifact with NativeCodeGen=none; retrying with NativeCodeGen=llvm...'; {wasiSdkPrefix} dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=llvm -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -o {quotedPublishDirectory}; else exit 1; fi; fi"
@@ -1187,7 +1187,7 @@ public sealed class PluginDevBuildService
         return new PluginDevBuildPlan(
             $"{target.ToString().ToLowerInvariant()}-native-build",
             rootDirectory,
-            "sh",
+            "bash",
             [
                 "-lc",
                 $"set -euo pipefail; rm -rf {quotedPublishDirectory}; mkdir -p {quotedPublishDirectory}; dotnet publish {quotedProjectPath} -c Release -r {runtimeIdentifier} --self-contained false -p:UseAppHost=true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -o {quotedPublishDirectory}; find {quotedPublishDirectory} -maxdepth 1 -type f \\( -name '*.pdb' -o -name '*.dbg' -o -name '*.xml' \\) -delete || true; rm -f {quotedPublishDirectory}/createdump"
