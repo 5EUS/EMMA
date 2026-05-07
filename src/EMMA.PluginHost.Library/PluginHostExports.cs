@@ -800,6 +800,21 @@ public static class PluginHostExports
         return SearchJsonManaged(pluginId, query, null);
     }
 
+    public static int OpenPluginManaged(string pluginId)
+    {
+        ClearLastError();
+
+        try
+        {
+            return TryResolvePlugin(pluginId, out _, out _) ? 1 : 0;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
     public static string? SearchJsonManaged(string pluginId, string query, string? correlationId)
     {
         ClearLastError();

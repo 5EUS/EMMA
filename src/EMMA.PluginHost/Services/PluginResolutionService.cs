@@ -160,7 +160,7 @@ public sealed class PluginResolutionService(
                     503));
         }
 
-        if (record.Runtime.State != PluginRuntimeState.External && !record.Status.Success)
+        if (!record.Status.Success)
         {
             return (
                 record,

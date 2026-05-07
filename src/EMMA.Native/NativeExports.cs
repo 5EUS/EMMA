@@ -1086,6 +1086,19 @@ public static class NativeExports
                 return 0;
             }
 
+            if (!TryGetRemotePluginHostBaseUri(out _))
+            {
+                EnsurePluginHostInitialized();
+
+                var openResult = PluginHostExports.OpenPluginManaged(pluginId.Trim());
+                if (openResult == 0)
+                {
+                    var error = PluginHostExports.GetLastErrorManaged() ?? $"Plugin '{pluginId}' could not be opened.";
+                    SetLastError(DecorateOpenPluginError(error));
+                    return 0;
+                }
+            }
+
             state.SelectedPluginId = pluginId.Trim();
             LogInfo("plugin", $"Opened plugin '{state.SelectedPluginId}' for handle={handle}");
 
@@ -1131,7 +1144,9 @@ public static class NativeExports
                 return IntPtr.Zero;
             }
 
-            var hostResult = SearchViaEmbeddedPluginHostTimed(activePluginId, query);
+            var hostResult = TryGetRemotePluginHostBaseUri(out var remoteBaseUri)
+                ? SearchViaRemotePluginHostTimed(remoteBaseUri, activePluginId, query)
+                : SearchViaEmbeddedPluginHostTimed(activePluginId, query);
             pluginHostCallMs = hostResult.HostCallMs;
             pluginHostTimingSnapshot = hostResult.HostTimingSnapshot;
             pluginHostCorrelationId = hostResult.CorrelationId;
@@ -2782,6 +2797,20 @@ public static class NativeExports
         string? HostTimingSnapshot,
         string CorrelationId);
 
+    private static SearchHostPhaseResult SearchViaRemotePluginHostTimed(Uri baseUri, string pluginId, string query)
+    {
+        var correlationId = Guid.NewGuid().ToString("n");
+        var hostCallStopwatch = Stopwatch.StartNew();
+        var requestUri = BuildRequestUri(
+            baseUri,
+            $"/pipeline/paged/search?pluginId={Uri.EscapeDataString(pluginId)}&query={Uri.EscapeDataString(query)}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+        using var response = RemotePluginHostHttpClient.Send(request);
+        var json = ReadHttpJsonBody(response, requestUri);
+        hostCallStopwatch.Stop();
+        return new SearchHostPhaseResult(json, hostCallStopwatch.ElapsedMilliseconds, null, correlationId);
+    }
+
     private static SearchHostPhaseResult SearchViaEmbeddedPluginHostTimed(string pluginId, string query)
     {
         EnsurePluginHostInitialized();
@@ -2829,6 +2858,22 @@ public static class NativeExports
 
         objectValue = default;
         return false;
+    }
+
+    private static string DecorateOpenPluginError(string error)
+    {
+        if (string.IsNullOrWhiteSpace(error))
+        {
+            return "Plugin could not be opened.";
+        }
+
+        if (error.Contains("signature-invalid", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("Plugin manifest signature is missing", StringComparison.OrdinalIgnoreCase))
+        {
+            return error + " Unsigned local development plugins require the signature policy to be disabled in emmaui Security settings, or the plugin must be installed with a valid signature.";
+        }
+
+        return error;
     }
 
     private static void EnsurePluginHostInitialized()

@@ -1288,6 +1288,39 @@ public sealed class PluginDevBuildService
         var sourcePath = Path.GetFullPath(plan.ArtifactPath);
         var destinationPath = sync.DestinationPath
             ?? throw new InvalidOperationException("Cannot sync build outputs because no sync destination path is configured.");
+        destinationPath = Path.GetFullPath(destinationPath);
+
+        var manifestPath = session.Discovery.ManifestPath;
+        var pluginId = TryReadPluginId(manifestPath);
+        var syncMessages = new List<string>();
+
+        var installLayout = ResolveInstalledSyncLayout(destinationPath, session.Profile.RuntimeTarget);
+
+        if (session.Profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
+        {
+            var wasmArtifactPath = ResolveWasmArtifactPath(session)
+                ?? throw new InvalidOperationException("Cannot sync build outputs because no built WASM component artifact could be resolved.");
+
+            var pluginRootPath = installLayout?.PluginRootPath;
+            var artifactDestinationDirectory = installLayout?.ArtifactDirectoryPath ?? destinationPath;
+
+            if (sync.CleanDestination && !string.IsNullOrWhiteSpace(pluginRootPath) && Directory.Exists(pluginRootPath))
+            {
+                Directory.Delete(pluginRootPath, recursive: true);
+            }
+            else if (sync.CleanDestination && Directory.Exists(destinationPath))
+            {
+                Directory.Delete(destinationPath, recursive: true);
+            }
+
+            Directory.CreateDirectory(artifactDestinationDirectory);
+            var artifactDestinationPath = Path.Combine(artifactDestinationDirectory, "plugin.wasm");
+            File.Copy(wasmArtifactPath, artifactDestinationPath, overwrite: true);
+            syncMessages.Add($"Synced WASM artifact '{wasmArtifactPath}' to '{artifactDestinationPath}'.");
+
+            TrySyncManifest(manifestPath, pluginId, installLayout?.ManifestsDirectoryPath, syncMessages);
+            return string.Join("\n", syncMessages);
+        }
 
         if (File.Exists(sourcePath))
         {
@@ -1298,7 +1331,9 @@ public sealed class PluginDevBuildService
             }
 
             File.Copy(sourcePath, destinationPath, overwrite: true);
-            return $"Synced build artifact '{sourcePath}' to '{destinationPath}'.";
+            syncMessages.Add($"Synced build artifact '{sourcePath}' to '{destinationPath}'.");
+            TrySyncManifest(manifestPath, pluginId, installLayout?.ManifestsDirectoryPath, syncMessages);
+            return string.Join("\n", syncMessages);
         }
 
         if (!Directory.Exists(sourcePath))
@@ -1306,13 +1341,17 @@ public sealed class PluginDevBuildService
             throw new InvalidOperationException($"Cannot sync build outputs because the built artifact path does not exist: {sourcePath}");
         }
 
-        if (sync.CleanDestination && Directory.Exists(destinationPath))
+        var directoryDestinationPath = installLayout?.PluginRootPath ?? destinationPath;
+
+        if (sync.CleanDestination && Directory.Exists(directoryDestinationPath))
         {
-            Directory.Delete(destinationPath, recursive: true);
+            Directory.Delete(directoryDestinationPath, recursive: true);
         }
 
-        CopyDirectoryContents(sourcePath, destinationPath);
-        return $"Synced build outputs from '{sourcePath}' to '{destinationPath}'.";
+        CopyDirectoryContents(sourcePath, directoryDestinationPath);
+        syncMessages.Add($"Synced build outputs from '{sourcePath}' to '{directoryDestinationPath}'.");
+        TrySyncManifest(manifestPath, pluginId, installLayout?.ManifestsDirectoryPath, syncMessages);
+        return string.Join("\n", syncMessages);
     }
 
     public PluginDevPackResult PackCurrentProfile(PluginDevSession session)
@@ -1573,6 +1612,75 @@ public sealed class PluginDevBuildService
             File.Copy(file, destinationPath, overwrite: true);
         }
     }
+
+    private static void TrySyncManifest(string? manifestPath, string? pluginId, string? manifestsDirectoryPath, List<string> messages)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath)
+            || string.IsNullOrWhiteSpace(pluginId)
+            || string.IsNullOrWhiteSpace(manifestsDirectoryPath)
+            || !File.Exists(manifestPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(manifestsDirectoryPath);
+        var manifestDestinationPath = Path.Combine(manifestsDirectoryPath, pluginId + ".json");
+        File.Copy(manifestPath, manifestDestinationPath, overwrite: true);
+        messages.Add($"Synced manifest '{manifestPath}' to '{manifestDestinationPath}'.");
+    }
+
+    private static string? TryReadPluginId(string? manifestPath)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        using var manifestDocument = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        return manifestDocument.RootElement.TryGetProperty("id", out var idProperty)
+            ? idProperty.GetString()
+            : null;
+    }
+
+    private static PluginDevInstalledSyncLayout? ResolveInstalledSyncLayout(string destinationPath, PluginRuntimeTarget runtimeTarget)
+    {
+        var normalizedDestinationPath = Path.GetFullPath(destinationPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var destinationDirectoryInfo = new DirectoryInfo(normalizedDestinationPath);
+
+        DirectoryInfo? pluginRootDirectory = destinationDirectoryInfo;
+        if (runtimeTarget == PluginRuntimeTarget.Wasm
+            && string.Equals(destinationDirectoryInfo.Name, "wasm", StringComparison.OrdinalIgnoreCase)
+            && destinationDirectoryInfo.Parent is not null)
+        {
+            pluginRootDirectory = destinationDirectoryInfo.Parent;
+        }
+
+        if (pluginRootDirectory?.Parent is null
+            || !string.Equals(pluginRootDirectory.Parent.Name, "plugins", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var pluginsDirectory = pluginRootDirectory.Parent;
+        var emmaRootDirectory = pluginsDirectory.Parent;
+        if (emmaRootDirectory is null)
+        {
+            return null;
+        }
+
+        var manifestsDirectoryPath = Path.Combine(emmaRootDirectory.FullName, "manifests");
+        var artifactDirectoryPath = runtimeTarget == PluginRuntimeTarget.Wasm
+            ? Path.Combine(pluginRootDirectory.FullName, "wasm")
+            : pluginRootDirectory.FullName;
+
+        return new PluginDevInstalledSyncLayout(pluginRootDirectory.FullName, artifactDirectoryPath, manifestsDirectoryPath);
+    }
+
+    private sealed record PluginDevInstalledSyncLayout(
+        string PluginRootPath,
+        string ArtifactDirectoryPath,
+        string ManifestsDirectoryPath);
 }
 
 public static class PluginDevRuntimeLibraryResolver

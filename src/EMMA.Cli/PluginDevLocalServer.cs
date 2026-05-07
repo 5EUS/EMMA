@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
@@ -12,9 +13,32 @@ namespace EMMA.Cli;
 public static class PluginDevLocalServer
 {
   private static readonly object BackgroundGate = new();
+  private static readonly JsonSerializerOptions UiJsonOptions = new(JsonSerializerDefaults.Web)
+  {
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    WriteIndented = true
+  };
+  private static readonly IReadOnlyList<PluginDevConsoleCommand> ConsoleCommands =
+  [
+    new("build", "build", "Run the normalized build plan for the active profile."),
+    new("build-pack", "build-pack", "Build and then pack the active profile."),
+    new("chapters", "chapters -i <mediaId>", "List chapters for a media item."),
+    new("doctor", "doctor", "Show discovery and pre-launch diagnostics."),
+    new("help", "help", "Show the browser console command list."),
+    new("pack", "pack", "Pack the active profile."),
+    new("page", "page -mi <mediaId> -ci <chapterId> -i <index>", "Get one page for a chapter."),
+    new("page-asset", "page-asset -mi <mediaId> -ci <chapterId>", "Get summary information for a chapter page asset."),
+    new("reload", "reload", "Refresh runtime state for the active profile."),
+    new("scenario", "scenario <name> [query]", "Run a built-in dev scenario for the active profile."),
+    new("search", "search -q <query>", "Search for media using the active runtime."),
+    new("session", "session", "Show the resolved plugin development session."),
+    new("watch", "watch [start|stop|status]", "Manage file watching for the active profile.")
+  ];
   private static Task? _backgroundTask;
   private static CancellationTokenSource? _backgroundCancellation;
   private static int? _backgroundPort;
+
+  internal static string ConsoleCommandCatalogJson => JsonSerializer.Serialize(ConsoleCommands, UiJsonOptions);
 
     public static async Task RunAsync(PluginDevApplication application, int port, CancellationToken cancellationToken)
     {
@@ -37,6 +61,8 @@ public static class PluginDevLocalServer
         app.MapGet("/api/logs", (PluginDevApplication backend) => backend.GetLogs());
         app.MapPost("/api/ui/diagnostics-level", async (UpdateUiDiagnosticsLevelRequest request, PluginDevApplication backend) =>
           await ExecuteAsync(() => Task.FromResult<object>(backend.UpdateUiDiagnosticsLevel(request.DiagnosticsLevel)), backend));
+        app.MapPost("/api/console/execute", async (ConsoleExecuteRequest request, PluginDevApplication backend) =>
+          await ExecuteAsync(async () => new MessageResponse(await ExecuteConsoleCommandAsync(request.CommandLine, backend)), backend));
         app.MapPost("/api/logs/clear", async (PluginDevApplication backend) =>
           await ExecuteAsync(() =>
           {
@@ -134,17 +160,470 @@ public static class PluginDevLocalServer
         }
     }
 
+        private static async Task<string> ExecuteConsoleCommandAsync(string commandLine, PluginDevApplication backend)
+        {
+          var trimmed = commandLine.Trim();
+          if (string.IsNullOrWhiteSpace(trimmed))
+          {
+            throw new InvalidOperationException("Enter a command before running the browser console.");
+          }
+
+          var tokens = TokenizeCommandLine(trimmed);
+          if (tokens.Count == 0)
+          {
+            throw new InvalidOperationException("Enter a command before running the browser console.");
+          }
+
+          backend.RecordInfo($"> {trimmed}");
+
+          var command = tokens[0].ToLowerInvariant();
+          var args = tokens.Skip(1).ToArray();
+
+          switch (command)
+          {
+            case "help":
+              EnsureNoArguments(command, args);
+              backend.RecordInfo(BuildHelpText());
+              return $"Executed '{trimmed}'.";
+
+            case "session":
+              EnsureNoArguments(command, args);
+              backend.RecordInfo(FormatSessionSnapshot(backend.GetSessionSnapshot()));
+              return $"Executed '{trimmed}'.";
+
+            case "doctor":
+              EnsureNoArguments(command, args);
+              backend.RecordInfo(FormatDoctorSnapshot(backend.GetSessionSnapshot()));
+              return $"Executed '{trimmed}'.";
+
+            case "build":
+              RejectAllScope(command, args);
+              EnsureNoArguments(command, args);
+              await backend.BuildAsync(CancellationToken.None);
+              return $"Executed '{trimmed}'.";
+
+            case "pack":
+              RejectAllScope(command, args);
+              EnsureNoArguments(command, args);
+              backend.RecordInfo(FormatPackResult(null, backend.Pack()));
+              return $"Executed '{trimmed}'.";
+
+            case "build-pack":
+              RejectAllScope(command, args);
+              EnsureNoArguments(command, args);
+              await backend.BuildAsync(CancellationToken.None);
+              backend.RecordInfo(FormatPackResult(null, backend.Pack()));
+              return $"Executed '{trimmed}'.";
+
+            case "reload":
+              EnsureNoArguments(command, args);
+              await backend.ReloadAsync(CancellationToken.None);
+              return $"Executed '{trimmed}'.";
+
+            case "watch":
+            {
+              var action = args.Length == 0 ? "start" : args[0].Trim().ToLowerInvariant();
+              if (args.Length > 1)
+              {
+                throw new InvalidOperationException("Usage: watch [start|stop|status]");
+              }
+
+              PluginDevWatchSnapshot snapshot = action switch
+              {
+                "start" => backend.StartWatch(),
+                "stop" => backend.StopWatch(),
+                "status" => backend.GetWatchSnapshot(),
+                _ => throw new InvalidOperationException($"Unknown watch action '{action}'. Use start, stop, or status.")
+              };
+
+              backend.RecordInfo(FormatWatchSnapshot(snapshot));
+              return $"Executed '{trimmed}'.";
+            }
+
+            case "scenario":
+            {
+              if (args.Length == 0)
+              {
+                throw new InvalidOperationException("Usage: scenario <name> [query]");
+              }
+
+              var scenarioName = args[0];
+              var query = args.Length > 1 ? string.Join(' ', args.Skip(1)) : null;
+              var result = await backend.RunScenarioAsync(scenarioName, query, CancellationToken.None);
+              backend.RecordInfo($"Scenario '{result.Name}' {(result.Succeeded ? "completed" : "failed")}.");
+              return $"Executed '{trimmed}'.";
+            }
+
+            case "search":
+            {
+              var query = ReadRequiredOption(command, args, "-q", "--query");
+              var results = await backend.SearchAsync(query, CancellationToken.None);
+              backend.RecordInfo(JsonSerializer.Serialize(results, UiJsonOptions));
+              return $"Executed '{trimmed}'.";
+            }
+
+            case "chapters":
+            {
+              var mediaId = ReadRequiredOption(command, args, "-i", "--mediaId");
+              var results = await backend.GetChaptersAsync(mediaId, CancellationToken.None);
+              backend.RecordInfo(JsonSerializer.Serialize(results, UiJsonOptions));
+              return $"Executed '{trimmed}'.";
+            }
+
+            case "page":
+            {
+              var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
+              var chapterId = ReadRequiredOption(command, args, "-ci", "--chapterId");
+              var indexText = ReadRequiredOption(command, args, "-i", "--index");
+              if (!int.TryParse(indexText, out var index))
+              {
+                throw new InvalidOperationException("Page index must be an integer.");
+              }
+
+              var result = await backend.GetPageAsync(mediaId, chapterId, index, CancellationToken.None);
+              backend.RecordInfo(result is null
+                ? "Page returned no content."
+                : JsonSerializer.Serialize(result, UiJsonOptions));
+              return $"Executed '{trimmed}'.";
+            }
+
+            case "page-asset":
+            {
+              var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
+              var chapterId = ReadRequiredOption(command, args, "-ci", "--chapterId");
+              var result = await backend.GetPageAssetAsync(mediaId, chapterId, CancellationToken.None);
+              backend.RecordInfo(result is null
+                ? "Page asset returned no payload."
+                : $"Page asset size: {result.Length} byte(s). Browser console output is summary-only for binary responses.");
+              return $"Executed '{trimmed}'.";
+            }
+
+            default:
+              throw new InvalidOperationException($"Unknown browser console command '{command}'. Run 'help' to see supported commands.");
+          }
+        }
+
+        private static IReadOnlyList<string> TokenizeCommandLine(string commandLine)
+        {
+          var tokens = new List<string>();
+          var buffer = new StringBuilder();
+          char? quote = null;
+          var escape = false;
+
+          foreach (var ch in commandLine)
+          {
+            if (escape)
+            {
+              buffer.Append(ch);
+              escape = false;
+              continue;
+            }
+
+            if (ch == '\\')
+            {
+              escape = true;
+              continue;
+            }
+
+            if (quote is not null)
+            {
+              if (ch == quote)
+              {
+                quote = null;
+              }
+              else
+              {
+                buffer.Append(ch);
+              }
+
+              continue;
+            }
+
+            if (ch == '\'' || ch == '"')
+            {
+              quote = ch;
+              continue;
+            }
+
+            if (char.IsWhiteSpace(ch))
+            {
+              if (buffer.Length > 0)
+              {
+                tokens.Add(buffer.ToString());
+                buffer.Clear();
+              }
+
+              continue;
+            }
+
+            buffer.Append(ch);
+          }
+
+          if (escape)
+          {
+            buffer.Append('\\');
+          }
+
+          if (quote is not null)
+          {
+            throw new InvalidOperationException("Unterminated quoted string in browser console command.");
+          }
+
+          if (buffer.Length > 0)
+          {
+            tokens.Add(buffer.ToString());
+          }
+
+          return tokens;
+        }
+
+        private static void EnsureNoArguments(string command, IReadOnlyList<string> args)
+        {
+          if (args.Count == 0)
+          {
+            return;
+          }
+
+          throw new InvalidOperationException($"Command '{command}' does not accept additional arguments in the browser console.");
+        }
+
+        private static void RejectAllScope(string command, IReadOnlyList<string> args)
+        {
+          if (args.Count == 1 && string.Equals(args[0], "all", StringComparison.OrdinalIgnoreCase))
+          {
+            throw new InvalidOperationException($"Command '{command} all' is not supported in the browser console. Use the terminal CLI when you need multi-profile execution.");
+          }
+        }
+
+        private static string ReadRequiredOption(string command, IReadOnlyList<string> args, params string[] optionNames)
+        {
+          var matches = new List<string>();
+
+          for (var index = 0; index < args.Count; index++)
+          {
+            var token = args[index];
+            if (!optionNames.Contains(token, StringComparer.OrdinalIgnoreCase))
+            {
+              continue;
+            }
+
+            if (index + 1 >= args.Count)
+            {
+              throw new InvalidOperationException($"Option '{token}' requires a value.");
+            }
+
+            matches.Add(args[index + 1]);
+            index += 1;
+          }
+
+          if (matches.Count == 0)
+          {
+            throw new InvalidOperationException($"Usage: {ConsoleCommands.First(item => string.Equals(item.Name, command, StringComparison.OrdinalIgnoreCase)).Usage}");
+          }
+
+          if (matches.Count > 1)
+          {
+            throw new InvalidOperationException($"Option '{optionNames[0]}' was provided more than once.");
+          }
+
+          return matches[0];
+        }
+
+        private static string BuildHelpText()
+        {
+          var builder = new StringBuilder();
+          builder.AppendLine("Available browser console commands:");
+          foreach (var command in ConsoleCommands)
+          {
+            builder.Append("  ");
+            builder.Append(command.Usage.PadRight(42));
+            builder.AppendLine(command.Description);
+          }
+
+          builder.AppendLine();
+          builder.AppendLine("Arrow Up/Down recalls previous commands in the input field.");
+          builder.AppendLine("Quote values when they contain spaces, for example: search -q \"full metal\"");
+          return builder.ToString().TrimEnd();
+        }
+
+        private static string FormatSessionSnapshot(PluginDevSessionSnapshot session)
+        {
+          var builder = new StringBuilder();
+          builder.AppendLine($"Session ID: {session.Id}");
+          builder.AppendLine($"State: {session.State}");
+          builder.AppendLine($"Working Directory: {session.WorkingDirectory}");
+          builder.AppendLine($"Profile: {session.Profile.Name}");
+          builder.AppendLine($"Plugin ID: {session.Profile.PluginId}");
+          builder.AppendLine($"Host URL: {session.Profile.HostUrl}");
+          builder.AppendLine($"Runtime Target: {session.Profile.RuntimeTarget}");
+          builder.AppendLine($"Execution Mode: {session.Profile.ExecutionMode}");
+          builder.AppendLine($"Logging: plugin={(session.Profile.Logging.Plugin ? "on" : "off")}, aspNetHost={(session.Profile.Logging.AspNetHost ? "on" : "off")}, httpClient={(session.Profile.Logging.HttpClient ? "on" : "off")}");
+          if (session.Profile.Sync.Enabled)
+          {
+            builder.AppendLine($"Sync: onBuild={(session.Profile.Sync.OnBuild ? "on" : "off")}, cleanDestination={(session.Profile.Sync.CleanDestination ? "on" : "off")}, destination={session.Profile.Sync.DestinationPath}");
+          }
+
+          if (!string.IsNullOrWhiteSpace(session.Profile.WasiSdkPath))
+          {
+            builder.AppendLine($"WASI SDK Path: {session.Profile.WasiSdkPath}");
+          }
+
+          builder.AppendLine($"Runtime Adapter: {session.RuntimeAdapterName}");
+          builder.AppendLine($"Profile Source: {(session.Profile.IsInferred ? "inferred" : "configured")}");
+
+          if (!string.IsNullOrWhiteSpace(session.Profile.ArtifactPath))
+          {
+            builder.AppendLine($"Artifact Path: {session.Profile.ArtifactPath}");
+          }
+
+          if (session.Profile.WatchGlobs.Count > 0)
+          {
+            builder.AppendLine($"Watch Globs: {string.Join(", ", session.Profile.WatchGlobs)}");
+          }
+
+          builder.AppendLine($"Watch Status: {session.Watch.Status}");
+          builder.AppendLine($"Watch Behavior: {session.Watch.Behavior}");
+
+          if (session.Watch.LastChangedUtc is not null)
+          {
+            builder.AppendLine($"Watch Last Change: {session.Watch.LastChangedUtc:O} ({session.Watch.LastChangedPath})");
+          }
+
+          if (session.Watch.LastReloadUtc is not null)
+          {
+            builder.AppendLine($"Watch Last Reload: {session.Watch.LastReloadUtc:O} ({session.Watch.LastReloadMessage})");
+          }
+
+          builder.AppendLine($"Discovery Root: {session.RootDirectory}");
+          builder.AppendLine($"Manifest: {session.ManifestPath ?? "<not found>"}");
+          builder.AppendLine($"Project: {session.ProjectFilePath ?? "<not found>"}");
+
+          if (session.AvailableProfiles.Count > 0)
+          {
+            builder.AppendLine("Available Profiles:");
+            foreach (var profile in session.AvailableProfiles)
+            {
+              var source = profile.IsInferred ? "inferred" : "configured";
+              var artifactSuffix = string.IsNullOrWhiteSpace(profile.ArtifactPath) ? string.Empty : $" artifact={profile.ArtifactPath}";
+              var syncSuffix = profile.Sync.Enabled ? $" sync={profile.Sync.DestinationPath}" : string.Empty;
+              builder.AppendLine($"  - {profile.Name} [{source}] target={profile.RuntimeTarget} mode={profile.ExecutionMode}{artifactSuffix}{syncSuffix}");
+            }
+          }
+
+          if (session.Diagnostics.Count > 0)
+          {
+            builder.AppendLine("Diagnostics:");
+            foreach (var diagnostic in session.Diagnostics)
+            {
+              builder.AppendLine($"  - [{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message}");
+            }
+          }
+
+          return builder.ToString().TrimEnd();
+        }
+
+        private static string FormatDoctorSnapshot(PluginDevSessionSnapshot session)
+        {
+          var builder = new StringBuilder();
+          builder.AppendLine("Plugin development doctor");
+          builder.AppendLine($"  Root: {session.RootDirectory}");
+          builder.AppendLine($"  Manifest: {session.ManifestPath ?? "<not found>"}");
+          builder.AppendLine($"  Project: {session.ProjectFilePath ?? "<not found>"}");
+          builder.AppendLine($"  Plugin ID: {session.PluginId}");
+
+          if (!string.IsNullOrWhiteSpace(session.PluginName))
+          {
+            builder.AppendLine($"  Plugin Name: {session.PluginName}");
+          }
+
+          if (session.MediaTypes.Count > 0)
+          {
+            builder.AppendLine($"  Media Types: {string.Join(", ", session.MediaTypes)}");
+          }
+
+          if (session.SupportedTargets.Count > 0)
+          {
+            builder.AppendLine($"  Supported Targets: {string.Join(", ", session.SupportedTargets)}");
+          }
+
+          if (session.ArtifactCandidates.Count > 0)
+          {
+            builder.AppendLine("  Artifact Candidates:");
+            foreach (var artifact in session.ArtifactCandidates)
+            {
+              var status = artifact.Exists ? "present" : "missing";
+              builder.AppendLine($"    - {artifact.Target} [{artifact.Kind}] {status}: {artifact.Path}");
+            }
+          }
+
+          if (session.Diagnostics.Count == 0)
+          {
+            builder.AppendLine("  No diagnostics.");
+            return builder.ToString().TrimEnd();
+          }
+
+          builder.AppendLine("  Diagnostics:");
+          foreach (var diagnostic in session.Diagnostics)
+          {
+            builder.AppendLine($"    - [{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message}");
+          }
+
+          return builder.ToString().TrimEnd();
+        }
+
+        private static string FormatPackResult(string? profileName, PluginDevPackResult result)
+        {
+          var prefix = string.IsNullOrWhiteSpace(profileName) ? string.Empty : $"[{profileName}] ";
+          return string.Join(Environment.NewLine,
+          [
+            $"{prefix}Package: {result.PackagePath}",
+            $"{prefix}Pack Directory: {result.PackageDirectory}",
+            $"{prefix}Manifest: {result.ManifestPath}",
+            $"{prefix}Artifact: {result.ArtifactPath}"
+          ]);
+        }
+
+        private static string FormatWatchSnapshot(PluginDevWatchSnapshot snapshot)
+        {
+          var lines = new List<string>
+          {
+            $"Watch Enabled: {snapshot.IsEnabled}",
+            $"Watch Status: {snapshot.Status}",
+            $"Supports Reload: {snapshot.SupportsReload}",
+            $"Behavior: {snapshot.Behavior}"
+          };
+
+          if (snapshot.WatchGlobs.Count > 0)
+          {
+            lines.Add($"Watch Globs: {string.Join(", ", snapshot.WatchGlobs)}");
+          }
+
+          if (snapshot.LastChangedUtc is not null)
+          {
+            lines.Add($"Last Change: {snapshot.LastChangedUtc:O} ({snapshot.LastChangedPath})");
+          }
+
+          if (snapshot.LastReloadUtc is not null)
+          {
+            lines.Add($"Last Reload: {snapshot.LastReloadUtc:O} ({snapshot.LastReloadMessage})");
+          }
+
+          return string.Join(Environment.NewLine, lines);
+        }
+
     private sealed record SelectProfileRequest(string Name);
     private sealed record RunScenarioRequest(string Name, string? Query);
     private sealed record UpdateUiDiagnosticsLevelRequest(string DiagnosticsLevel);
+        private sealed record ConsoleExecuteRequest(string CommandLine);
     private sealed record MessageResponse(string Message);
     private sealed record OpenDirectoryResponse(string Directory);
     private sealed record ErrorResponse(string Error);
+        private sealed record PluginDevConsoleCommand(string Name, string Usage, string Description);
 }
 
 internal static class PluginDevLocalUi
 {
-    public const string Html = """
+        public static string Html => $$"""
 <!doctype html>
 <html lang="en">
 <head>
@@ -313,6 +792,73 @@ internal static class PluginDevLocalUi
       font-weight: 700;
     }
     .toolbar-inline select { width: auto; min-width: 160px; padding-right: 30px; }
+    .console-shell {
+      display: grid;
+      gap: 8px;
+      margin: 8px 0 12px;
+      padding: 12px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.58);
+    }
+    .console-input-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+      position: relative;
+    }
+    .console-input-row button { width: auto; min-width: 96px; }
+    .console-input {
+      font-family: "Cascadia Code", "Consolas", monospace;
+      font-size: 13px;
+    }
+    .console-autocomplete {
+      position: absolute;
+      left: 0;
+      right: 106px;
+      top: calc(100% + 6px);
+      z-index: 10;
+      display: none;
+      max-height: 220px;
+      overflow: auto;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.96);
+      box-shadow: 0 18px 40px rgba(43,34,18,0.16);
+      backdrop-filter: blur(12px);
+    }
+    .console-autocomplete.visible { display: grid; }
+    .console-suggestion {
+      padding: 10px 12px;
+      border: 0;
+      border-bottom: 1px solid rgba(28,27,25,0.08);
+      background: transparent;
+      text-align: left;
+      width: 100%;
+      min-width: 0;
+      color: var(--ink);
+      font-weight: 500;
+      border-radius: 0;
+      font-family: "Cascadia Code", "Consolas", monospace;
+      font-size: 12px;
+    }
+    .console-suggestion:last-child { border-bottom: 0; }
+    .console-suggestion:hover,
+    .console-suggestion:focus-visible {
+      background: rgba(15,118,110,0.1);
+      outline: 0;
+      transform: none;
+    }
+    .console-hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      min-height: 1.45em;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .log-panel {
       min-height: 320px;
       max-height: 640px;
@@ -427,6 +973,15 @@ internal static class PluginDevLocalUi
             <div class="log-meta"><span>Operation log</span><span id="log-status">idle</span></div>
             <button id="clear-logs-btn">Clear console</button>
           </div>
+          <div class="console-shell">
+            <label class="label" for="console-input">Console Input</label>
+            <div class="console-input-row">
+              <input class="console-input" id="console-input" aria-label="console input" placeholder="Type a command and press Enter" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" />
+              <button class="btn-accent" id="console-run-btn">Run</button>
+              <div class="console-autocomplete" id="console-autocomplete" role="listbox" aria-label="command suggestions"></div>
+            </div>
+            <div class="console-hint" id="console-hint">Type help for the available browser console commands. Arrow Up and Arrow Down recall previous commands.</div>
+          </div>
           <div class="log-panel" id="logs"></div>
         </div></article>
       </section>
@@ -434,6 +989,7 @@ internal static class PluginDevLocalUi
   </div>
 
   <script>
+    const consoleCommandCatalog = {{PluginDevLocalServer.ConsoleCommandCatalogJson}};
     const sessionMeta = document.getElementById('session-meta');
     const profileSelect = document.getElementById('profile-select');
     const watchMeta = document.getElementById('watch-meta');
@@ -441,6 +997,10 @@ internal static class PluginDevLocalUi
     const diagnosticsLevel = document.getElementById('diagnostics-level');
     const logs = document.getElementById('logs');
     const logStatus = document.getElementById('log-status');
+    const consoleInput = document.getElementById('console-input');
+    const consoleRunButton = document.getElementById('console-run-btn');
+    const consoleAutocomplete = document.getElementById('console-autocomplete');
+    const consoleHint = document.getElementById('console-hint');
     const scenarioSelect = document.getElementById('scenario-select');
     const scenarioDescription = document.getElementById('scenario-description');
     const scenarioQuery = document.getElementById('scenario-query');
@@ -451,8 +1011,195 @@ internal static class PluginDevLocalUi
     let profileSwitchInFlight = false;
     let lastScenarioName = null;
     let diagnosticsLevelInFlight = false;
+    let latestScenarios = [];
+    let consoleHistory = loadConsoleHistory();
+    let consoleHistoryIndex = null;
+    let consoleDraft = '';
+    let consoleSuggestionValues = [];
+    let consoleAutocompletePinned = false;
 
     const severityRank = { info: 0, warning: 1, error: 2 };
+
+    function loadConsoleHistory() {
+      try {
+        const raw = window.localStorage.getItem('emma-plugin-dev-console-history');
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [];
+      } catch {
+        return [];
+      }
+    }
+
+    function saveConsoleHistory() {
+      try {
+        window.localStorage.setItem('emma-plugin-dev-console-history', JSON.stringify(consoleHistory));
+      } catch {
+      }
+    }
+
+    function rememberConsoleCommand(commandLine) {
+      const trimmed = commandLine.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      consoleHistory = consoleHistory.filter(item => item !== trimmed);
+      consoleHistory.push(trimmed);
+      if (consoleHistory.length > 50) {
+        consoleHistory = consoleHistory.slice(consoleHistory.length - 50);
+      }
+
+      saveConsoleHistory();
+      consoleHistoryIndex = null;
+      consoleDraft = '';
+    }
+
+    function resetConsoleHistoryCursor() {
+      consoleHistoryIndex = null;
+      consoleDraft = '';
+    }
+
+    function moveConsoleHistory(direction) {
+      if (!consoleHistory.length) {
+        return;
+      }
+
+      if (consoleHistoryIndex === null) {
+        consoleDraft = consoleInput.value;
+        consoleHistoryIndex = consoleHistory.length;
+      }
+
+      const nextIndex = Math.max(0, Math.min(consoleHistory.length, consoleHistoryIndex + direction));
+      consoleHistoryIndex = nextIndex;
+
+      if (nextIndex === consoleHistory.length) {
+        consoleInput.value = consoleDraft;
+        return;
+      }
+
+      consoleInput.value = consoleHistory[nextIndex];
+      updateConsoleHint();
+      renderConsoleSuggestions();
+    }
+
+    function buildConsoleSuggestions() {
+      const values = [];
+      const seen = new Set();
+
+      function addSuggestion(value) {
+        const normalized = (value || '').trim();
+        if (!normalized || seen.has(normalized)) {
+          return;
+        }
+
+        seen.add(normalized);
+        values.push(normalized);
+      }
+
+      consoleCommandCatalog.forEach(item => {
+        addSuggestion(item.usage);
+        addSuggestion(item.name);
+      });
+
+      latestScenarios.forEach(item => {
+        addSuggestion(`scenario ${item.name}${item.defaultQuery ? ` ${item.defaultQuery}` : ''}`);
+      });
+
+      consoleSuggestionValues = values;
+      if (consoleAutocomplete.classList.contains('visible')) {
+        renderConsoleSuggestions();
+      }
+    }
+
+    function hideConsoleSuggestions() {
+      consoleAutocomplete.classList.remove('visible');
+      consoleAutocomplete.innerHTML = '';
+      consoleAutocompletePinned = false;
+    }
+
+    function showConsoleSuggestions() {
+      renderConsoleSuggestions();
+    }
+
+    function renderConsoleSuggestions() {
+      const filter = consoleInput.value.trim().toLowerCase();
+      const matches = consoleSuggestionValues.filter(value => {
+        if (!filter) {
+          return true;
+        }
+
+        return value.toLowerCase().includes(filter);
+      }).slice(0, 8);
+
+      if (!matches.length) {
+        hideConsoleSuggestions();
+        return;
+      }
+
+      consoleAutocomplete.innerHTML = '';
+      matches.forEach(value => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'console-suggestion';
+        button.textContent = value;
+        button.setAttribute('role', 'option');
+        button.addEventListener('pointerdown', event => {
+          event.preventDefault();
+          consoleInput.value = value;
+          updateConsoleHint();
+          hideConsoleSuggestions();
+          consoleInput.focus();
+        });
+        consoleAutocomplete.appendChild(button);
+      });
+
+      consoleAutocomplete.classList.add('visible');
+    }
+
+    function updateConsoleHint() {
+      const value = consoleInput.value.trim();
+      if (!value) {
+        consoleHint.textContent = 'Type help for the available browser console commands. Arrow Up and Arrow Down recall previous commands.';
+        return;
+      }
+
+      const commandName = value.split(/\s+/)[0].toLowerCase();
+      const match = consoleCommandCatalog.find(item => item.name.toLowerCase() === commandName)
+        || consoleCommandCatalog.find(item => item.name.toLowerCase().startsWith(commandName));
+
+      if (match) {
+        consoleHint.textContent = `${match.usage} - ${match.description}`;
+        return;
+      }
+
+      consoleHint.textContent = `Unknown command '${commandName}'. Type help to see supported commands.`;
+    }
+
+    async function runConsoleCommand() {
+      const commandLine = consoleInput.value.trim();
+      if (!commandLine) {
+        updateConsoleHint();
+        return;
+      }
+
+      hideConsoleSuggestions();
+      rememberConsoleCommand(commandLine);
+      consoleRunButton.disabled = true;
+      consoleInput.disabled = true;
+      try {
+        await perform(`running ${commandLine.split(/\s+/, 1)[0]}`, () => api('/api/console/execute', {
+          method: 'POST',
+          body: JSON.stringify({ commandLine })
+        }));
+        consoleInput.value = '';
+        resetConsoleHistoryCursor();
+        updateConsoleHint();
+      } finally {
+        consoleRunButton.disabled = false;
+        consoleInput.disabled = false;
+        consoleInput.focus();
+      }
+    }
 
     function normalizeSeverity(item) {
       return (item.severity || item.level || (item.isError ? 'error' : 'info') || 'info').toLowerCase();
@@ -469,6 +1216,8 @@ internal static class PluginDevLocalUi
 
     function renderScenarioCatalog(session) {
       const scenarios = session.scenarios || [];
+      latestScenarios = scenarios;
+      buildConsoleSuggestions();
       const selectedName = scenarios.some(item => item.name === lastScenarioName)
         ? lastScenarioName
         : (scenarios[0]?.name || '');
@@ -721,6 +1470,47 @@ internal static class PluginDevLocalUi
     document.getElementById('watch-start-btn').addEventListener('click', () => perform('starting watch', () => api('/api/watch/start', { method: 'POST' })));
     document.getElementById('watch-stop-btn').addEventListener('click', () => perform('stopping watch', () => api('/api/watch/stop', { method: 'POST' })));
     document.getElementById('clear-logs-btn').addEventListener('click', () => perform('clearing console', () => api('/api/logs/clear', { method: 'POST' })));
+    consoleRunButton.addEventListener('click', () => runConsoleCommand());
+    consoleInput.addEventListener('input', () => {
+      resetConsoleHistoryCursor();
+      updateConsoleHint();
+      showConsoleSuggestions();
+    });
+    consoleInput.addEventListener('focus', () => {
+      showConsoleSuggestions();
+    });
+    consoleInput.addEventListener('blur', () => {
+      if (!consoleAutocompletePinned) {
+        hideConsoleSuggestions();
+      }
+    });
+    consoleInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        runConsoleCommand();
+        return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        hideConsoleSuggestions();
+        moveConsoleHistory(-1);
+        return;
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        hideConsoleSuggestions();
+        moveConsoleHistory(1);
+      }
+    });
+    consoleAutocomplete.addEventListener('mouseenter', () => {
+      consoleAutocompletePinned = true;
+    });
+    consoleAutocomplete.addEventListener('mouseleave', () => {
+      consoleAutocompletePinned = false;
+      hideConsoleSuggestions();
+    });
     diagnosticsLevel.addEventListener('change', async () => {
       diagnosticsLevelInFlight = true;
       try {
@@ -742,6 +1532,8 @@ internal static class PluginDevLocalUi
       body: JSON.stringify({ name: scenarioSelect.value, query: scenarioQuery.value })
     })));
 
+    buildConsoleSuggestions();
+    updateConsoleHint();
     refresh();
     setInterval(refresh, 2500);
   </script>

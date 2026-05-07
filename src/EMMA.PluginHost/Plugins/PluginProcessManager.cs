@@ -213,7 +213,7 @@ public sealed class PluginProcessManager(
             if (hasEndpoint && !TryResolveEntrypoint(manifest, out executable))
             {
                 AppendProcessEvent(manifest.Id, "startup skipped: endpoint configured but no local entrypoint resolvable");
-                if (allowsExternal)
+                if (allowsExternal && !HasLocalPluginPayload(manifest))
                 {
                     return current.State == PluginRuntimeState.Unknown
                         ? PluginRuntimeStatus.External()
@@ -222,8 +222,8 @@ public sealed class PluginProcessManager(
 
                 return current.WithState(
                     PluginRuntimeState.Disabled,
-                    "external-runtime-disabled",
-                    "Endpoint is configured but external endpoint runtime is disabled by runtime strategy.");
+                    "entrypoint-missing",
+                    "Plugin has local payload files but no executable entrypoint could be resolved.");
             }
 
             AppendProcessEvent(manifest.Id, "preparing sandbox");
@@ -774,6 +774,13 @@ public sealed class PluginProcessManager(
             executable = string.Empty;
             return false;
         }
+    }
+
+    private bool HasLocalPluginPayload(PluginManifest manifest)
+    {
+        var pluginRoot = _entrypointResolver.GetPluginRoot(manifest.Id);
+        return Directory.Exists(pluginRoot)
+            && Directory.EnumerateFileSystemEntries(pluginRoot, "*", SearchOption.TopDirectoryOnly).Any();
     }
 
     private static void ApplyPluginPort(PluginManifest manifest, ProcessStartInfo startInfo)
