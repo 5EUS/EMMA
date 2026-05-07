@@ -16,7 +16,7 @@ public sealed class PluginDevConfigLoader
         }
 
         var content = File.ReadAllText(configPath);
-        var document = JsonSerializer.Deserialize<PluginDevConfigDocument>(content, SerializerOptions)
+        var document = JsonSerializer.Deserialize(content, PluginDevJsonContexts.Config.PluginDevConfigDocument)
             ?? new PluginDevConfigDocument();
 
         return new PluginDevConfigLoadResult(configPath, document);
@@ -52,13 +52,6 @@ public sealed class PluginDevConfigLoader
 
         return null;
     }
-
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true
-    };
 }
 
 public sealed record PluginDevConfigLoadResult(string? ConfigPath, PluginDevConfigDocument Document);

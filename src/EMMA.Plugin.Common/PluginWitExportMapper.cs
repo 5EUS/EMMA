@@ -7,6 +7,7 @@ namespace EMMA.Plugin.Common;
 /// Reduces boilerplate in WASM plugins by providing reusable mapping patterns.
 /// </summary>
 [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
+[RequiresDynamicCode("Uses dynamic binding and is not AOT-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for AOT-compatible plugin code.")]
 public abstract class PluginWitExportMapper<TExportSet>
     where TExportSet : class
 {
@@ -24,6 +25,7 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// Map a list of domain items to WIT export types.
     /// </summary>
     [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
+    [RequiresDynamicCode("Uses dynamic binding and is not AOT-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for AOT-compatible plugin code.")]
     public List<object> MapListToWit(IReadOnlyList<dynamic> domainItems)
     {
         if (domainItems == null || domainItems.Count == 0)
@@ -63,6 +65,7 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// Map a nullable domain item to WIT export type.
     /// </summary>
     [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
+    [RequiresDynamicCode("Uses dynamic binding and is not AOT-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for AOT-compatible plugin code.")]
     public object? MapNullableToWit(dynamic? domainItem)
     {
         return domainItem == null ? null : MapToWit(domainItem);
@@ -80,6 +83,7 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// Helper to safely extract metadata from domain items.
     /// </summary>
     [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
+    [RequiresDynamicCode("Uses dynamic binding and is not AOT-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for AOT-compatible plugin code.")]
     protected List<TMetadata> ExtractMetadata<TMetadata>(
         dynamic domainItem,
         Func<dynamic, TMetadata> selector)

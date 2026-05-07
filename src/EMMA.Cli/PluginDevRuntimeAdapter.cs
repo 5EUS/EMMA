@@ -132,11 +132,6 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
 
 public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     private readonly string _rootDirectory;
     private readonly string? _projectPath;
 
@@ -154,25 +149,25 @@ public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
     public async Task<IReadOnlyList<SearchItem>> SearchAsync(string query, CancellationToken cancellationToken)
     {
         var json = await InvokeAsync(PluginOperationNames.Search, [query], cancellationToken);
-        return Deserialize<IReadOnlyList<SearchItem>>(json) ?? [];
+        return DeserializeSearchItems(json);
     }
 
     public async Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
     {
         var json = await InvokeAsync(PluginOperationNames.Chapters, [mediaId], cancellationToken);
-        return Deserialize<IReadOnlyList<ChapterItem>>(json) ?? [];
+        return DeserializeChapterItems(json);
     }
 
     public async Task<PageItem?> GetPageAsync(string mediaId, string chapterId, int index, CancellationToken cancellationToken)
     {
         var json = await InvokeAsync(PluginOperationNames.Page, [mediaId, chapterId, index.ToString()], cancellationToken);
-        return Deserialize<PageItem>(json);
+        return DeserializePageItem(json);
     }
 
     public async Task<IReadOnlyList<PageItem>> GetPagesAsync(string mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken)
     {
         var json = await InvokeAsync(PluginOperationNames.Pages, [mediaId, chapterId, startIndex.ToString(), count.ToString()], cancellationToken);
-        return Deserialize<IReadOnlyList<PageItem>>(json) ?? [];
+        return DeserializePageItems(json);
     }
 
     public Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
@@ -219,14 +214,44 @@ public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
         return result.StandardOutput.Trim();
     }
 
-    private static T? Deserialize<T>(string json)
+    private static IReadOnlyList<SearchItem> DeserializeSearchItems(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.SearchItemArray) ?? [];
+    }
+
+    private static IReadOnlyList<ChapterItem> DeserializeChapterItems(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.ChapterItemArray) ?? [];
+    }
+
+    private static PageItem? DeserializePageItem(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
             return default;
         }
 
-        return JsonSerializer.Deserialize<T>(json, SerializerOptions);
+        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.PageItem);
+    }
+
+    private static IReadOnlyList<PageItem> DeserializePageItems(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.PageItemArray) ?? [];
     }
 }
 
