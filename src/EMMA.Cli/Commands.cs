@@ -232,7 +232,7 @@ public class MyCommands
         Console.WriteLine("Diagnostics:");
         foreach (var diagnostic in session.Diagnostics)
         {
-            Console.WriteLine($"  [{diagnostic.Severity}/{diagnostic.Type}] {diagnostic.Code}: {diagnostic.Message}");
+            PluginDevConsoleTheme.WriteDiagnostic("  ", diagnostic);
         }
     }
 
@@ -379,7 +379,7 @@ public class MyCommands
                             for (var index = seenLogCount; index < entries.Count; index++)
                             {
                                 var entry = entries[index];
-                                Console.WriteLine($"[{entry.Level}] {entry.TimestampUtc:HH:mm:ss} {entry.Message}");
+                                PluginDevConsoleTheme.WriteLogEntry(entry);
                             }
 
                             seenLogCount = entries.Count;
@@ -485,7 +485,7 @@ public class MyCommands
         Console.WriteLine("  Diagnostics:");
         foreach (var diagnostic in session.Diagnostics)
         {
-            Console.WriteLine($"    [{diagnostic.Severity}/{diagnostic.Type}] {diagnostic.Code}: {diagnostic.Message}");
+            PluginDevConsoleTheme.WriteDiagnostic("    ", diagnostic);
         }
     }
 

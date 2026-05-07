@@ -233,10 +233,16 @@ internal static class PluginDevLocalUi
       letter-spacing: 0.08em;
       color: var(--muted);
     }
-    .kv { display: grid; gap: 8px; }
-    .kv div { display: grid; gap: 3px; }
+    .kv { display: grid; gap: 8px; min-width: 0; }
+    .kv div { display: grid; gap: 3px; min-width: 0; }
     .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-    .value { font-size: 14px; }
+    .value {
+      font-size: 14px;
+      min-width: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .control-row { display: grid; gap: 10px; }
     select, input, button {
       width: 100%;
@@ -271,12 +277,17 @@ internal static class PluginDevLocalUi
       border-radius: 14px;
       padding: 10px 12px;
       background: rgba(255,255,255,0.55);
+      min-width: 0;
     }
     .diag-item { border-left-width: 6px; }
+    .log-item { border-left-width: 6px; }
     .diag-item.info { border-color: rgba(15,118,110,0.2); background: rgba(240,253,250,0.88); }
     .diag-item.warning { border-color: rgba(180,83,9,0.24); background: rgba(255,247,237,0.88); }
     .diag-item.error { border-color: rgba(185,28,28,0.24); background: rgba(254,242,242,0.88); }
-    .meta-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .log-item.info { border-color: rgba(15,118,110,0.2); background: rgba(240,253,250,0.88); }
+    .log-item.warning { border-color: rgba(180,83,9,0.24); background: rgba(255,247,237,0.88); }
+    .log-item.error { border-color: rgba(185,28,28,0.24); background: rgba(254,242,242,0.88); }
+    .meta-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; }
     .chip {
       border-radius: 999px;
       padding: 5px 9px;
@@ -318,12 +329,23 @@ internal static class PluginDevLocalUi
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.08em;
+      min-width: 0;
+      flex-wrap: wrap;
     }
+    .log-meta > * { min-width: 0; }
     .log-message {
       font-family: "Cascadia Code", "Consolas", monospace;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
       font-size: 12px;
       line-height: 1.5;
+    }
+    .diag-message {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      min-width: 0;
     }
     .empty { color: var(--muted); font-size: 14px; }
     @media (max-width: 960px) {
@@ -433,7 +455,7 @@ internal static class PluginDevLocalUi
     const severityRank = { info: 0, warning: 1, error: 2 };
 
     function normalizeSeverity(item) {
-      return (item.severity || (item.isError ? 'error' : 'info') || 'info').toLowerCase();
+      return (item.severity || item.level || (item.isError ? 'error' : 'info') || 'info').toLowerCase();
     }
 
     function normalizeDiagnosticsLevel(level) {
@@ -569,7 +591,8 @@ internal static class PluginDevLocalUi
           const severity = normalizeSeverity(item);
           const type = (item.type || 'general').toLowerCase();
           node.className = `diag-item ${severity}`;
-          node.innerHTML = `<div class="log-meta"><div class="meta-chips"><span class="chip ${severity}">${severity}</span><span class="chip type">${type}</span></div><span>${item.code}</span></div><div>${item.message}</div>`;
+          node.innerHTML = `<div class="log-meta"><div class="meta-chips"><span class="chip ${severity}">${severity}</span><span class="chip type">${type}</span></div><span>${item.code}</span></div><div class="diag-message"></div>`;
+          node.querySelector('.diag-message').textContent = item.message;
           diagnostics.appendChild(node);
         });
       }
@@ -584,8 +607,9 @@ internal static class PluginDevLocalUi
 
       entries.slice().reverse().forEach(entry => {
         const node = document.createElement('div');
-        node.className = 'log-item';
-        node.innerHTML = `<div class="log-meta"><span>${entry.level}</span><span>${new Date(entry.timestampUtc).toLocaleTimeString()}</span></div><div class="log-message"></div>`;
+        const severity = normalizeSeverity(entry);
+        node.className = `log-item ${severity}`;
+        node.innerHTML = `<div class="log-meta"><div class="meta-chips"><span class="chip ${severity}">${severity}</span></div><span>${new Date(entry.timestampUtc).toLocaleTimeString()}</span></div><div class="log-message"></div>`;
         node.querySelector('.log-message').textContent = entry.message;
         logs.appendChild(node);
       });

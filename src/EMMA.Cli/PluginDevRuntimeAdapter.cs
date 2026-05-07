@@ -248,12 +248,24 @@ public sealed class DeferredWasmRuntimeAdapter(
     IReadOnlyList<string> permittedDomains,
     Func<string?> resolveComponentPath) : IPluginDevRuntimeAdapter, IPluginDevRuntimeLogSource
 {
-    private readonly Lazy<WasmCliRuntimeAdapter> _inner = new(() =>
+    private readonly Lock _gate = new();
+    private WasmCliRuntimeAdapter? _inner;
+
+    private WasmCliRuntimeAdapter GetOrCreateInner()
     {
-        var componentPath = resolveComponentPath()
-            ?? throw new InvalidOperationException("Direct WASM profile could not resolve a built .wasm component artifact. Run 'build' for the active profile first.");
-        return new WasmCliRuntimeAdapter(rootDirectory, componentPath, runtimeLibraryPath, permittedDomains);
-    });
+        lock (_gate)
+        {
+            if (_inner is not null)
+            {
+                return _inner;
+            }
+
+            var componentPath = resolveComponentPath()
+                ?? throw new InvalidOperationException("Direct WASM profile could not resolve a built .wasm component artifact. Run 'build' for the active profile first.");
+            _inner = new WasmCliRuntimeAdapter(rootDirectory, componentPath, runtimeLibraryPath, permittedDomains);
+            return _inner;
+        }
+    }
 
     public string Name => "wasm-native-direct";
     public bool SupportsReload => true;
@@ -261,34 +273,42 @@ public sealed class DeferredWasmRuntimeAdapter(
     public bool SupportsScenarios => true;
 
     public Task<IReadOnlyList<SearchItem>> SearchAsync(string query, CancellationToken cancellationToken)
-        => _inner.Value.SearchAsync(query, cancellationToken);
+        => GetOrCreateInner().SearchAsync(query, cancellationToken);
 
     public Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
-        => _inner.Value.EnrichSearchItemsAsync(items, cancellationToken);
+        => GetOrCreateInner().EnrichSearchItemsAsync(items, cancellationToken);
 
     public Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
-        => _inner.Value.GetChaptersAsync(mediaId, cancellationToken);
+        => GetOrCreateInner().GetChaptersAsync(mediaId, cancellationToken);
 
     public Task<PageItem?> GetPageAsync(string mediaId, string chapterId, int index, CancellationToken cancellationToken)
-        => _inner.Value.GetPageAsync(mediaId, chapterId, index, cancellationToken);
+        => GetOrCreateInner().GetPageAsync(mediaId, chapterId, index, cancellationToken);
 
     public Task<IReadOnlyList<PageItem>> GetPagesAsync(string mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken)
-        => _inner.Value.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
+        => GetOrCreateInner().GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
 
     public Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
-        => _inner.Value.GetVideoStreamsAsync(mediaId, cancellationToken);
+        => GetOrCreateInner().GetVideoStreamsAsync(mediaId, cancellationToken);
 
     public Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
-        => _inner.Value.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
+        => GetOrCreateInner().GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
 
     public Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
-        => _inner.Value.GetPageAssetAsync(mediaId, chapterId, cancellationToken);
+        => GetOrCreateInner().GetPageAssetAsync(mediaId, chapterId, cancellationToken);
 
     public Task<string> ReloadAsync(CancellationToken cancellationToken)
-        => _inner.Value.ReloadAsync(cancellationToken);
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult("WASM direct runtime is process-per-invocation; each command already runs against the latest project state.");
+    }
 
     public IReadOnlyList<PluginDevRuntimeLogLine> DrainRuntimeLogs()
-        => _inner.IsValueCreated ? _inner.Value.DrainRuntimeLogs() : [];
+    {
+        lock (_gate)
+        {
+            return _inner?.DrainRuntimeLogs() ?? [];
+        }
+    }
 }
 
 public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPluginDevRuntimeLogSource
