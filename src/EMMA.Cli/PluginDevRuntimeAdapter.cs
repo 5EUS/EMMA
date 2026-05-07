@@ -316,8 +316,12 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
     private const string HostAuthHeaderName = "x-emma-plugin-host-auth";
     private const string CorrelationIdHeaderName = "x-correlation-id";
     private const string EnrichSearchItemsPath = "/dev/search/enrich";
+    private static readonly TimeSpan EntrypointResolveTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan EntrypointResolveRetryDelay = TimeSpan.FromMilliseconds(150);
 
     private readonly string _entryPointPath;
+    private readonly string _entryPointFileName;
+    private readonly string _entryPointDirectory;
     private readonly Uri _hostUri;
     private readonly PluginRuntimeTarget _target;
     private readonly PluginDevLoggingOptions _logging;
@@ -334,6 +338,8 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
         PluginDevLoggingOptions logging)
     {
         _entryPointPath = entryPointPath;
+        _entryPointFileName = Path.GetFileName(entryPointPath);
+        _entryPointDirectory = Path.GetDirectoryName(entryPointPath) ?? Environment.CurrentDirectory;
         _hostUri = hostUri;
         _target = target;
         _logging = logging;
@@ -567,7 +573,8 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
 
     private void StartProcess()
     {
-        if (!File.Exists(_entryPointPath))
+        var resolvedEntryPointPath = WaitForCurrentEntrypointPath();
+        if (string.IsNullOrWhiteSpace(resolvedEntryPointPath) || !File.Exists(resolvedEntryPointPath))
         {
             throw new InvalidOperationException($"Native runtime entrypoint was not found: {_entryPointPath}");
         }
@@ -578,8 +585,8 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
         var port = _hostUri.Port.ToString(CultureInfo.InvariantCulture);
         var startInfo = new ProcessStartInfo
         {
-            FileName = _entryPointPath,
-            WorkingDirectory = Path.GetDirectoryName(_entryPointPath) ?? Environment.CurrentDirectory,
+            FileName = resolvedEntryPointPath,
+            WorkingDirectory = Path.GetDirectoryName(resolvedEntryPointPath) ?? _entryPointDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
@@ -624,12 +631,57 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
 
         if (!process.Start())
         {
-            throw new InvalidOperationException($"Failed to start native runtime '{_entryPointPath}'.");
+            throw new InvalidOperationException($"Failed to start native runtime '{resolvedEntryPointPath}'.");
         }
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         _process = process;
+    }
+
+    private string? WaitForCurrentEntrypointPath()
+    {
+        var deadlineUtc = DateTime.UtcNow + EntrypointResolveTimeout;
+        string? resolvedEntryPointPath;
+        do
+        {
+            resolvedEntryPointPath = ResolveCurrentEntrypointPath();
+            if (!string.IsNullOrWhiteSpace(resolvedEntryPointPath) && File.Exists(resolvedEntryPointPath))
+            {
+                return resolvedEntryPointPath;
+            }
+
+            Thread.Sleep(EntrypointResolveRetryDelay);
+        }
+        while (DateTime.UtcNow < deadlineUtc);
+
+        return ResolveCurrentEntrypointPath();
+    }
+
+    private string? ResolveCurrentEntrypointPath()
+    {
+        if (File.Exists(_entryPointPath))
+        {
+            return _entryPointPath;
+        }
+
+        if (!Directory.Exists(_entryPointDirectory))
+        {
+            return null;
+        }
+
+        var directCandidate = Path.Combine(_entryPointDirectory, _entryPointFileName);
+        if (File.Exists(directCandidate))
+        {
+            return directCandidate;
+        }
+
+        var discoveredCandidate = Directory.EnumerateFiles(_entryPointDirectory, _entryPointFileName, SearchOption.AllDirectories)
+            .OrderByDescending(static file => File.GetLastWriteTimeUtc(file))
+            .ThenBy(static file => file, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+
+        return discoveredCandidate;
     }
 
     private async Task WaitForPortAsync(CancellationToken cancellationToken)
