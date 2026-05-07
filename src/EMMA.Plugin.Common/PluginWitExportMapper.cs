@@ -1,9 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace EMMA.Plugin.Common;
 
 /// <summary>
 /// Generic base class for WIT component export type mapping.
 /// Reduces boilerplate in WASM plugins by providing reusable mapping patterns.
 /// </summary>
+[RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
 public abstract class PluginWitExportMapper<TExportSet>
     where TExportSet : class
 {
@@ -20,6 +23,7 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// <summary>
     /// Map a list of domain items to WIT export types.
     /// </summary>
+    [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
     public List<object> MapListToWit(IReadOnlyList<dynamic> domainItems)
     {
         if (domainItems == null || domainItems.Count == 0)
@@ -58,6 +62,7 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// <summary>
     /// Map a nullable domain item to WIT export type.
     /// </summary>
+    [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
     public object? MapNullableToWit(dynamic? domainItem)
     {
         return domainItem == null ? null : MapToWit(domainItem);
@@ -74,6 +79,7 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// <summary>
     /// Helper to safely extract metadata from domain items.
     /// </summary>
+    [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
     protected List<TMetadata> ExtractMetadata<TMetadata>(
         dynamic domainItem,
         Func<dynamic, TMetadata> selector)
