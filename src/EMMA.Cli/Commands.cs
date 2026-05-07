@@ -226,10 +226,31 @@ public class MyCommands
         Console.WriteLine($"Host URL: {_session.Profile.HostUrl}");
         Console.WriteLine($"Runtime Target: {_session.Profile.RuntimeTarget}");
         Console.WriteLine($"Execution Mode: {_session.Profile.ExecutionMode}");
+        Console.WriteLine($"Profile Source: {(_session.Profile.IsInferred ? "inferred" : "configured")}");
+
+        if (!string.IsNullOrWhiteSpace(_session.Profile.ArtifactPath))
+        {
+            Console.WriteLine($"Artifact Path: {_session.Profile.ArtifactPath}");
+        }
 
         if (_session.Profile.WatchGlobs.Count > 0)
         {
             Console.WriteLine($"Watch Globs: {string.Join(", ", _session.Profile.WatchGlobs)}");
+        }
+
+        Console.WriteLine($"Discovery Root: {_session.Discovery.RootDirectory}");
+        Console.WriteLine($"Manifest: {_session.Discovery.ManifestPath ?? "<not found>"}");
+        Console.WriteLine($"Project: {_session.Discovery.ProjectFilePath ?? "<not found>"}");
+
+        if (_session.AvailableProfiles.Count > 0)
+        {
+            Console.WriteLine("Available Profiles:");
+            foreach (var profile in _session.AvailableProfiles)
+            {
+                var source = profile.IsInferred ? "inferred" : "configured";
+                var artifactSuffix = string.IsNullOrWhiteSpace(profile.ArtifactPath) ? string.Empty : $" artifact={profile.ArtifactPath}";
+                Console.WriteLine($"  - {profile.Name} [{source}] target={profile.RuntimeTarget} mode={profile.ExecutionMode}{artifactSuffix}");
+            }
         }
 
         if (_session.Diagnostics.Count == 0)
@@ -246,6 +267,57 @@ public class MyCommands
     }
 
     /// <summary>
+    /// Shows pre-launch discovery and diagnostic information for the current plugin development session.
+    /// </summary>
+    [Command("doctor")]
+    public void Doctor()
+    {
+        Console.WriteLine("Plugin development doctor");
+        Console.WriteLine($"  Root: {_session.Discovery.RootDirectory}");
+        Console.WriteLine($"  Manifest: {_session.Discovery.ManifestPath ?? "<not found>"}");
+        Console.WriteLine($"  Project: {_session.Discovery.ProjectFilePath ?? "<not found>"}");
+        Console.WriteLine($"  Plugin ID: {_session.Discovery.PluginId ?? _session.Profile.PluginId}");
+
+        if (!string.IsNullOrWhiteSpace(_session.Discovery.PluginName))
+        {
+            Console.WriteLine($"  Plugin Name: {_session.Discovery.PluginName}");
+        }
+
+        if (_session.Discovery.MediaTypes.Count > 0)
+        {
+            Console.WriteLine($"  Media Types: {string.Join(", ", _session.Discovery.MediaTypes)}");
+        }
+
+        if (_session.Discovery.SupportedTargets.Count > 0)
+        {
+            Console.WriteLine($"  Supported Targets: {string.Join(", ", _session.Discovery.SupportedTargets)}");
+        }
+
+        if (_session.Discovery.ArtifactCandidates.Count > 0)
+        {
+            Console.WriteLine("  Artifact Candidates:");
+            foreach (var artifact in _session.Discovery.ArtifactCandidates)
+            {
+                var status = artifact.Exists ? "present" : "missing";
+                Console.WriteLine($"    - {artifact.Target} [{artifact.Kind}] {status}: {artifact.Path}");
+            }
+        }
+
+        if (_session.Diagnostics.Count == 0)
+        {
+            Console.WriteLine("  No diagnostics.");
+            return;
+        }
+
+        Console.WriteLine("  Diagnostics:");
+        foreach (var diagnostic in _session.Diagnostics)
+        {
+            var level = diagnostic.IsError ? "error" : "info";
+            Console.WriteLine($"    [{level}] {diagnostic.Code}: {diagnostic.Message}");
+        }
+    }
+
+    /// <summary>
     /// Shows a list of commands and how to use them.
     /// </summary>
     /// <returns></returns>
@@ -253,6 +325,7 @@ public class MyCommands
     public Task Help()
     {
         Console.WriteLine("Available commands:");
+        Console.WriteLine("  doctor                                         Show discovery and pre-launch diagnostics");
         Console.WriteLine("  session                                        Show resolved session details");
         Console.WriteLine("  search -q <query>                              Search for media");
         Console.WriteLine("  chapters -i <mediaId>                          List chapters of a media");

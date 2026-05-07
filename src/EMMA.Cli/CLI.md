@@ -25,7 +25,15 @@ Environment:
 
 - The CLI looks for `plugin.dev.json` in the current working directory and then
 	walks up parent directories until it finds one.
+- The CLI also walks up parent directories looking for a nearby plugin manifest
+	(`*.plugin.json`) and project file (`*.csproj`) so it can infer targets and
+	artifact locations.
 - If no config is found, the CLI falls back to an inferred `host-bridge`
 	profile using the current environment variables.
+- When a nearby plugin project is found, the CLI infers `wasm-dev`,
+	`linux-dev`, and `windows-dev` profiles where the project metadata supports
+	them, even before direct runtime adapters are implemented.
 - `session` prints the resolved session state, profile, diagnostics, and host
 	configuration.
+- `doctor` prints discovery results, inferred profiles, artifact candidates,
+	and pre-launch diagnostics.

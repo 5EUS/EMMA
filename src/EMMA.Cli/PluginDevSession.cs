@@ -37,7 +37,9 @@ public sealed record PluginDevProfile(
     PluginRuntimeTarget RuntimeTarget,
     PluginExecutionMode ExecutionMode,
     IReadOnlyList<string> WatchGlobs,
-    string? ConfigPath);
+    string? ConfigPath,
+    string? ArtifactPath,
+    bool IsInferred);
 
 public sealed class PluginDevSession
 {
@@ -45,12 +47,16 @@ public sealed class PluginDevSession
 
     public PluginDevSession(
         string workingDirectory,
+        PluginDevDiscoveryResult discovery,
+        IReadOnlyList<PluginDevProfile> availableProfiles,
         PluginDevProfile profile,
         EmbeddedRuntime runtime,
         EmbeddedPagedMediaApi api)
     {
         Id = Guid.NewGuid().ToString("n");
         WorkingDirectory = workingDirectory;
+        Discovery = discovery;
+        AvailableProfiles = availableProfiles;
         Profile = profile;
         Runtime = runtime;
         Api = api;
@@ -61,6 +67,10 @@ public sealed class PluginDevSession
     public string Id { get; }
 
     public string WorkingDirectory { get; }
+
+    public PluginDevDiscoveryResult Discovery { get; }
+
+    public IReadOnlyList<PluginDevProfile> AvailableProfiles { get; }
 
     public PluginDevProfile Profile { get; }
 
@@ -73,6 +83,8 @@ public sealed class PluginDevSession
     public DateTimeOffset CreatedUtc { get; }
 
     public IReadOnlyList<PluginDevDiagnostic> Diagnostics => _diagnostics;
+
+    public bool HasErrors => _diagnostics.Any(static diagnostic => diagnostic.IsError);
 
     public void TransitionTo(PluginDevSessionState newState)
     {

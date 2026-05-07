@@ -14,11 +14,15 @@ public sealed class PluginDevSessionFactory
     private const string DefaultHostUrl = "http://localhost:5000";
 
     private readonly PluginDevConfigLoader _configLoader = new();
+    private readonly PluginDevDiscoveryService _discoveryService = new();
+    private readonly PluginDevDoctor _doctor = new();
 
     public PluginDevSession Create(string workingDirectory)
     {
         var loadResult = _configLoader.Load(workingDirectory);
-        var profile = ResolveProfile(loadResult);
+        var discovery = _discoveryService.Discover(workingDirectory);
+        var availableProfiles = BuildAvailableProfiles(loadResult, discovery);
+        var profile = ResolveProfile(loadResult, availableProfiles);
 
         if (profile.ExecutionMode != PluginExecutionMode.HostBridge)
         {
@@ -43,6 +47,8 @@ public sealed class PluginDevSessionFactory
 
         var session = new PluginDevSession(
             workingDirectory,
+            discovery,
+            availableProfiles,
             profile,
             runtime,
             new EmbeddedPagedMediaApi(runtime));
@@ -65,67 +71,151 @@ public sealed class PluginDevSessionFactory
                 "No plugin.dev.json file was found. Using inferred host-bridge defaults.");
         }
 
+        foreach (var diagnostic in _doctor.Run(discovery, profile, availableProfiles))
+        {
+            session.AddDiagnostic(diagnostic.Code, diagnostic.Message, diagnostic.IsError);
+        }
+
         return session;
     }
 
-    private static PluginDevProfile ResolveProfile(PluginDevConfigLoadResult loadResult)
+    private static PluginDevProfile ResolveProfile(
+        PluginDevConfigLoadResult loadResult,
+        IReadOnlyList<PluginDevProfile> availableProfiles)
     {
         var requestedProfile = Environment.GetEnvironmentVariable("EMMA_PLUGIN_PROFILE")?.Trim();
-        var profiles = loadResult.Document.Profiles;
-
         var profileName = FirstNonEmpty(
                 requestedProfile,
                 loadResult.Document.DefaultProfile,
-                profiles is { Count: > 0 } ? profiles.Keys.FirstOrDefault() : null,
+                availableProfiles.FirstOrDefault()?.Name,
                 DefaultProfileName)
             ?? DefaultProfileName;
 
-        PluginDevProfileDocument? profileDocument = null;
-        if (profiles is { Count: > 0 })
+        var profile = availableProfiles.FirstOrDefault(candidate => string.Equals(candidate.Name, profileName, StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
         {
-            if (!profiles.TryGetValue(profileName, out profileDocument))
+            throw new InvalidOperationException(
+                $"Profile '{profileName}' was requested, but it was not found in plugin.dev.json or the inferred profile set.");
+        }
+
+        return profile;
+    }
+
+    private static IReadOnlyList<PluginDevProfile> BuildAvailableProfiles(
+        PluginDevConfigLoadResult loadResult,
+        PluginDevDiscoveryResult discovery)
+    {
+        var profiles = new Dictionary<string, PluginDevProfile>(StringComparer.OrdinalIgnoreCase);
+        var configuredProfiles = loadResult.Document.Profiles;
+
+        if (configuredProfiles is { Count: > 0 })
+        {
+            foreach (var (profileName, profileDocument) in configuredProfiles)
             {
-                throw new InvalidOperationException(
-                    $"Profile '{profileName}' was requested, but it was not found in plugin.dev.json.");
+                profiles[profileName] = BuildProfile(profileName, profileDocument, loadResult.ConfigPath, discovery, isInferred: false);
             }
         }
 
-        var pluginId = FirstNonEmpty(
+        foreach (var inferredProfile in BuildInferredProfiles(loadResult.ConfigPath, discovery))
+        {
+            profiles.TryAdd(inferredProfile.Name, inferredProfile);
+        }
+
+        return profiles.Values
+            .OrderBy(static profile => profile.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IEnumerable<PluginDevProfile> BuildInferredProfiles(string? configPath, PluginDevDiscoveryResult discovery)
+    {
+        yield return new PluginDevProfile(
+            DefaultProfileName,
+            ResolvePluginId(null, discovery),
+            ResolveHostUrl(null),
+            PluginRuntimeTarget.Auto,
+            PluginExecutionMode.HostBridge,
+            Array.Empty<string>(),
+            configPath,
+            null,
+            true);
+
+        foreach (var target in discovery.SupportedTargets)
+        {
+            var artifactPath = discovery.ArtifactCandidates.FirstOrDefault(candidate => candidate.Target == target && candidate.Exists)?.Path
+                ?? discovery.ArtifactCandidates.FirstOrDefault(candidate => candidate.Target == target)?.Path;
+
+            yield return new PluginDevProfile(
+                ToProfileName(target),
+                ResolvePluginId(null, discovery),
+                ResolveHostUrl(null),
+                target,
+                PluginExecutionMode.HostBridge,
+                Array.Empty<string>(),
+                configPath,
+                artifactPath,
+                true);
+        }
+    }
+
+    private static PluginDevProfile BuildProfile(
+        string profileName,
+        PluginDevProfileDocument profileDocument,
+        string? configPath,
+        PluginDevDiscoveryResult discovery,
+        bool isInferred)
+    {
+        var runtimeTarget = ParseRuntimeTarget(
+            FirstNonEmpty(
+                Environment.GetEnvironmentVariable("EMMA_PLUGIN_TARGET"),
+                profileDocument.RuntimeTarget,
+                PluginRuntimeTarget.Auto.ToString()));
+
+        return new PluginDevProfile(
+            profileName,
+            ResolvePluginId(profileDocument, discovery),
+            ResolveHostUrl(profileDocument),
+            runtimeTarget,
+            ParseExecutionMode(
+                FirstNonEmpty(
+                    Environment.GetEnvironmentVariable("EMMA_PLUGIN_EXECUTION_MODE"),
+                    profileDocument.ExecutionMode,
+                    PluginExecutionMode.HostBridge.ToString())),
+            (IReadOnlyList<string>)(profileDocument.WatchGlobs?.Where(static value => !string.IsNullOrWhiteSpace(value)).ToArray() ?? []),
+            configPath,
+            discovery.ArtifactCandidates.FirstOrDefault(candidate => candidate.Target == runtimeTarget && candidate.Exists)?.Path
+                ?? discovery.ArtifactCandidates.FirstOrDefault(candidate => candidate.Target == runtimeTarget)?.Path,
+            isInferred);
+    }
+
+    private static string ResolvePluginId(PluginDevProfileDocument? profileDocument, PluginDevDiscoveryResult discovery)
+    {
+        return FirstNonEmpty(
                 Environment.GetEnvironmentVariable("EMMA_PLUGIN_ID"),
                 profileDocument?.PluginId,
+                discovery.PluginId,
                 DefaultPluginId)
             ?? DefaultPluginId;
+    }
 
-        var hostUrl = NormalizeHostUrl(
+    private static string ResolveHostUrl(PluginDevProfileDocument? profileDocument)
+    {
+        return NormalizeHostUrl(
             FirstNonEmpty(
                 Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_URL"),
                 profileDocument?.HostUrl,
                 DefaultHostUrl)
             ?? DefaultHostUrl);
+    }
 
-        var runtimeTarget = ParseRuntimeTarget(
-            FirstNonEmpty(
-                Environment.GetEnvironmentVariable("EMMA_PLUGIN_TARGET"),
-                profileDocument?.RuntimeTarget,
-                PluginRuntimeTarget.Auto.ToString()));
-
-        var executionMode = ParseExecutionMode(
-            FirstNonEmpty(
-                Environment.GetEnvironmentVariable("EMMA_PLUGIN_EXECUTION_MODE"),
-                profileDocument?.ExecutionMode,
-                PluginExecutionMode.HostBridge.ToString()));
-
-        var watchGlobs = (IReadOnlyList<string>)(profileDocument?.WatchGlobs?.Where(static value => !string.IsNullOrWhiteSpace(value)).ToArray()
-            ?? []);
-
-        return new PluginDevProfile(
-            profileName,
-            pluginId,
-            hostUrl,
-            runtimeTarget,
-            executionMode,
-            watchGlobs,
-            loadResult.ConfigPath);
+    private static string ToProfileName(PluginRuntimeTarget target)
+    {
+        return target switch
+        {
+            PluginRuntimeTarget.Wasm => "wasm-dev",
+            PluginRuntimeTarget.Linux => "linux-dev",
+            PluginRuntimeTarget.Windows => "windows-dev",
+            _ => DefaultProfileName
+        };
     }
 
     private static string NormalizeHostUrl(string hostUrl)
