@@ -1,0 +1,421 @@
+name: publish-release-assets
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-release-assets-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: '10.0.x'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore
+        run: dotnet restore EMMA.sln
+
+      - name: Build Linux release bundle
+        env:
+          RID: linux-x64
+          SQLITE_LIB: libe_sqlite3.so
+          RELEASE_DIR: ${{ runner.temp }}/release/linux-x64
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RELEASE_DIR/emma-runtime/$RID" "$RELEASE_DIR/wasm-runtime/$RID" "$RELEASE_DIR/sqlite/$RID"
+
+          ./scripts/publish-native-aot.sh "$RID" "$RELEASE_DIR/emma-runtime/$RID"
+          ./scripts/build-wasm-runtime-native.sh "$RID" "$RELEASE_DIR/wasm-runtime/$RID"
+          cp "$RELEASE_DIR/emma-runtime/$RID/$SQLITE_LIB" "$RELEASE_DIR/sqlite/$RID/$SQLITE_LIB"
+
+          cat > "$RELEASE_DIR/README.txt" <<EOF
+          EMMA release bundle for $RID.
+
+          Contents:
+          - emma-runtime/$RID: NativeAOT EMMA runtime output.
+          - wasm-runtime/$RID: Native WASM runtime sidecar.
+          - sqlite/$RID: Extracted SQLite native payload for convenience.
+          EOF
+
+      - name: Package Linux release bundle
+        id: package
+        env:
+          RID: linux-x64
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/emma-release_${GITHUB_REF_NAME}_${RID}.zip"
+          cd "$RUNNER_TEMP/release"
+          zip -r "$archive" "$RID"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Linux release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: emma-release-linux-x64
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Restore
+        run: dotnet restore EMMA.sln
+
+      - name: Build Windows release bundle
+        env:
+          RID: win-x64
+          SQLITE_LIB: e_sqlite3.dll
+          RELEASE_DIR: ${{ runner.temp }}/release/win-x64
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RELEASE_DIR/emma-runtime/$RID" "$RELEASE_DIR/wasm-runtime/$RID" "$RELEASE_DIR/sqlite/$RID"
+
+          ./scripts/publish-native-aot.sh "$RID" "$RELEASE_DIR/emma-runtime/$RID"
+          ./scripts/build-wasm-runtime-native.sh "$RID" "$RELEASE_DIR/wasm-runtime/$RID"
+          cp "$RELEASE_DIR/emma-runtime/$RID/$SQLITE_LIB" "$RELEASE_DIR/sqlite/$RID/$SQLITE_LIB"
+
+          cat > "$RELEASE_DIR/README.txt" <<EOF
+          EMMA release bundle for $RID.
+
+          Contents:
+          - emma-runtime/$RID: NativeAOT EMMA runtime output.
+          - wasm-runtime/$RID: Native WASM runtime sidecar.
+          - sqlite/$RID: Extracted SQLite native payload for convenience.
+          EOF
+
+      - name: Package Windows release bundle
+        id: package
+        shell: pwsh
+        env:
+          RID: win-x64
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "emma-release_${env:GITHUB_REF_NAME}_${env:RID}.zip"
+          $source = Join-Path $env:RUNNER_TEMP "release\$env:RID"
+          if (Test-Path $archive) {
+            Remove-Item $archive -Force
+          }
+          Compress-Archive -Path $source -DestinationPath $archive -Force
+          "archive=$archive" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload Windows release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: emma-release-win-x64
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Determine macOS target
+        id: target
+        run: |
+          set -euo pipefail
+
+          case "$(uname -m)" in
+            arm64)
+              echo "rid=osx-arm64" >> "$GITHUB_OUTPUT"
+              echo "rust_target=aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
+              ;;
+            x86_64)
+              echo "rid=osx-x64" >> "$GITHUB_OUTPUT"
+              echo "rust_target=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported macOS runner architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Add macOS Rust target
+        run: rustup target add "${{ steps.target.outputs.rust_target }}"
+
+      - name: Restore
+        run: dotnet restore EMMA.sln
+
+      - name: Build macOS release bundle
+        env:
+          RID: ${{ steps.target.outputs.rid }}
+          SQLITE_LIB: libe_sqlite3.dylib
+          RELEASE_DIR: ${{ runner.temp }}/release/${{ steps.target.outputs.rid }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RELEASE_DIR/emma-runtime/$RID" "$RELEASE_DIR/wasm-runtime/$RID" "$RELEASE_DIR/sqlite/$RID"
+
+          ./scripts/publish-native-aot.sh "$RID" "$RELEASE_DIR/emma-runtime/$RID"
+          ./scripts/build-wasm-runtime-native.sh "$RID" "$RELEASE_DIR/wasm-runtime/$RID"
+          cp "$RELEASE_DIR/emma-runtime/$RID/$SQLITE_LIB" "$RELEASE_DIR/sqlite/$RID/$SQLITE_LIB"
+
+          cat > "$RELEASE_DIR/README.txt" <<EOF
+          EMMA release bundle for $RID.
+
+          Contents:
+          - emma-runtime/$RID: NativeAOT EMMA runtime output.
+          - wasm-runtime/$RID: Native WASM runtime sidecar.
+          - sqlite/$RID: Extracted SQLite native payload for convenience.
+          EOF
+
+      - name: Package macOS release bundle
+        id: package
+        env:
+          RID: ${{ steps.target.outputs.rid }}
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/emma-release_${GITHUB_REF_NAME}_${RID}.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/release/$RID" "$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload macOS release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: emma-release-${{ steps.target.outputs.rid }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  build-ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      IOS_NATIVE_XCFRAMEWORK_URL: ${{ vars.EMMA_IOS_NATIVE_XCFRAMEWORK_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add iOS Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Install iOS workload
+        run: dotnet workload install ios
+
+      - name: Restore
+        run: dotnet restore EMMA.sln
+
+      - name: Build iOS release bundle
+        env:
+          RELEASE_DIR: ${{ runner.temp }}/release/ios-xcframework
+        run: |
+          set -euo pipefail
+
+          build_native_ios_libs=1
+          existing_native_xcframework=""
+
+          if [[ -n "${IOS_NATIVE_XCFRAMEWORK_URL:-}" ]]; then
+            archive_path="$RUNNER_TEMP/EmmaNative.xcframework.zip"
+            extracted_dir="$RUNNER_TEMP/ios-native-input"
+            rm -rf "$archive_path" "$extracted_dir"
+            curl -L "$IOS_NATIVE_XCFRAMEWORK_URL" -o "$archive_path"
+            mkdir -p "$extracted_dir"
+            ditto -x -k "$archive_path" "$extracted_dir"
+            existing_native_xcframework="$extracted_dir/EmmaNative.xcframework"
+            build_native_ios_libs=0
+          fi
+
+          mkdir -p "$RELEASE_DIR/emma-runtime" "$RELEASE_DIR/wasm-runtime" "$RELEASE_DIR/sqlite"
+
+          BUILD_NATIVE_IOS_LIBS="$build_native_ios_libs" \
+          BUILD_SIMULATOR=1 \
+          EXISTING_NATIVE_XCFRAMEWORK="$existing_native_xcframework" \
+            ./scripts/build-ios-native-framework.sh "$RUNNER_TEMP/ios-native-framework"
+
+          cp -R "$RUNNER_TEMP/ios-native-framework/EmmaNative.xcframework" "$RELEASE_DIR/emma-runtime/"
+          cp -R "$RUNNER_TEMP/ios-native-framework/EmmaWasmRuntime.xcframework" "$RELEASE_DIR/wasm-runtime/"
+
+          cat > "$RELEASE_DIR/sqlite/README.txt" <<EOF
+          SQLite is statically linked into EmmaNative.xcframework for iOS builds.
+          No separate SQLite dynamic library is produced for this release lane.
+          EOF
+
+          cat > "$RELEASE_DIR/README.txt" <<EOF
+          EMMA iOS XCFramework release bundle.
+
+          Contents:
+          - emma-runtime/EmmaNative.xcframework: Native EMMA runtime XCFramework.
+          - wasm-runtime/EmmaWasmRuntime.xcframework: Native WASM runtime XCFramework.
+          - sqlite/README.txt: Notes about SQLite linkage for iOS.
+
+          If EMMA_IOS_NATIVE_XCFRAMEWORK_URL is set, the workflow uses that prebuilt native XCFramework.
+          Otherwise it attempts BUILD_NATIVE_IOS_LIBS=1 via the in-repo NativeAOT lane.
+          EOF
+
+      - name: Package iOS release bundle
+        id: package
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/emma-release_${GITHUB_REF_NAME}_ios-xcframework.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/release/ios-xcframework" "$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload iOS release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: emma-release-ios-xcframework
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  build-android-scaffold:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create Android scaffold bundle
+        env:
+          RELEASE_DIR: ${{ runner.temp }}/release/android-scaffold
+        run: |
+          set -euo pipefail
+
+          mkdir -p \
+            "$RELEASE_DIR/emma-runtime/android-arm64" \
+            "$RELEASE_DIR/emma-runtime/android-x64" \
+            "$RELEASE_DIR/wasm-runtime/android-arm64" \
+            "$RELEASE_DIR/wasm-runtime/android-x64" \
+            "$RELEASE_DIR/sqlite/android-arm64" \
+            "$RELEASE_DIR/sqlite/android-x64"
+
+          cat > "$RELEASE_DIR/README.txt" <<EOF
+          Android release scaffolding for tag $GITHUB_REF_NAME.
+
+          Planned outputs:
+          - emma-runtime/android-arm64/libemma_native.so
+          - emma-runtime/android-x64/libemma_native.so
+          - wasm-runtime/android-arm64/libemma_wasm_runtime.so
+          - wasm-runtime/android-x64/libemma_wasm_runtime.so
+          - sqlite/android-arm64/libe_sqlite3.so
+          - sqlite/android-x64/libe_sqlite3.so
+
+          This lane intentionally publishes scaffolding only until the Android runtime packaging lane is implemented.
+          EOF
+
+          cat > "$RELEASE_DIR/manifest.json" <<EOF
+          {
+            "tag": "$GITHUB_REF_NAME",
+            "platform": "android",
+            "status": "scaffold",
+            "plannedRids": ["android-arm64", "android-x64"]
+          }
+          EOF
+
+      - name: Package Android scaffold bundle
+        id: package
+        run: |
+          set -euo pipefail
+
+          archive="$RUNNER_TEMP/emma-release_${GITHUB_REF_NAME}_android-scaffold.zip"
+          cd "$RUNNER_TEMP/release"
+          zip -r "$archive" android-scaffold
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Android scaffold bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: emma-release-android-scaffold
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-windows
+      - build-macos
+      - build-ios
+      - build-android-scaffold
+
+    steps:
+      - name: Download release bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: emma-release-*
+          path: artifacts/github-release
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+
+          cd artifacts/github-release
+          sha256sum *.zip > SHA256SUMS.txt
+
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/github-release/*.zip
+            artifacts/github-release/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
