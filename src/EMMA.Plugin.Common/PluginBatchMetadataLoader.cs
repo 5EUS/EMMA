@@ -171,8 +171,8 @@ public sealed record PluginBatchMetadataLoaderOptions(
     /// </summary>
     public static readonly PluginBatchMetadataLoaderOptions Conservative = new(
         BatchSize: 50,
-        DelayBetweenBatches: TimeSpan.FromMilliseconds(500),
-        DelayBetweenRequests: TimeSpan.FromMilliseconds(100));
+        DelayBetweenBatches: new TimeSpan(0, 0, 0, 0, 500),
+        DelayBetweenRequests: new TimeSpan(0, 0, 0, 0, 100));
 
     /// <summary>
     /// Aggressive options: large batches, minimal delays.
