@@ -3,41 +3,20 @@ using EMMA.Api;
 using EMMA.Api.Embedded;
 using EMMA.Domain;
 using EMMA.Contracts.Api.V1;
-using EMMA.Infrastructure.Http;
-using EMMA.Infrastructure.InMemory;
-using EMMA.Infrastructure.Policy;
-using Microsoft.Extensions.Options;
 
 namespace EMMA.Cli;
 
 public class MyCommands
 {
+    private readonly PluginDevSession _session;
     private readonly EmbeddedRuntime _runtime;
     private readonly EmbeddedPagedMediaApi _api;
 
     public MyCommands()
     {
-        var baseUrl = Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_URL")?.Trim().TrimEnd('/')
-            ?? "http://localhost:5000";
-
-        var pluginId = Environment.GetEnvironmentVariable("EMMA_PLUGIN_ID")?.Trim() ?? "emma.plugin.test";
-
-        var httpClient = new HttpClient { BaseAddress = new Uri(baseUrl, UriKind.Absolute) };
-        var pluginPort = new PluginHostPagedMediaPort(
-            httpClient,
-            Options.Create(new PluginHostClientOptions
-            {
-                BaseUrl = baseUrl,
-                PluginId = pluginId
-            }));
-
-        _runtime = EmbeddedRuntimeFactory.Create(
-            pluginPort,
-            pluginPort,
-            new HostPolicyEvaluator(),
-            metadataCache: new InMemoryCachePort());
-
-        _api = new EmbeddedPagedMediaApi(_runtime);
+        _session = PluginDevSessionHolder.RequireCurrent();
+        _runtime = _session.Runtime;
+        _api = _session.Api;
     }
 
     /// <summary>
@@ -118,7 +97,7 @@ public class MyCommands
                         Execute = async () =>
                         {
                             Console.WriteLine($"Fetching chapter pages (media id: {id}, chapter id: {item.Id})...");
-                            PageAsync(id, item.Id, 0).Wait();
+                            await PageAsync(id, item.Id, 0);
                         }
                     },
                     new ResultAction
@@ -191,9 +170,10 @@ public class MyCommands
                 new ResultAction
                 {
                     Name = "Show Base64",
-                    Execute = async () =>
+                    Execute = () =>
                     {
                         Console.WriteLine($"Content Base64: {Convert.ToBase64String(response.Asset.Payload.ToArray())}");
+                        return Task.CompletedTask;
                     }
                 }
             ]));
@@ -233,17 +213,52 @@ public class MyCommands
     }
 
     /// <summary>
+    /// Shows the current resolved plugin development session.
+    /// </summary>
+    [Command("session")]
+    public void Session()
+    {
+        Console.WriteLine($"Session ID: {_session.Id}");
+        Console.WriteLine($"State: {_session.State}");
+        Console.WriteLine($"Working Directory: {_session.WorkingDirectory}");
+        Console.WriteLine($"Profile: {_session.Profile.Name}");
+        Console.WriteLine($"Plugin ID: {_session.Profile.PluginId}");
+        Console.WriteLine($"Host URL: {_session.Profile.HostUrl}");
+        Console.WriteLine($"Runtime Target: {_session.Profile.RuntimeTarget}");
+        Console.WriteLine($"Execution Mode: {_session.Profile.ExecutionMode}");
+
+        if (_session.Profile.WatchGlobs.Count > 0)
+        {
+            Console.WriteLine($"Watch Globs: {string.Join(", ", _session.Profile.WatchGlobs)}");
+        }
+
+        if (_session.Diagnostics.Count == 0)
+        {
+            return;
+        }
+
+        Console.WriteLine("Diagnostics:");
+        foreach (var diagnostic in _session.Diagnostics)
+        {
+            var level = diagnostic.IsError ? "error" : "info";
+            Console.WriteLine($"  [{level}] {diagnostic.Code}: {diagnostic.Message}");
+        }
+    }
+
+    /// <summary>
     /// Shows a list of commands and how to use them.
     /// </summary>
     /// <returns></returns>
     [Command("help")]
-    public async Task Help()
+    public Task Help()
     {
         Console.WriteLine("Available commands:");
+        Console.WriteLine("  session                                        Show resolved session details");
         Console.WriteLine("  search -q <query>                              Search for media");
         Console.WriteLine("  chapters -i <mediaId>                          List chapters of a media");
         Console.WriteLine("  page-asset -mi <mediaId> -ci <chapterId>       Get a chapter page asset");
         Console.WriteLine("  page -mi <mediaId> -ci <chapterId> -i <index>  Get a chapter page");
         Console.WriteLine("  help                                           Show this help message");
+        return Task.CompletedTask;
     }
 }

@@ -1,46 +1,48 @@
 ﻿using EMMA.Cli;
 using ConsoleAppFramework;
 
+var sessionFactory = new PluginDevSessionFactory();
+var session = sessionFactory.Create(Environment.CurrentDirectory);
+session.TransitionTo(PluginDevSessionState.Starting);
+PluginDevSessionHolder.SetCurrent(session);
+
 var app = ConsoleApp.Create();
 app.Add<MyCommands>();
 
 var selector = new ResultSelector();
 
-if (args.Length != 0)
-{
-    app.Run(args);
-    var context = CommandContextHolder.Context;
-    if (context.Results.Count > 0)
-    {
-        // Display results batch-by-batch. Clear the context before showing
-        // each batch so actions can add new results that will be shown
-        // in subsequent iterations.
-        while (context.Results.Count > 0)
-        {
-            var toDisplay = context.Results.ToList();
-            context.Clear();
-            selector.Display(toDisplay).Wait();
-        }
-    }
-    return;
-}
-
-var loop = new CommandLoop(args =>
+void ExecuteCommand(string[] commandArgs)
 {
     var context = CommandContextHolder.Context;
     context.Clear();
 
-    app.Run(args);
+    session.TransitionTo(PluginDevSessionState.Running);
+    app.Run(commandArgs);
 
-    if (context.Results.Count > 0)
+    if (context.Results.Count <= 0)
     {
-        while (context.Results.Count > 0)
-        {
-            var toDisplay = context.Results.ToList();
-            context.Clear();
-            selector.Display(toDisplay).Wait();
-        }
+        return;
     }
+
+    while (context.Results.Count > 0)
+    {
+        var toDisplay = context.Results.ToList();
+        context.Clear();
+        selector.Display(toDisplay).Wait();
+    }
+}
+
+if (args.Length != 0)
+{
+    ExecuteCommand(args);
+    session.TransitionTo(PluginDevSessionState.Stopped);
+    return;
+}
+
+var loop = new CommandLoop(commandArgs =>
+{
+    ExecuteCommand(commandArgs);
 });
 
 loop.Run().Wait();
+session.TransitionTo(PluginDevSessionState.Stopped);

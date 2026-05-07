@@ -6,7 +6,7 @@ public class CommandLoop(Action<string[]> executor)
     private readonly LineEditor _editor = new();
     private readonly Action<string[]> _executor = executor;
 
-    public async Task Run()
+    public Task Run()
     {
         while (true)
         {
@@ -27,5 +27,7 @@ public class CommandLoop(Action<string[]> executor)
             // 🔥 pause so output is visible before next prompt
             Console.WriteLine();
         }
+
+        return Task.CompletedTask;
     }
 }

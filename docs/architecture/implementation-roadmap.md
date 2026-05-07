@@ -13,6 +13,7 @@ It is intentionally status-first rather than plan-only.
 | 4 - Video support | Partial | Contracts and plugin-host video endpoints exist; adaptive orchestration and segment cache strategy still open |
 | 5 - API surface | In progress | gRPC + REST + auth + rate limiting implemented; versioning/error standardization pending |
 | 6 - Hardening and sandboxing | In progress | Baseline signing, quarantine, and budget monitoring implemented; delegated trust and enforcement parity pending |
+| 7 - Plugin developer experience | Planned | Unify CLI-driven plugin sessions across WASM, Linux, and Windows with future UI-ready session APIs |
 
 ## Milestone 1 - Core runtime skeleton
 
@@ -114,3 +115,22 @@ It is intentionally status-first rather than plan-only.
 ### Validation
 - Existing tests cover core security and lifecycle behavior; dedicated
 	observability and enforcement chaos coverage remains to be added.
+
+## Milestone 7 - Plugin developer experience
+
+### Planned
+- Build a stable plugin development session model that works across WASM,
+	Linux, and Windows plugin targets.
+- Evolve `EMMA.Cli` into a thin client over a reusable session orchestration
+	layer instead of growing target-specific command logic.
+- Add profile-based plugin discovery, diagnostics, watch/reload support, and a
+	local session API that can back both CLI and future UI surfaces.
+
+### Validation target
+- Plugin developers can run a common command flow against unpacked projects,
+	built artifacts, and packaged plugins for the common WASM/Linux/Windows cases.
+- The same session can be exercised from CLI first and from a browser-based UI
+	later without changing runtime adapters.
+- Scenario-driven smoke tests can run in CI using the same session model.
+
+See `milestone-7-plugin-developer-experience.md` for the concrete plan.
