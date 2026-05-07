@@ -232,14 +232,33 @@ public class MyCommands
         Console.WriteLine("Diagnostics:");
         foreach (var diagnostic in session.Diagnostics)
         {
-            var level = diagnostic.IsError ? "error" : "info";
-            Console.WriteLine($"  [{level}] {diagnostic.Code}: {diagnostic.Message}");
+            Console.WriteLine($"  [{diagnostic.Severity}/{diagnostic.Type}] {diagnostic.Code}: {diagnostic.Message}");
         }
     }
 
     [Command("build")]
-    public async Task BuildAsync()
+    public async Task BuildAsync([Argument] string? scope = null)
     {
+        if (IsAllScope(scope))
+        {
+            await ExecuteAcrossProfilesAsync(async profile =>
+            {
+                var session = PluginDevSessionHolder.RequireCurrent();
+                var plan = session.BuildService.GetBuildPlan(session);
+                if (plan is null)
+                {
+                    Console.WriteLine($"[{profile.Name}] No normalized build plan is available.");
+                    return;
+                }
+
+                Console.WriteLine($"[{profile.Name}] Running build plan '{plan.Name}'...");
+                var output = await _application.BuildAsync(CancellationToken.None);
+                Console.WriteLine(output);
+            });
+
+            return;
+        }
+
         var session = PluginDevSessionHolder.RequireCurrent();
         var plan = session.BuildService.GetBuildPlan(session);
         if (plan is null)
@@ -254,14 +273,64 @@ public class MyCommands
     }
 
     [Command("pack")]
-    public Task PackAsync()
+    public async Task PackAsync([Argument] string? scope = null)
     {
+        if (IsAllScope(scope))
+        {
+            await ExecuteAcrossProfilesAsync(profile =>
+            {
+                var result = _application.Pack();
+                WritePackResult(profile.Name, result);
+                return Task.CompletedTask;
+            });
+
+            return;
+        }
+
         var result = _application.Pack();
-        Console.WriteLine($"Package: {result.PackagePath}");
-        Console.WriteLine($"Pack Directory: {result.PackageDirectory}");
-        Console.WriteLine($"Manifest: {result.ManifestPath}");
-        Console.WriteLine($"Artifact: {result.ArtifactPath}");
-        return Task.CompletedTask;
+        WritePackResult(null, result);
+    }
+
+    [Command("build-pack")]
+    public async Task BuildPackAsync([Argument] string? scope = null)
+    {
+        if (IsAllScope(scope))
+        {
+            await ExecuteAcrossProfilesAsync(async profile =>
+            {
+                var session = PluginDevSessionHolder.RequireCurrent();
+                var plan = session.BuildService.GetBuildPlan(session);
+                if (plan is null)
+                {
+                    Console.WriteLine($"[{profile.Name}] No normalized build plan is available.");
+                    return;
+                }
+
+                Console.WriteLine($"[{profile.Name}] Running build plan '{plan.Name}'...");
+                var output = await _application.BuildAsync(CancellationToken.None);
+                Console.WriteLine(output);
+
+                var packResult = _application.Pack();
+                WritePackResult(profile.Name, packResult);
+            });
+
+            return;
+        }
+
+        var activeSession = PluginDevSessionHolder.RequireCurrent();
+        var activePlan = activeSession.BuildService.GetBuildPlan(activeSession);
+        if (activePlan is null)
+        {
+            Console.WriteLine("No normalized build plan is available for the active profile.");
+            return;
+        }
+
+        Console.WriteLine($"Running build plan '{activePlan.Name}'...");
+        var buildOutput = await _application.BuildAsync(CancellationToken.None);
+        Console.WriteLine(buildOutput);
+
+        var result = _application.Pack();
+        WritePackResult(null, result);
     }
 
     [Command("reload")]
@@ -355,7 +424,7 @@ public class MyCommands
     }
 
     [Command("scenario")]
-    public async Task ScenarioAsync(string name, string? query = null)
+    public async Task ScenarioAsync([Argument] string name, [Argument] string? query = null)
     {
         var result = await _application.RunScenarioAsync(name, query, CancellationToken.None);
         foreach (var message in result.Messages)
@@ -416,8 +485,7 @@ public class MyCommands
         Console.WriteLine("  Diagnostics:");
         foreach (var diagnostic in session.Diagnostics)
         {
-            var level = diagnostic.IsError ? "error" : "info";
-            Console.WriteLine($"    [{level}] {diagnostic.Code}: {diagnostic.Message}");
+            Console.WriteLine($"    [{diagnostic.Severity}/{diagnostic.Type}] {diagnostic.Code}: {diagnostic.Message}");
         }
     }
 
@@ -442,9 +510,10 @@ public class MyCommands
     public Task Help()
     {
         Console.WriteLine("Available commands:");
-        Console.WriteLine("  build                                          Run the normalized build plan for the active profile");
+        Console.WriteLine("  build [all]                                    Run the normalized build plan for the active profile or every profile");
+        Console.WriteLine("  build-pack [all]                               Build then package the active profile or every profile");
         Console.WriteLine("  doctor                                         Show discovery and pre-launch diagnostics");
-        Console.WriteLine("  pack                                           Package the active WASM profile artifact");
+        Console.WriteLine("  pack [all]                                     Package the active profile or every profile");
         Console.WriteLine("  reload                                         Refresh runtime state for the active profile");
         Console.WriteLine("  scenario <name> [query]                        Run a built-in dev scenario (for example paged-smoke)");
         Console.WriteLine("  session                                        Show resolved session details");
@@ -456,5 +525,48 @@ public class MyCommands
         Console.WriteLine("  serve [port]                                   Start the local session API and browser UI");
         Console.WriteLine("  help                                           Show this help message");
         return Task.CompletedTask;
+    }
+
+    private async Task ExecuteAcrossProfilesAsync(Func<PluginDevProfile, Task> action)
+    {
+        var snapshot = _application.GetSessionSnapshot();
+        var originalProfileName = snapshot.Profile.Name;
+
+        try
+        {
+            foreach (var profile in snapshot.AvailableProfiles)
+            {
+                _application.SelectProfile(profile.Name);
+                await action(profile);
+            }
+        }
+        finally
+        {
+            _application.SelectProfile(originalProfileName);
+        }
+    }
+
+    private static bool IsAllScope(string? scope)
+    {
+        if (string.IsNullOrWhiteSpace(scope))
+        {
+            return false;
+        }
+
+        if (string.Equals(scope.Trim(), "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        throw new InvalidOperationException($"Unknown scope '{scope}'. Use 'all' or omit the argument.");
+    }
+
+    private static void WritePackResult(string? profileName, PluginDevPackResult result)
+    {
+        var prefix = string.IsNullOrWhiteSpace(profileName) ? string.Empty : $"[{profileName}] ";
+        Console.WriteLine($"{prefix}Package: {result.PackagePath}");
+        Console.WriteLine($"{prefix}Pack Directory: {result.PackageDirectory}");
+        Console.WriteLine($"{prefix}Manifest: {result.ManifestPath}");
+        Console.WriteLine($"{prefix}Artifact: {result.ArtifactPath}");
     }
 }

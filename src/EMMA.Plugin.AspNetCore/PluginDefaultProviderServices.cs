@@ -18,6 +18,13 @@ public interface IPluginPagedMediaRuntime
         CancellationToken cancellationToken);
 }
 
+    public interface IPluginSearchMetadataRuntime
+    {
+        Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
+        IReadOnlyList<SearchItem> items,
+        CancellationToken cancellationToken);
+    }
+
 public interface IPluginVideoRuntime
 {
     Task<StreamResponse> GetStreamsAsync(string mediaId, CancellationToken cancellationToken);

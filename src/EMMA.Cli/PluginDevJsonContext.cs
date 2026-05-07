@@ -5,13 +5,21 @@ using EMMA.Plugin.Common;
 namespace EMMA.Cli;
 
 [JsonSerializable(typeof(PluginDevConfigDocument))]
+[JsonSerializable(typeof(PluginDevUiDocument))]
 [JsonSerializable(typeof(PluginDevProfileDocument))]
 [JsonSerializable(typeof(PluginDevLoggingDocument))]
 [JsonSerializable(typeof(PluginDevSyncDocument))]
+[JsonSerializable(typeof(PluginDevScenarioDocument))]
+[JsonSerializable(typeof(PluginDevScenarioFileDocument))]
+[JsonSerializable(typeof(PluginDevScenarioStepDocument))]
+[JsonSerializable(typeof(IReadOnlyList<SearchItem>))]
 [JsonSerializable(typeof(SearchItem[]))]
 [JsonSerializable(typeof(ChapterItem[]))]
 [JsonSerializable(typeof(PageItem))]
 [JsonSerializable(typeof(PageItem[]))]
+[JsonSerializable(typeof(PluginDevVideoTrack[]))]
+[JsonSerializable(typeof(PluginDevVideoStream[]))]
+[JsonSerializable(typeof(PluginDevVideoSegment))]
 internal sealed partial class PluginDevJsonContext : JsonSerializerContext
 {
 }

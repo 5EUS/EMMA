@@ -69,6 +69,14 @@ dotnet build
 dotnet run --project src/EMMA.Cli/EMMA.Cli.csproj
 ```
 
+### Publish CLI With Prebuilt Runtime Artifacts
+
+```bash
+./scripts/publish-cli-with-runtime.sh linux-x64
+```
+
+This builds the native WASM runtime sidecar into `artifacts/wasm-runtime-native/<rid>` and publishes the CLI with those prebuilt artifacts copied under `runtimes/wasm-runtime-native/<rid>` next to the published executable. If you need to override runtime resolution manually, set `EMMA_WASM_RUNTIME_LIBRARY_PATH` to the exact native library file.
+
 ### Run Plugin Host (development)
 
 ```bash

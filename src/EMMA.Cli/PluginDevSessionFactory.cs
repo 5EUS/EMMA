@@ -3,15 +3,20 @@ using EMMA.Api.Embedded;
 using EMMA.Infrastructure.Http;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
+using System.Text.Json;
 using Microsoft.Extensions.Options;
 
 namespace EMMA.Cli;
 
 public sealed class PluginDevSessionFactory
 {
+    private const string HostAuthHeaderName = "x-emma-plugin-host-auth";
+    private const string HostAuthTokenEnvironmentVariable = "EMMA_PLUGIN_HOST_AUTH_TOKEN";
     private const string DefaultProfileName = "host-bridge";
     private const string DefaultPluginId = "emma.plugin.test";
-    private const string DefaultHostUrl = "http://localhost:5000";
+    private const string DefaultHostBridgeUrl = "http://localhost:5000";
+    private const string DefaultLinuxDirectUrl = "http://127.0.0.1:5017";
+    private const string DefaultWindowsDirectUrl = "http://127.0.0.1:5018";
 
     private readonly PluginDevConfigLoader _configLoader = new();
     private readonly PluginDevDiscoveryService _discoveryService = new();
@@ -25,8 +30,17 @@ public sealed class PluginDevSessionFactory
         var discovery = _discoveryService.Discover(workingDirectory);
         var availableProfiles = BuildAvailableProfiles(loadResult, discovery);
         var profile = ResolveProfile(loadResult, availableProfiles, requestedProfileName);
+        var ui = ResolveUi(loadResult.Document.Ui);
+        var configuredScenarios = ResolveConfiguredScenarios(loadResult.Document, profile.Name);
+        var hostAuthToken = ResolveHostAuthToken();
 
         var httpClient = new HttpClient { BaseAddress = new Uri(profile.HostUrl, UriKind.Absolute) };
+        if (!string.IsNullOrWhiteSpace(hostAuthToken))
+        {
+            httpClient.DefaultRequestHeaders.Remove(HostAuthHeaderName);
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation(HostAuthHeaderName, hostAuthToken);
+        }
+
         var pluginPort = new PluginHostPagedMediaPort(
             httpClient,
             Options.Create(new PluginHostClientOptions
@@ -49,6 +63,8 @@ public sealed class PluginDevSessionFactory
             discovery,
             availableProfiles,
             profile,
+            ui,
+            configuredScenarios,
             runtimeAdapter,
             _buildService,
             _scenarioRunner,
@@ -73,9 +89,36 @@ public sealed class PluginDevSessionFactory
                 "No plugin.dev.json file was found. Using inferred host-bridge defaults.");
         }
 
+        if (profile.ExecutionMode == PluginExecutionMode.HostBridge)
+        {
+            session.AddDiagnostic(
+                string.IsNullOrWhiteSpace(hostAuthToken)
+                    ? "session.host_bridge.auth_token_missing"
+                    : "session.host_bridge.auth_token_configured",
+                string.IsNullOrWhiteSpace(hostAuthToken)
+                    ? $"Host-bridge execution for profile '{profile.Name}' has no {HostAuthTokenEnvironmentVariable} configured. Requests to auth-protected plugin hosts may fail with unauthenticated errors."
+                    : $"Host-bridge execution for profile '{profile.Name}' will forward {HostAuthTokenEnvironmentVariable} to the plugin host.",
+                string.IsNullOrWhiteSpace(hostAuthToken) ? PluginDevDiagnosticSeverity.Warning : PluginDevDiagnosticSeverity.Info,
+                "auth");
+        }
+
         foreach (var diagnostic in _doctor.Run(discovery, profile, availableProfiles))
         {
-            session.AddDiagnostic(diagnostic.Code, diagnostic.Message, diagnostic.IsError);
+            session.AddDiagnostic(diagnostic.Code, diagnostic.Message, diagnostic.Severity, diagnostic.Type);
+        }
+
+        if (configuredScenarios.Count > 0)
+        {
+            session.AddDiagnostic(
+                "session.scenarios.loaded",
+                $"Loaded {configuredScenarios.Count} custom scenario(s) for profile '{profile.Name}'.",
+                PluginDevDiagnosticSeverity.Info,
+                "scenarios");
+        }
+
+        foreach (var diagnostic in _scenarioRunner.LintConfiguredScenarios(configuredScenarios))
+        {
+            session.AddDiagnostic(diagnostic.Code, diagnostic.Message, diagnostic.Severity, diagnostic.Type);
         }
 
         return session;
@@ -96,9 +139,11 @@ public sealed class PluginDevSessionFactory
                 discovery,
                 availableProfiles,
                 profile,
-                runtimeAdapter: null!,
+                PluginDevUiOptions.Default,
+                [],
+                null!,
                 buildService,
-                scenarioRunner: null!,
+                null!,
                 runtime,
                 api);
 
@@ -126,9 +171,11 @@ public sealed class PluginDevSessionFactory
                 discovery,
                 availableProfiles,
                 profile,
-                runtimeAdapter: null!,
+                PluginDevUiOptions.Default,
+                [],
+                null!,
                 buildService,
-                scenarioRunner: null!,
+                null!,
                 runtime,
                 api);
 
@@ -212,12 +259,14 @@ public sealed class PluginDevSessionFactory
 
     private static IEnumerable<PluginDevProfile> BuildInferredProfiles(string? configPath, PluginDevDiscoveryResult discovery)
     {
+        const PluginExecutionMode hostBridgeMode = PluginExecutionMode.HostBridge;
+
         yield return new PluginDevProfile(
             DefaultProfileName,
             ResolvePluginId(null, discovery),
-            ResolveHostUrl(null),
+            ResolveHostUrl(null, PluginRuntimeTarget.Auto, hostBridgeMode),
             PluginRuntimeTarget.Auto,
-            PluginExecutionMode.HostBridge,
+            hostBridgeMode,
             PluginDevLoggingOptions.Default,
             PluginDevSyncOptions.Disabled,
             null,
@@ -230,13 +279,16 @@ public sealed class PluginDevSessionFactory
         {
             var artifactPath = discovery.ArtifactCandidates.FirstOrDefault(candidate => candidate.Target == target && candidate.Exists)?.Path
                 ?? discovery.ArtifactCandidates.FirstOrDefault(candidate => candidate.Target == target)?.Path;
+            var executionMode = target is PluginRuntimeTarget.Wasm or PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows
+                ? PluginExecutionMode.Direct
+                : PluginExecutionMode.HostBridge;
 
             yield return new PluginDevProfile(
                 ToProfileName(target),
                 ResolvePluginId(null, discovery),
-                ResolveHostUrl(null),
+                ResolveHostUrl(null, target, executionMode),
                 target,
-                target is PluginRuntimeTarget.Wasm or PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows ? PluginExecutionMode.Direct : PluginExecutionMode.HostBridge,
+                executionMode,
                 PluginDevLoggingOptions.Default,
                 PluginDevSyncOptions.Disabled,
                 null,
@@ -259,17 +311,18 @@ public sealed class PluginDevSessionFactory
                 Environment.GetEnvironmentVariable("EMMA_PLUGIN_TARGET"),
                 profileDocument.RuntimeTarget,
                 PluginRuntimeTarget.Auto.ToString()));
+        var executionMode = ParseExecutionMode(
+            FirstNonEmpty(
+                Environment.GetEnvironmentVariable("EMMA_PLUGIN_EXECUTION_MODE"),
+                profileDocument.ExecutionMode,
+                PluginExecutionMode.HostBridge.ToString()));
 
         return new PluginDevProfile(
             profileName,
             ResolvePluginId(profileDocument, discovery),
-            ResolveHostUrl(profileDocument),
+            ResolveHostUrl(profileDocument, runtimeTarget, executionMode),
             runtimeTarget,
-            ParseExecutionMode(
-                FirstNonEmpty(
-                    Environment.GetEnvironmentVariable("EMMA_PLUGIN_EXECUTION_MODE"),
-                    profileDocument.ExecutionMode,
-                    PluginExecutionMode.HostBridge.ToString())),
+            executionMode,
             ResolveLogging(profileDocument.Logging),
                     ResolveSync(profileDocument.Sync, configPath, discovery.RootDirectory),
             ResolveWasiSdkPath(profileDocument),
@@ -290,14 +343,29 @@ public sealed class PluginDevSessionFactory
             ?? DefaultPluginId;
     }
 
-    private static string ResolveHostUrl(PluginDevProfileDocument? profileDocument)
+    private static string ResolveHostUrl(PluginDevProfileDocument? profileDocument, PluginRuntimeTarget runtimeTarget, PluginExecutionMode executionMode)
     {
         return NormalizeHostUrl(
             FirstNonEmpty(
                 Environment.GetEnvironmentVariable("EMMA_PLUGIN_HOST_URL"),
                 profileDocument?.HostUrl,
-                DefaultHostUrl)
-            ?? DefaultHostUrl);
+                ResolveDefaultHostUrl(runtimeTarget, executionMode))
+            ?? ResolveDefaultHostUrl(runtimeTarget, executionMode));
+    }
+
+    private static string ResolveDefaultHostUrl(PluginRuntimeTarget runtimeTarget, PluginExecutionMode executionMode)
+    {
+        if (executionMode == PluginExecutionMode.Direct)
+        {
+            return runtimeTarget switch
+            {
+                PluginRuntimeTarget.Linux => DefaultLinuxDirectUrl,
+                PluginRuntimeTarget.Windows => DefaultWindowsDirectUrl,
+                _ => DefaultHostBridgeUrl
+            };
+        }
+
+        return DefaultHostBridgeUrl;
     }
 
     private static string ToProfileName(PluginRuntimeTarget target)
@@ -379,6 +447,32 @@ public sealed class PluginDevSessionFactory
         return Path.GetFullPath(Path.Combine(baseDirectory, expanded));
     }
 
+    private static PluginDevUiOptions ResolveUi(PluginDevUiDocument? ui)
+    {
+        var diagnosticsLevel = ui?.DiagnosticsLevel?.Trim().ToLowerInvariant();
+        return diagnosticsLevel switch
+        {
+            null or "" => PluginDevUiOptions.Default with
+            {
+                StartWatchByDefault = ui?.StartWatchByDefault ?? PluginDevUiOptions.Default.StartWatchByDefault,
+                StartServeByDefault = ui?.StartServeByDefault ?? PluginDevUiOptions.Default.StartServeByDefault
+            },
+            PluginDevDiagnosticSeverity.Info => new PluginDevUiOptions(
+                PluginDevDiagnosticSeverity.Info,
+                ui?.StartWatchByDefault ?? PluginDevUiOptions.Default.StartWatchByDefault,
+                ui?.StartServeByDefault ?? PluginDevUiOptions.Default.StartServeByDefault),
+            PluginDevDiagnosticSeverity.Warning => new PluginDevUiOptions(
+                PluginDevDiagnosticSeverity.Warning,
+                ui?.StartWatchByDefault ?? PluginDevUiOptions.Default.StartWatchByDefault,
+                ui?.StartServeByDefault ?? PluginDevUiOptions.Default.StartServeByDefault),
+            PluginDevDiagnosticSeverity.Error => new PluginDevUiOptions(
+                PluginDevDiagnosticSeverity.Error,
+                ui?.StartWatchByDefault ?? PluginDevUiOptions.Default.StartWatchByDefault,
+                ui?.StartServeByDefault ?? PluginDevUiOptions.Default.StartServeByDefault),
+            _ => throw new InvalidOperationException($"UI diagnosticsLevel '{ui?.DiagnosticsLevel}' is invalid. Expected one of: info, warning, error.")
+        };
+    }
+
     private static string ExpandPath(string value)
     {
         if (value.StartsWith("~/", StringComparison.Ordinal) || value == "~")
@@ -420,5 +514,105 @@ public sealed class PluginDevSessionFactory
         return Enum.TryParse<PluginExecutionMode>(value, ignoreCase: true, out var mode)
             ? mode
             : PluginExecutionMode.HostBridge;
+    }
+
+    private static string? ResolveHostAuthToken()
+    {
+        var value = Environment.GetEnvironmentVariable(HostAuthTokenEnvironmentVariable);
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static IReadOnlyList<PluginDevConfiguredScenario> ResolveConfiguredScenarios(PluginDevConfigDocument document, string profileName)
+    {
+        if (document.Scenarios is null || document.Scenarios.Count == 0)
+        {
+            return [];
+        }
+
+        var scenarios = new List<PluginDevConfiguredScenario>();
+        foreach (var (name, scenarioDocument) in document.Scenarios)
+        {
+            if (string.IsNullOrWhiteSpace(name) || scenarioDocument is null)
+            {
+                continue;
+            }
+
+            var appliesToProfiles = scenarioDocument.Profiles?
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Select(static value => value.Trim())
+                .ToArray() ?? [];
+            if (appliesToProfiles.Length > 0
+                && !appliesToProfiles.Any(value => string.Equals(value, profileName, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var steps = scenarioDocument.Steps?
+                .Where(static step => !string.IsNullOrWhiteSpace(step.Op))
+                .Select(static step => new PluginDevScenarioStep(
+                    step.Op!.Trim(),
+                    string.IsNullOrWhiteSpace(step.Save) ? null : step.Save.Trim(),
+                    step.Parameters ?? new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase),
+                    ResolveSuppressedScenarioWarnings(step.NoWarn)))
+                .ToArray() ?? [];
+            if (steps.Length == 0)
+            {
+                continue;
+            }
+
+            scenarios.Add(new PluginDevConfiguredScenario(
+                Name: name.Trim(),
+                DisplayName: string.IsNullOrWhiteSpace(scenarioDocument.DisplayName) ? name.Trim() : scenarioDocument.DisplayName.Trim(),
+                Description: string.IsNullOrWhiteSpace(scenarioDocument.Description) ? $"Custom scenario '{name.Trim()}'." : scenarioDocument.Description.Trim(),
+                DefaultQuery: string.IsNullOrWhiteSpace(scenarioDocument.DefaultQuery) ? null : scenarioDocument.DefaultQuery.Trim(),
+                SupportsQuery: scenarioDocument.SupportsQuery ?? true,
+                QueryLabel: string.IsNullOrWhiteSpace(scenarioDocument.QueryLabel) ? "Query" : scenarioDocument.QueryLabel.Trim(),
+                Steps: steps));
+        }
+
+        return scenarios;
+    }
+
+    private static IReadOnlySet<string> ResolveSuppressedScenarioWarnings(JsonElement? noWarn)
+    {
+        if (noWarn is null || noWarn.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        switch (noWarn.Value.ValueKind)
+        {
+            case JsonValueKind.String:
+            {
+                var value = noWarn.Value.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    values.Add(value.Trim());
+                }
+
+                break;
+            }
+            case JsonValueKind.Array:
+            {
+                foreach (var item in noWarn.Value.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    var value = item.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                    {
+                        values.Add(value.Trim());
+                    }
+                }
+
+                break;
+            }
+        }
+
+        return values;
     }
 }

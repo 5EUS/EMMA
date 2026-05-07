@@ -5,10 +5,12 @@ using Grpc.AspNetCore.Server;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 
 namespace EMMA.Plugin.AspNetCore;
 
@@ -49,6 +51,8 @@ public sealed record PluginSdkManifestDefaultsOptions(
     string DevelopmentPortArgumentName = "--port",
     string ProductionPortArgumentName = "",
     string RootMessage = "EMMA plugin is running.");
+
+internal sealed record PluginDevEnrichSearchRequest(IReadOnlyList<SearchItem>? Items);
 
 public static class PluginSdkControlOptionsExtensions
 {
@@ -322,11 +326,57 @@ public static class PluginSdkHost
 
         if (mapDefaultEndpoints)
         {
-            PluginAspNetHost.MapDefaultEndpoints(app, hostOptions);
+            MapDefaultEndpoints(app, hostOptions);
         }
 
         MapRegisteredGrpcServices(app);
         app.Run();
+    }
+
+    private static void MapDefaultEndpoints(WebApplication app, PluginAspNetHostOptions hostOptions)
+    {
+        PluginAspNetHost.MapDefaultEndpoints(app, hostOptions);
+
+        if (app.Services.GetService<IPluginSearchMetadataRuntime>() is null)
+        {
+            return;
+        }
+
+        app.MapPost("/dev/search/enrich", async (
+            PluginDevEnrichSearchRequest request,
+            IPluginSearchMetadataRuntime runtime,
+            IOptions<PluginSdkSecurityOptions> securityOptions,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            var authorizationError = EnsureAuthorized(httpContext, securityOptions.Value);
+            if (authorizationError is not null)
+            {
+                return authorizationError;
+            }
+
+            var items = request.Items?.Where(static item => !string.IsNullOrWhiteSpace(item.id)).ToArray() ?? [];
+            var enriched = await runtime.EnrichSearchItemsAsync(items, cancellationToken);
+            return Results.Json(enriched);
+        });
+    }
+
+    private static IResult? EnsureAuthorized(HttpContext httpContext, PluginSdkSecurityOptions options)
+    {
+        var expectedToken = Environment.GetEnvironmentVariable(options.HostAuthTokenEnvironmentVariable);
+        if (string.IsNullOrWhiteSpace(expectedToken))
+        {
+            return Results.Problem("Plugin host auth token is not configured.", statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (!httpContext.Request.Headers.TryGetValue(options.HostAuthHeaderName, out var providedToken)
+            || StringValues.IsNullOrEmpty(providedToken)
+            || !string.Equals(providedToken.ToString(), expectedToken, StringComparison.Ordinal))
+        {
+            return Results.Problem("Plugin host authentication failed.", statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        return null;
     }
 }
 

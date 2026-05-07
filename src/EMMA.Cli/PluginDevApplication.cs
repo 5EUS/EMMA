@@ -24,6 +24,8 @@ public sealed record PluginDevSessionSnapshot(
     IReadOnlyList<PluginRuntimeTarget> SupportedTargets,
     IReadOnlyList<PluginDevArtifactCandidate> ArtifactCandidates,
     IReadOnlyList<PluginDevDiagnostic> Diagnostics,
+    PluginDevUiOptions Ui,
+    IReadOnlyList<PluginDevScenarioDefinition> Scenarios,
     PluginDevWatchSnapshot Watch);
 
 public sealed class PluginDevApplication
@@ -32,6 +34,7 @@ public sealed class PluginDevApplication
 
     private readonly object _gate = new();
     private readonly PluginDevSessionFactory _sessionFactory;
+    private readonly PluginDevConfigLoader _configLoader = new();
     private readonly string _workingDirectory;
     private readonly List<PluginDevLogEntry> _logs = [];
     private readonly PluginDevWatchService _watchService = new();
@@ -46,6 +49,7 @@ public sealed class PluginDevApplication
         _session = session;
         ApplyProfileEnvironment(session.Profile);
         RecordInfo($"Session '{session.Id}' initialized for profile '{session.Profile.Name}'.");
+        RecordScenarioDiagnostics(session);
     }
 
     public PluginDevSessionSnapshot GetSessionSnapshot()
@@ -61,6 +65,52 @@ public sealed class PluginDevApplication
         lock (_gate)
         {
             return new ReadOnlyCollection<PluginDevLogEntry>(_logs.ToArray());
+        }
+    }
+
+    public void ClearLogs()
+    {
+        lock (_gate)
+        {
+            _logs.Clear();
+            _logs.Add(new PluginDevLogEntry(DateTimeOffset.UtcNow, "info", "Console cleared."));
+        }
+    }
+
+    public PluginDevSessionSnapshot UpdateUiDiagnosticsLevel(string diagnosticsLevel)
+    {
+        var normalizedLevel = NormalizeDiagnosticsLevel(diagnosticsLevel);
+
+        lock (_gate)
+        {
+            if (string.IsNullOrWhiteSpace(_session.Profile.ConfigPath))
+            {
+                throw new InvalidOperationException("UI settings can only be saved when a plugin.dev.json file is resolved for the active profile.");
+            }
+
+            var configPath = _session.Profile.ConfigPath!;
+            var restartWatch = _watchService.IsEnabled;
+            _watchService.Stop();
+
+            _configLoader.UpdateUiDiagnosticsLevel(configPath, normalizedLevel);
+
+            _session = _sessionFactory.Create(_workingDirectory, _session.Profile.Name);
+            _session.TransitionTo(PluginDevSessionState.Prepared);
+            ApplyProfileEnvironment(_session.Profile);
+            _lastWatchBuildArtifactPath = null;
+            _lastWatchBuildUtc = null;
+            PluginDevSessionHolder.SetCurrent(_session);
+            _logs.Clear();
+            RecordInfo($"Saved UI diagnostics level '{normalizedLevel}' to ignored UI state next to '{configPath}'.");
+            RecordScenarioDiagnostics(_session);
+
+            if (restartWatch)
+            {
+                var watch = StartWatchInternal(_session);
+                RecordInfo($"Watch restarted for profile '{_session.Profile.Name}' ({watch.WatchGlobs.Count} glob(s)) after UI config update.");
+            }
+
+            return Snapshot(_session);
         }
     }
 
@@ -83,6 +133,7 @@ public sealed class PluginDevApplication
             PluginDevSessionHolder.SetCurrent(_session);
             _logs.Clear();
             RecordInfo($"Switched active profile to '{_session.Profile.Name}'.");
+            RecordScenarioDiagnostics(_session);
 
             if (restartWatch)
             {
@@ -262,6 +313,14 @@ public sealed class PluginDevApplication
         }
     }
 
+    private void RecordScenarioDiagnostics(PluginDevSession session)
+    {
+        foreach (var diagnostic in session.Diagnostics.Where(static item => item.Type == "scenarios" && item.Severity != PluginDevDiagnosticSeverity.Info))
+        {
+            Record(diagnostic.Severity, $"{diagnostic.Code}: {diagnostic.Message}");
+        }
+    }
+
     private PluginDevSession RequireSession()
     {
         lock (_gate)
@@ -326,11 +385,20 @@ public sealed class PluginDevApplication
                 return ignoreMessage;
             }
 
+            string? refreshMessage = null;
+            if (ShouldRefreshSessionConfiguration(trigger.ChangedPath))
+            {
+                refreshMessage = RefreshSessionConfiguration(session);
+                RecordInfo(refreshMessage);
+            }
+
             if (!session.RuntimeAdapter.SupportsReload)
             {
                 var noReloadMessage = $"Watch observed '{relativePath}', but runtime adapter '{session.RuntimeAdapter.Name}' does not support explicit reload.";
                 RecordInfo(noReloadMessage);
-                return noReloadMessage;
+                return refreshMessage is null
+                    ? noReloadMessage
+                    : $"{refreshMessage}\n{noReloadMessage}";
             }
 
             string? buildMessage = null;
@@ -355,9 +423,19 @@ public sealed class PluginDevApplication
             }
 
             var message = await RunWithRuntimeLogsAsync(session, adapter => adapter.ReloadAsync(CancellationToken.None));
-            var combinedMessage = buildMessage is null
-                ? message
-                : $"{buildMessage}\n{message}";
+            var combinedMessageParts = new List<string>(3);
+            if (!string.IsNullOrWhiteSpace(refreshMessage))
+            {
+                combinedMessageParts.Add(refreshMessage);
+            }
+
+            if (!string.IsNullOrWhiteSpace(buildMessage))
+            {
+                combinedMessageParts.Add(buildMessage);
+            }
+
+            combinedMessageParts.Add(message);
+            var combinedMessage = string.Join("\n", combinedMessageParts);
             RecordInfo($"Watch reload completed: {message}");
             return combinedMessage;
         }
@@ -436,6 +514,11 @@ public sealed class PluginDevApplication
             return false;
         }
 
+        if (ShouldRefreshSessionConfiguration(fullChangedPath))
+        {
+            return false;
+        }
+
         if (string.IsNullOrWhiteSpace(session.Profile.ArtifactPath))
         {
             return true;
@@ -496,6 +579,27 @@ public sealed class PluginDevApplication
         }
     }
 
+    private string RefreshSessionConfiguration(PluginDevSession session)
+    {
+        var refreshed = _sessionFactory.Create(_workingDirectory, session.Profile.Name);
+        session.RefreshConfigurationFrom(refreshed);
+        ApplyProfileEnvironment(session.Profile);
+        PluginDevSessionHolder.SetCurrent(session);
+        RecordScenarioDiagnostics(session);
+
+        if (_watchService.IsEnabled)
+        {
+            StartWatchInternal(session);
+        }
+
+        return $"Watch refreshed config-backed session state for profile '{session.Profile.Name}' with {session.ConfiguredScenarios.Count} custom scenario(s).";
+    }
+
+    private static bool ShouldRefreshSessionConfiguration(string changedPath)
+    {
+        return string.Equals(Path.GetExtension(changedPath), ".json", StringComparison.OrdinalIgnoreCase);
+    }
+
     private PluginDevSessionSnapshot Snapshot(PluginDevSession session)
     {
         return new PluginDevSessionSnapshot(
@@ -515,7 +619,20 @@ public sealed class PluginDevApplication
             session.Discovery.SupportedTargets,
             session.Discovery.ArtifactCandidates,
             session.Diagnostics,
+            session.Ui,
+            session.ScenarioRunner.GetAvailableScenarios(session),
             GetEffectiveWatchSnapshot(session));
+    }
+
+    private static string NormalizeDiagnosticsLevel(string? diagnosticsLevel)
+    {
+        return diagnosticsLevel?.Trim().ToLowerInvariant() switch
+        {
+            PluginDevDiagnosticSeverity.Info => PluginDevDiagnosticSeverity.Info,
+            PluginDevDiagnosticSeverity.Warning => PluginDevDiagnosticSeverity.Warning,
+            PluginDevDiagnosticSeverity.Error => PluginDevDiagnosticSeverity.Error,
+            _ => throw new InvalidOperationException("Diagnostics level must be one of: info, warning, error.")
+        };
     }
 
     private PluginDevWatchSnapshot GetEffectiveWatchSnapshot(PluginDevSession session)

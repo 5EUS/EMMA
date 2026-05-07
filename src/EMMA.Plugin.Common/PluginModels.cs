@@ -15,6 +15,13 @@ public sealed record SearchItem(
     string? description = null,
     IReadOnlyList<MetadataItem>? metadata = null);
 
+public interface IPluginSearchMetadataEnricher
+{
+    Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
+        IReadOnlyList<SearchItem> items,
+        CancellationToken cancellationToken);
+}
+
 public sealed record CapabilityItem(string name, string[] mediaTypes, string[] operations);
 
 public sealed record ChapterItem(string id, int number, string title, string[]? uploaderGroups = null);

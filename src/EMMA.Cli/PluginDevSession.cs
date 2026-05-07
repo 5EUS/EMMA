@@ -28,7 +28,33 @@ public enum PluginDevSessionState
     Failed
 }
 
-public sealed record PluginDevDiagnostic(string Code, string Message, bool IsError = false);
+public static class PluginDevDiagnosticSeverity
+{
+    public const string Info = "info";
+    public const string Warning = "warning";
+    public const string Error = "error";
+}
+
+public sealed record PluginDevDiagnostic(string Code, string Message, string Severity = PluginDevDiagnosticSeverity.Info, string Type = "general")
+{
+    public bool IsError => string.Equals(Severity, PluginDevDiagnosticSeverity.Error, StringComparison.OrdinalIgnoreCase);
+
+    public static string InferType(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return "general";
+        }
+
+        var segments = code.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length >= 2)
+        {
+            return segments[1];
+        }
+
+        return segments.Length == 1 ? segments[0] : "general";
+    }
+}
 
 public sealed record PluginDevLoggingOptions(
     bool Plugin,
@@ -54,6 +80,17 @@ public sealed record PluginDevSyncOptions(
         CleanDestination: false);
 }
 
+public sealed record PluginDevUiOptions(
+    string DiagnosticsLevel,
+    bool StartWatchByDefault,
+    bool StartServeByDefault)
+{
+    public static PluginDevUiOptions Default { get; } = new(
+        PluginDevDiagnosticSeverity.Info,
+        StartWatchByDefault: false,
+        StartServeByDefault: false);
+}
+
 public sealed record PluginDevProfile(
     string Name,
     string PluginId,
@@ -77,6 +114,8 @@ public sealed class PluginDevSession
         PluginDevDiscoveryResult discovery,
         IReadOnlyList<PluginDevProfile> availableProfiles,
         PluginDevProfile profile,
+        PluginDevUiOptions ui,
+        IReadOnlyList<PluginDevConfiguredScenario> configuredScenarios,
         IPluginDevRuntimeAdapter runtimeAdapter,
         PluginDevBuildService buildService,
         PluginDevScenarioRunner scenarioRunner,
@@ -88,6 +127,8 @@ public sealed class PluginDevSession
         Discovery = discovery;
         AvailableProfiles = availableProfiles;
         Profile = profile;
+        Ui = ui;
+        ConfiguredScenarios = configuredScenarios;
         RuntimeAdapter = runtimeAdapter;
         BuildService = buildService;
         ScenarioRunner = scenarioRunner;
@@ -101,11 +142,15 @@ public sealed class PluginDevSession
 
     public string WorkingDirectory { get; }
 
-    public PluginDevDiscoveryResult Discovery { get; }
+    public PluginDevDiscoveryResult Discovery { get; private set; }
 
-    public IReadOnlyList<PluginDevProfile> AvailableProfiles { get; }
+    public IReadOnlyList<PluginDevProfile> AvailableProfiles { get; private set; }
 
-    public PluginDevProfile Profile { get; }
+    public PluginDevProfile Profile { get; private set; }
+
+    public PluginDevUiOptions Ui { get; private set; }
+
+    public IReadOnlyList<PluginDevConfiguredScenario> ConfiguredScenarios { get; private set; }
 
     public IPluginDevRuntimeAdapter RuntimeAdapter { get; }
 
@@ -132,12 +177,44 @@ public sealed class PluginDevSession
 
     public void AddDiagnostic(string code, string message, bool isError = false)
     {
-        _diagnostics.Add(new PluginDevDiagnostic(code, message, isError));
+        AddDiagnostic(
+            code,
+            message,
+            isError ? PluginDevDiagnosticSeverity.Error : PluginDevDiagnosticSeverity.Info,
+            PluginDevDiagnostic.InferType(code));
 
         if (isError)
         {
             State = PluginDevSessionState.Failed;
         }
+    }
+
+    public void AddDiagnostic(string code, string message, string severity, string? type = null)
+    {
+        _diagnostics.Add(new PluginDevDiagnostic(
+            code,
+            message,
+            severity,
+            string.IsNullOrWhiteSpace(type) ? PluginDevDiagnostic.InferType(code) : type));
+
+        if (string.Equals(severity, PluginDevDiagnosticSeverity.Error, StringComparison.OrdinalIgnoreCase))
+        {
+            State = PluginDevSessionState.Failed;
+        }
+    }
+
+    public void RefreshConfigurationFrom(PluginDevSession source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        Discovery = source.Discovery;
+        AvailableProfiles = source.AvailableProfiles;
+        Profile = source.Profile;
+        Ui = source.Ui;
+        ConfiguredScenarios = source.ConfiguredScenarios;
+
+        _diagnostics.Clear();
+        _diagnostics.AddRange(source.Diagnostics);
     }
 }
 

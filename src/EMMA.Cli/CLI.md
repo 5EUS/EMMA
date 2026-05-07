@@ -55,8 +55,15 @@ Environment:
 	profile.
 - `build` also runs normalized native publish plans for `linux-dev` and
 	`windows-dev`.
-- `pack` creates a simple WASM plugin package zip from the discovered manifest
-	and resolved `.wasm` artifact.
+- `build all` iterates over every resolved profile and runs each normalized
+	build plan in turn before restoring the original active profile.
+- `pack` packages the active profile artifact using the normalized pack flow for
+	the active runtime target.
+- `pack all` iterates over every resolved profile and packages each one before
+	restoring the original active profile.
+- `build-pack` builds the active profile and then packages it.
+- `build-pack all` iterates over every resolved profile, builds it, packages
+	it, and then restores the original active profile.
 - `reload` reports the reload semantics for the active runtime adapter.
 - `watch start` begins recursive file watching rooted at the discovered plugin
 	project directory. Matching changes are batched before reload is requested.
@@ -68,6 +75,9 @@ Environment:
 	are available.
 - `scenario paged-smoke [query]` runs a built-in search -> chapters -> page
 	smoke flow against the active runtime.
+- `scenario <name> [query]` also runs config-defined scenarios from
+	`plugin.dev.json` or `EMMA_PLUGIN_DEV_CONFIG` when the config declares a
+	`scenarios` block.
 
 ## Native development commands
 
@@ -95,8 +105,64 @@ Environment:
 - `emma-test-plugin/plugin.dev.sample.json` provides a sample Phase 6 configuration with watch globs for `wasm-dev`, `linux-dev`, and `windows-dev`.
 - Per-profile `logging` supports `plugin` (default `true`), `aspNetHost` (default `false`), and `httpClient` (default `false`).
 - Per-profile `wasiSdkPath` lets `wasm-dev` carry a default `WASI_SDK_PATH` without relying on the shell environment.
+- Per-profile `sync` supports `enabled`, `destinationPath`, `onBuild`, and `cleanDestination` for build/watch artifact mirroring into local `emmaui` plugin directories.
+- `scenariosPath` lets plugin repos point at a folder of individual scenario DSL
+	files so custom flows do not have to live inline in the main dev config.
 - Point `EMMA_PLUGIN_DEV_CONFIG` at that file when you want to exercise the
 	shared watch flow without creating a local bespoke config.
+
+## Custom scenario DSL
+
+- Custom scenarios live in a scenario folder, which defaults to `scenarios/`
+	next to the resolved config file or can be overridden with `scenariosPath`.
+- Each scenario file is its own JSON document and can declare `name`,
+	`displayName`, `description`, `defaultQuery`, `supportsQuery`, `queryLabel`,
+	optional `profiles`, and a `steps` array.
+- A step always has `op`, can optionally `save` its output into a named
+	variable, and can add arbitrary parameters depending on the operation.
+- String parameters support direct expression references like `$query` and
+	template interpolation like `Selected {{media.title}} with status {{media.metadata.status}}`.
+- Expressions resolve previously saved variables and object properties using
+	dot-paths. Metadata lists are exposed by key, so `media.metadata.status`
+	reads the metadata entry whose key is `status`.
+
+Supported step ops:
+
+- `search`: `query`, optional `save`
+- `chapters`: `mediaId`, optional `save`
+- `page`: `mediaId`, `chapterId`, `index`, optional `save`
+- `pages`: `mediaId`, `chapterId`, `startIndex`, `count`, optional `save`
+- `selectFirst`: `from`, optional `save`
+- `selectAt`: `from`, `index`, optional `save`
+- `requireCount`: `from`, optional `min`, optional `max`
+- `requireNotNull`: `value`, optional `message`, optional `save`
+- `set`: `value`, required `save`
+- `log`: `message`
+
+Minimal example:
+
+```json
+{
+	"name": "metadata-smoke",
+	"displayName": "Metadata Smoke",
+	"description": "Search and surface metadata from the first result.",
+	"defaultQuery": "naruto",
+	"steps": [
+		{ "op": "search", "query": "$query", "save": "results" },
+		{ "op": "requireCount", "from": "$results", "min": 1 },
+		{ "op": "selectFirst", "from": "$results", "save": "media" },
+		{ "op": "log", "message": "Selected {{media.title}} ({{media.id}})" },
+		{ "op": "log", "message": "Status={{media.metadata.status}} Year={{media.metadata.year}}" }
+	]
+}
+```
+
+## AI workflow guidance
+
+- A repo instruction file is the best default customization for AI workflows with this CLI because most tasks need the same always-available operational rules, not a separate agent mode.
+- Prefer a custom agent only when you want an explicit, repeated multi-step workflow with isolated context, such as `doctor -> build -> scenario -> serve/watch diagnostics` as one named operation.
+- For agent-driven troubleshooting, start with `session` or `doctor`, then keep the active profile explicit with `EMMA_PLUGIN_PROFILE` and the config explicit with `EMMA_PLUGIN_DEV_CONFIG` when you are using a non-default config file.
+- For plugin-dev tasks, prefer the normalized CLI surface before falling back to helper scripts so AI tooling exercises the same path users rely on.
 
 ## CI smoke coverage
 

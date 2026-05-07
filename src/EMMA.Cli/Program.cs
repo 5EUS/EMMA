@@ -1,6 +1,8 @@
 ﻿using EMMA.Cli;
 using ConsoleAppFramework;
 
+try
+{
 if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE")))
 {
     Environment.SetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE", "1");
@@ -14,6 +16,33 @@ session.TransitionTo(PluginDevSessionState.Starting);
 PluginDevSessionHolder.SetCurrent(session);
 var pluginApplication = new PluginDevApplication(sessionFactory, Environment.CurrentDirectory, session);
 PluginDevApplicationHolder.SetCurrent(pluginApplication);
+
+if (args.Length == 0)
+{
+    if (session.Ui.StartWatchByDefault)
+    {
+        try
+        {
+            pluginApplication.StartWatch();
+        }
+        catch (Exception ex)
+        {
+            pluginApplication.RecordError($"Default watch startup failed: {ex.Message}");
+        }
+    }
+
+    if (session.Ui.StartServeByDefault)
+    {
+        try
+        {
+            Console.WriteLine(PluginDevLocalServer.StartInBackground(pluginApplication, 5075));
+        }
+        catch (Exception ex)
+        {
+            pluginApplication.RecordError($"Default serve startup failed: {ex.Message}");
+        }
+    }
+}
 
 var app = ConsoleApp.Create();
 app.Add<MyCommands>();
@@ -55,3 +84,9 @@ var loop = new CommandLoop(commandArgs =>
 
 loop.Run().Wait();
 session.TransitionTo(PluginDevSessionState.Stopped);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"EMMA CLI startup failed: {ex.Message}");
+    Environment.ExitCode = 1;
+}

@@ -2,11 +2,13 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
+using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using EMMA.Api;
 using EMMA.Api.Embedded;
 using EMMA.Contracts.Api.V1;
@@ -30,6 +32,53 @@ public sealed record PluginDevPackResult(string PackagePath, string ManifestPath
 
 public sealed record PluginDevScenarioResult(string Name, bool Succeeded, IReadOnlyList<string> Messages);
 
+public sealed record PluginDevVideoTrack(
+    string Id,
+    string Label,
+    string? Language = null,
+    string? Codec = null,
+    bool IsDefault = false);
+
+public sealed record PluginDevVideoStream(
+    string Id,
+    string Label,
+    string PlaylistUri,
+    IReadOnlyDictionary<string, string>? RequestHeaders = null,
+    string? RequestCookies = null,
+    string? StreamType = null,
+    bool IsLive = false,
+    bool DrmProtected = false,
+    string? DrmScheme = null,
+    IReadOnlyList<PluginDevVideoTrack>? AudioTracks = null,
+    IReadOnlyList<PluginDevVideoTrack>? SubtitleTracks = null,
+    string? DefaultAudioTrackId = null,
+    string? DefaultSubtitleTrackId = null);
+
+public sealed record PluginDevVideoSegment(string ContentType, string PayloadBase64, int SizeBytes);
+
+public sealed record PluginDevScenarioDefinition(
+    string Name,
+    string DisplayName,
+    string Description,
+    string? DefaultQuery,
+    bool SupportsQuery = true,
+    string QueryLabel = "Query");
+
+public sealed record PluginDevConfiguredScenario(
+    string Name,
+    string DisplayName,
+    string Description,
+    string? DefaultQuery,
+    bool SupportsQuery,
+    string QueryLabel,
+    IReadOnlyList<PluginDevScenarioStep> Steps);
+
+public sealed record PluginDevScenarioStep(
+    string Op,
+    string? Save,
+    IReadOnlyDictionary<string, JsonElement> Parameters,
+    IReadOnlySet<string> NoWarn);
+
 public sealed record PluginDevRuntimeLogLine(string Level, string Message);
 
 public interface IPluginDevRuntimeAdapter
@@ -40,9 +89,12 @@ public interface IPluginDevRuntimeAdapter
     bool SupportsScenarios { get; }
 
     Task<IReadOnlyList<SearchItem>> SearchAsync(string query, CancellationToken cancellationToken);
+    Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken);
     Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken);
     Task<PageItem?> GetPageAsync(string mediaId, string chapterId, int index, CancellationToken cancellationToken);
     Task<IReadOnlyList<PageItem>> GetPagesAsync(string mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken);
+    Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken);
+    Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken);
     Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken);
     Task<string> ReloadAsync(CancellationToken cancellationToken);
 }
@@ -81,6 +133,9 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
             null,
             null)).ToArray();
     }
+
+    public Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
+        => Task.FromException<IReadOnlyList<SearchItem>>(new NotSupportedException("Host-bridge runtime does not expose search metadata enrichment yet."));
 
     public async Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
     {
@@ -122,6 +177,12 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
         return pagesResult.Pages.Select(static page => new PageItem(page.PageId, page.Index, page.ContentUri.ToString())).ToArray();
     }
 
+    public Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+        => Task.FromException<IReadOnlyList<PluginDevVideoStream>>(new NotSupportedException("Host-bridge runtime does not expose video stream inspection yet."));
+
+    public Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+        => Task.FromException<PluginDevVideoSegment?>(new NotSupportedException("Host-bridge runtime does not expose video segment inspection yet."));
+
     public async Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
     {
         var response = await api.GetPageAssetAsync(new PageAssetRequest
@@ -156,6 +217,9 @@ public sealed class UnsupportedRuntimeAdapter(string name, string reason) : IPlu
     public Task<IReadOnlyList<SearchItem>> SearchAsync(string query, CancellationToken cancellationToken)
         => Task.FromException<IReadOnlyList<SearchItem>>(new InvalidOperationException(reason));
 
+    public Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
+        => Task.FromException<IReadOnlyList<SearchItem>>(new InvalidOperationException(reason));
+
     public Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
         => Task.FromException<IReadOnlyList<ChapterItem>>(new InvalidOperationException(reason));
 
@@ -164,6 +228,12 @@ public sealed class UnsupportedRuntimeAdapter(string name, string reason) : IPlu
 
     public Task<IReadOnlyList<PageItem>> GetPagesAsync(string mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken)
         => Task.FromException<IReadOnlyList<PageItem>>(new InvalidOperationException(reason));
+
+    public Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+        => Task.FromException<IReadOnlyList<PluginDevVideoStream>>(new InvalidOperationException(reason));
+
+    public Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+        => Task.FromException<PluginDevVideoSegment?>(new InvalidOperationException(reason));
 
     public Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
         => Task.FromException<byte[]?>(new InvalidOperationException(reason));
@@ -193,6 +263,9 @@ public sealed class DeferredWasmRuntimeAdapter(
     public Task<IReadOnlyList<SearchItem>> SearchAsync(string query, CancellationToken cancellationToken)
         => _inner.Value.SearchAsync(query, cancellationToken);
 
+    public Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
+        => _inner.Value.EnrichSearchItemsAsync(items, cancellationToken);
+
     public Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
         => _inner.Value.GetChaptersAsync(mediaId, cancellationToken);
 
@@ -201,6 +274,12 @@ public sealed class DeferredWasmRuntimeAdapter(
 
     public Task<IReadOnlyList<PageItem>> GetPagesAsync(string mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken)
         => _inner.Value.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
+
+    public Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+        => _inner.Value.GetVideoStreamsAsync(mediaId, cancellationToken);
+
+    public Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+        => _inner.Value.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
 
     public Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
         => _inner.Value.GetPageAssetAsync(mediaId, chapterId, cancellationToken);
@@ -216,6 +295,7 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
 {
     private const string HostAuthHeaderName = "x-emma-plugin-host-auth";
     private const string CorrelationIdHeaderName = "x-correlation-id";
+    private const string EnrichSearchItemsPath = "/dev/search/enrich";
 
     private readonly string _entryPointPath;
     private readonly Uri _hostUri;
@@ -263,6 +343,25 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
         return response.Results
             .Select(MapSearchItem)
             .ToArray();
+    }
+
+    public async Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        await EnsureRunningAsync(cancellationToken);
+        using var httpClient = CreateAuthorizedHttpClient();
+        using var response = await httpClient.PostAsJsonAsync(EnrichSearchItemsPath, new EnrichSearchItemsRequest(items), cancellationToken);
+        var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(payload)
+                ? $"Search enrichment failed with HTTP {(int)response.StatusCode}."
+                : payload.Trim());
+        }
+
+        return JsonSerializer.Deserialize(payload, PluginDevJsonContexts.Config.IReadOnlyListSearchItem)
+            ?? [];
     }
 
     public async Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
@@ -325,6 +424,71 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
         return response.Pages
             .Select(static item => new PageItem(item.Id, item.Index, item.ContentUri))
             .ToArray();
+    }
+
+    public async Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        await EnsureRunningAsync(cancellationToken);
+
+        using var httpClient = CreateGrpcHttpClient();
+        using var channel = GrpcChannel.ForAddress(_hostUri, new GrpcChannelOptions { HttpClient = httpClient });
+        var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
+        var correlationId = Guid.NewGuid().ToString("n");
+        var response = await client.GetStreamsAsync(new PluginContracts.StreamRequest
+        {
+            MediaId = mediaId,
+            Context = CreatePluginRequestContext(correlationId)
+        }, headers: CreateGrpcHeaders(correlationId), cancellationToken: cancellationToken);
+
+        return response.Streams
+            .Select(static stream => new PluginDevVideoStream(
+                stream.Id ?? string.Empty,
+                stream.Label ?? string.Empty,
+                stream.PlaylistUri ?? string.Empty,
+                stream.RequestHeaders?.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.OrdinalIgnoreCase),
+                string.IsNullOrWhiteSpace(stream.RequestCookies) ? null : stream.RequestCookies,
+                string.IsNullOrWhiteSpace(stream.StreamType) ? null : stream.StreamType,
+                stream.IsLive,
+                stream.DrmProtected,
+                string.IsNullOrWhiteSpace(stream.DrmScheme) ? null : stream.DrmScheme,
+                stream.AudioTracks.Select(static track => new PluginDevVideoTrack(
+                    track.Id ?? string.Empty,
+                    track.Label ?? string.Empty,
+                    string.IsNullOrWhiteSpace(track.Language) ? null : track.Language,
+                    string.IsNullOrWhiteSpace(track.Codec) ? null : track.Codec,
+                    track.IsDefault)).ToArray(),
+                stream.SubtitleTracks.Select(static track => new PluginDevVideoTrack(
+                    track.Id ?? string.Empty,
+                    track.Label ?? string.Empty,
+                    string.IsNullOrWhiteSpace(track.Language) ? null : track.Language,
+                    string.IsNullOrWhiteSpace(track.Codec) ? null : track.Codec,
+                    track.IsDefault)).ToArray(),
+                string.IsNullOrWhiteSpace(stream.DefaultAudioTrackId) ? null : stream.DefaultAudioTrackId,
+                string.IsNullOrWhiteSpace(stream.DefaultSubtitleTrackId) ? null : stream.DefaultSubtitleTrackId))
+            .ToArray();
+    }
+
+    public async Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+    {
+        await EnsureRunningAsync(cancellationToken);
+
+        using var httpClient = CreateGrpcHttpClient();
+        using var channel = GrpcChannel.ForAddress(_hostUri, new GrpcChannelOptions { HttpClient = httpClient });
+        var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
+        var correlationId = Guid.NewGuid().ToString("n");
+        var response = await client.GetSegmentAsync(new PluginContracts.SegmentRequest
+        {
+            MediaId = mediaId,
+            StreamId = streamId,
+            Sequence = sequence,
+            Context = CreatePluginRequestContext(correlationId)
+        }, headers: CreateGrpcHeaders(correlationId), cancellationToken: cancellationToken);
+
+        var payload = response.Payload.ToByteArray();
+        return new PluginDevVideoSegment(
+            string.IsNullOrWhiteSpace(response.ContentType) ? "application/octet-stream" : response.ContentType,
+            Convert.ToBase64String(payload),
+            payload.Length);
     }
 
     public async Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
@@ -562,6 +726,24 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
         };
     }
 
+    private HttpClient CreateAuthorizedHttpClient()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            EnableMultipleHttp2Connections = true
+        };
+
+        var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = _hostUri,
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
+        };
+
+        httpClient.DefaultRequestHeaders.TryAddWithoutValidation(HostAuthHeaderName, _authToken);
+        return httpClient;
+    }
+
     private static PluginContracts.RequestContext CreatePluginRequestContext(string correlationId)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
@@ -596,6 +778,8 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
             string.IsNullOrWhiteSpace(item.Description) ? null : item.Description,
             metadata);
     }
+
+    private sealed record EnrichSearchItemsRequest(IReadOnlyList<SearchItem> Items);
 }
 
 public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter, IPluginDevRuntimeLogSource
@@ -636,6 +820,27 @@ public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter, IPluginDev
             cancellationToken) ?? [];
     }
 
+    public async Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
+    {
+        var itemIds = items
+            .Select(static item => item.id)
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (itemIds.Length == 0)
+        {
+            return [];
+        }
+
+        return await InvokeTypedOperationAsync<IReadOnlyList<SearchItem>>(
+            nestedOperation: "enrich-search-metadata",
+            mediaId: null,
+            mediaType: null,
+            argsJson: JsonSerializer.Serialize(new { itemIds, baseItems = items }),
+            cancellationToken) ?? [];
+    }
+
     public async Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
     {
         return await InvokeTypedOperationAsync<IReadOnlyList<ChapterItem>>(
@@ -664,6 +869,26 @@ public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter, IPluginDev
             mediaType: PluginMediaTypes.Paged,
             argsJson: JsonSerializer.Serialize(new { chapterId, startIndex, count }),
             cancellationToken) ?? [];
+    }
+
+    public async Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        return await InvokeTypedOperationAsync<IReadOnlyList<PluginDevVideoStream>>(
+            nestedOperation: PluginOperationNames.VideoStreams,
+            mediaId: mediaId,
+            mediaType: PluginMediaTypes.Video,
+            argsJson: null,
+            cancellationToken) ?? [];
+    }
+
+    public async Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+    {
+        return await InvokeTypedOperationAsync<PluginDevVideoSegment>(
+            nestedOperation: PluginOperationNames.VideoSegment,
+            mediaId: mediaId,
+            mediaType: PluginMediaTypes.Video,
+            argsJson: JsonSerializer.Serialize(new { streamId, sequence }),
+            cancellationToken);
     }
 
     public Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
@@ -1332,13 +1557,10 @@ public sealed class PluginDevBuildService
 
 public static class PluginDevRuntimeLibraryResolver
 {
+    private const string RuntimeLibraryPathEnvironmentVariable = "EMMA_WASM_RUNTIME_LIBRARY_PATH";
+
     public static string Resolve(string workingDirectory)
     {
-        var root = FindRepoRoot(workingDirectory)
-            ?? FindRepoRoot(AppContext.BaseDirectory)
-            ?? FindRepoRoot(Path.GetDirectoryName(typeof(PluginDevRuntimeLibraryResolver).Assembly.Location) ?? string.Empty)
-            ?? throw new InvalidOperationException("Unable to locate the EMMA repository root while resolving the native WASM runtime library.");
-
         var libraryFileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? "emma_wasm_runtime.dll"
             : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
@@ -1351,13 +1573,56 @@ public static class PluginDevRuntimeLibraryResolver
                 ? "osx-arm64"
                 : "linux-x64";
 
+        var overridePath = Environment.GetEnvironmentVariable(RuntimeLibraryPathEnvironmentVariable)?.Trim();
+        if (!string.IsNullOrWhiteSpace(overridePath))
+        {
+            var resolvedOverridePath = Path.GetFullPath(overridePath);
+            if (!File.Exists(resolvedOverridePath))
+            {
+                throw new InvalidOperationException($"Native WASM runtime library override '{RuntimeLibraryPathEnvironmentVariable}' points to a missing file: {resolvedOverridePath}");
+            }
+
+            return resolvedOverridePath;
+        }
+
+        foreach (var candidate in EnumeratePackagedRuntimeCandidates(platformDir, libraryFileName))
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        var root = FindRepoRoot(workingDirectory)
+            ?? FindRepoRoot(AppContext.BaseDirectory)
+            ?? FindRepoRoot(Path.GetDirectoryName(typeof(PluginDevRuntimeLibraryResolver).Assembly.Location) ?? string.Empty)
+            ?? throw new InvalidOperationException(
+                "Unable to locate the EMMA repository root or a packaged native WASM runtime sidecar while resolving the native WASM runtime library.");
+
         var path = Path.Combine(root, "artifacts", "wasm-runtime-native", platformDir, libraryFileName);
         if (!File.Exists(path))
         {
-            throw new InvalidOperationException($"Native WASM runtime library was not found: {path}");
+            throw new InvalidOperationException(
+                $"Native WASM runtime library was not found. Checked packaged sidecars next to the CLI and repo artifact path '{path}'. "
+                + $"Set {RuntimeLibraryPathEnvironmentVariable} to override the resolver when distributing the CLI separately.");
         }
 
         return path;
+    }
+
+    private static IEnumerable<string> EnumeratePackagedRuntimeCandidates(string platformDir, string libraryFileName)
+    {
+        var baseDirectories = new[]
+        {
+            AppContext.BaseDirectory,
+            Path.GetDirectoryName(typeof(PluginDevRuntimeLibraryResolver).Assembly.Location) ?? string.Empty
+        };
+
+        foreach (var baseDirectory in baseDirectories.Where(static value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal))
+        {
+            yield return Path.Combine(baseDirectory, "runtimes", "wasm-runtime-native", platformDir, libraryFileName);
+            yield return Path.Combine(baseDirectory, "wasm-runtime-native", platformDir, libraryFileName);
+        }
     }
 
     private static string? FindRepoRoot(string workingDirectory)
@@ -1384,14 +1649,531 @@ public static class PluginDevRuntimeLibraryResolver
 
 public sealed class PluginDevScenarioRunner
 {
+    private static readonly Regex TemplatePattern = new("\\{\\{(?<expr>[^{}]+)\\}\\}", RegexOptions.Compiled);
+    private static readonly IReadOnlyDictionary<string, string[]> AllowedParametersByOperation = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["search"] = ["query"],
+        ["enrich"] = ["from"],
+        ["chapters"] = ["mediaId"],
+        ["page"] = ["mediaId", "chapterId", "index"],
+        ["pages"] = ["mediaId", "chapterId", "startIndex", "count"],
+        ["videostreams"] = ["mediaId"],
+        ["videosegment"] = ["mediaId", "streamId", "sequence"],
+        ["selectfirst"] = ["from"],
+        ["selectat"] = ["from", "index"],
+        ["requirecount"] = ["from", "min", "max"],
+        ["requirenotnull"] = ["value", "message"],
+        ["set"] = ["value"],
+        ["log"] = ["message"],
+        ["placeholder"] = ["message"]
+    };
+    private static readonly IReadOnlyDictionary<string, string[]> RequiredParametersByOperation = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["search"] = ["query"],
+        ["enrich"] = ["from"],
+        ["chapters"] = ["mediaId"],
+        ["page"] = ["mediaId", "chapterId", "index"],
+        ["pages"] = ["mediaId", "chapterId", "startIndex", "count"],
+        ["videostreams"] = ["mediaId"],
+        ["videosegment"] = ["mediaId", "streamId", "sequence"],
+        ["selectfirst"] = ["from"],
+        ["selectat"] = ["from", "index"],
+        ["requirecount"] = ["from"],
+        ["requirenotnull"] = ["value"],
+        ["set"] = ["value"],
+        ["log"] = ["message"],
+        ["placeholder"] = ["message"]
+    };
+    private static readonly IReadOnlyList<PluginDevScenarioDefinition> SupportedScenarios =
+    [
+        new PluginDevScenarioDefinition(
+            "paged-smoke",
+            "Paged Smoke",
+            "Runs search, chapter lookup, and first-page fetch for a fast end-to-end paged-media sanity check.",
+            "naruto",
+            true,
+            "Search query"),
+        new PluginDevScenarioDefinition(
+            "search-smoke",
+            "Search Smoke",
+            "Runs only the search step so provider query and result mapping can be checked in isolation.",
+            "naruto",
+            true,
+            "Search query"),
+        new PluginDevScenarioDefinition(
+            "chapters-smoke",
+            "Chapters Smoke",
+            "Runs search and chapter lookup without fetching page content, which is useful when narrowing failures to chapter enumeration.",
+            "naruto",
+            true,
+            "Search query"),
+        new PluginDevScenarioDefinition(
+            "video-smoke",
+            "Video Smoke",
+            "Exercises video stream lookup for the active runtime so video transport wiring can be validated even before a richer fixture library exists.",
+            "demo-video-1",
+            true,
+            "Video media id"),
+        new PluginDevScenarioDefinition(
+            "audio-placeholder",
+            "Audio Placeholder",
+            "Reserved for future audio-media scenario coverage. This currently documents the planned surface without claiming support.",
+            null,
+            false,
+            "Query"),
+        new PluginDevScenarioDefinition(
+            "text-paged-placeholder",
+            "Text-Paged Placeholder",
+            "Reserved for future text-based paged media scenario coverage. This currently documents the planned surface without claiming support.",
+            null,
+            false,
+            "Query")
+    ];
+
+    public IReadOnlyList<PluginDevDiagnostic> LintConfiguredScenarios(IReadOnlyList<PluginDevConfiguredScenario> scenarios)
+    {
+        var diagnostics = new List<PluginDevDiagnostic>();
+
+        foreach (var scenario in scenarios)
+        {
+            var knownSymbols = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "query",
+                "profile",
+                "pluginId",
+                "runtimeTarget",
+                "executionMode"
+            };
+
+            if (SupportedScenarios.Any(item => string.Equals(item.Name, scenario.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                diagnostics.Add(new PluginDevDiagnostic(
+                    $"scenario.lint.{scenario.Name}.shadowing_builtin",
+                    $"Custom scenario '{scenario.Name}' overrides a built-in scenario name. The custom scenario will be used.",
+                    PluginDevDiagnosticSeverity.Warning,
+                    "scenarios"));
+            }
+
+            for (var index = 0; index < scenario.Steps.Count; index++)
+            {
+                var step = scenario.Steps[index];
+                var normalizedOp = step.Op.Trim().ToLowerInvariant();
+                var stepOrdinal = index + 1;
+
+                if (!AllowedParametersByOperation.ContainsKey(normalizedOp))
+                {
+                    diagnostics.Add(new PluginDevDiagnostic(
+                        $"scenario.lint.{scenario.Name}.step_{stepOrdinal}.unknown_op",
+                        $"Scenario '{scenario.Name}' step {stepOrdinal} uses unknown op '{step.Op}'. Supported ops: {string.Join(", ", AllowedParametersByOperation.Keys.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase))}.",
+                        PluginDevDiagnosticSeverity.Warning,
+                        "scenarios"));
+                    continue;
+                }
+
+                var requiredParameters = RequiredParametersByOperation[normalizedOp];
+                foreach (var requiredParameter in requiredParameters)
+                {
+                    if (!step.Parameters.Keys.Any(key => string.Equals(key, requiredParameter, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        diagnostics.Add(new PluginDevDiagnostic(
+                            $"scenario.lint.{scenario.Name}.step_{stepOrdinal}.missing_{requiredParameter.ToLowerInvariant()}",
+                            $"Scenario '{scenario.Name}' step {stepOrdinal} ('{step.Op}') is missing required parameter '{requiredParameter}'.",
+                            PluginDevDiagnosticSeverity.Warning,
+                            "scenarios"));
+                    }
+                }
+
+                var allowedParameters = AllowedParametersByOperation[normalizedOp];
+                foreach (var parameterKey in step.Parameters.Keys)
+                {
+                    if (!allowedParameters.Any(value => string.Equals(value, parameterKey, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        diagnostics.Add(new PluginDevDiagnostic(
+                            $"scenario.lint.{scenario.Name}.step_{stepOrdinal}.unknown_param_{parameterKey.ToLowerInvariant()}",
+                            $"Scenario '{scenario.Name}' step {stepOrdinal} ('{step.Op}') uses unknown parameter '{parameterKey}'. Allowed parameters: {string.Join(", ", allowedParameters)}.",
+                            PluginDevDiagnosticSeverity.Warning,
+                            "scenarios"));
+                    }
+                }
+
+                if (string.Equals(normalizedOp, "set", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(step.Save))
+                {
+                    diagnostics.Add(new PluginDevDiagnostic(
+                        $"scenario.lint.{scenario.Name}.step_{stepOrdinal}.missing_save",
+                        $"Scenario '{scenario.Name}' step {stepOrdinal} ('set') should declare 'save' so the assigned value can be referenced later.",
+                        PluginDevDiagnosticSeverity.Warning,
+                        "scenarios"));
+                }
+
+                if (!string.IsNullOrWhiteSpace(step.Save) && knownSymbols.Contains(step.Save.Trim()))
+                {
+                    AddScenarioLintWarning(
+                        diagnostics,
+                        scenario.Name,
+                        stepOrdinal,
+                        step,
+                        "overwrites_symbol",
+                        $"Scenario '{scenario.Name}' step {stepOrdinal} overwrites previously known symbol '{step.Save.Trim()}'.");
+                }
+
+                foreach (var parameter in step.Parameters)
+                {
+                    foreach (var expression in ExtractExpressions(parameter.Value))
+                    {
+                        var rootSymbol = ExtractRootSymbol(expression);
+                        if (string.IsNullOrWhiteSpace(rootSymbol))
+                        {
+                            continue;
+                        }
+
+                        if (!knownSymbols.Contains(rootSymbol))
+                        {
+                            AddScenarioLintWarning(
+                                diagnostics,
+                                scenario.Name,
+                                stepOrdinal,
+                                step,
+                                $"unknown_symbol_{rootSymbol.ToLowerInvariant()}",
+                                $"Scenario '{scenario.Name}' step {stepOrdinal} references unknown symbol '{rootSymbol}' in parameter '{parameter.Key}'. Known symbols at this point: {string.Join(", ", knownSymbols.OrderBy(static value => value, StringComparer.OrdinalIgnoreCase))}.");
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(step.Save))
+                {
+                    knownSymbols.Add(step.Save.Trim());
+                }
+            }
+        }
+
+        return diagnostics;
+    }
+
+    private static void AddScenarioLintWarning(
+        List<PluginDevDiagnostic> diagnostics,
+        string scenarioName,
+        int stepOrdinal,
+        PluginDevScenarioStep step,
+        string warningCode,
+        string message)
+    {
+        if (IsScenarioLintWarningSuppressed(step, warningCode))
+        {
+            return;
+        }
+
+        diagnostics.Add(new PluginDevDiagnostic(
+            $"scenario.lint.{scenarioName}.step_{stepOrdinal}.{warningCode}",
+            message,
+            PluginDevDiagnosticSeverity.Warning,
+            "scenarios"));
+    }
+
+    private static bool IsScenarioLintWarningSuppressed(PluginDevScenarioStep step, string warningCode)
+    {
+        foreach (var suppressed in step.NoWarn)
+        {
+            if (string.IsNullOrWhiteSpace(suppressed))
+            {
+                continue;
+            }
+
+            var normalized = suppressed.Trim();
+            if (string.Equals(normalized, warningCode, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (warningCode.StartsWith(normalized + "_", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public IReadOnlyList<PluginDevScenarioDefinition> GetAvailableScenarios(PluginDevSession session)
+    {
+        if (!session.RuntimeAdapter.SupportsScenarios)
+        {
+            return [];
+        }
+
+        var custom = session.ConfiguredScenarios
+            .Select(static scenario => new PluginDevScenarioDefinition(
+                scenario.Name,
+                scenario.DisplayName,
+                scenario.Description,
+                scenario.DefaultQuery,
+                scenario.SupportsQuery,
+                scenario.QueryLabel))
+            .ToArray();
+        if (custom.Length == 0)
+        {
+            return SupportedScenarios;
+        }
+
+        var builtIns = SupportedScenarios
+            .Where(definition => !custom.Any(customScenario => string.Equals(customScenario.Name, definition.Name, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+        return [.. custom, .. builtIns];
+    }
+
     public async Task<PluginDevScenarioResult> RunAsync(PluginDevSession session, string scenarioName, string? query, CancellationToken cancellationToken)
     {
         var normalizedScenario = (scenarioName ?? string.Empty).Trim().ToLowerInvariant();
+        var customScenario = session.ConfiguredScenarios.FirstOrDefault(scenario => string.Equals(scenario.Name, normalizedScenario, StringComparison.OrdinalIgnoreCase));
+        if (customScenario is not null)
+        {
+            return await RunConfiguredScenarioAsync(session, customScenario, query, cancellationToken);
+        }
+
         return normalizedScenario switch
         {
+            "search-smoke" => await RunSearchSmokeAsync(session, string.IsNullOrWhiteSpace(query) ? "naruto" : query.Trim(), cancellationToken),
+            "chapters-smoke" => await RunChaptersSmokeAsync(session, string.IsNullOrWhiteSpace(query) ? "naruto" : query.Trim(), cancellationToken),
             "paged-smoke" => await RunPagedSmokeAsync(session, string.IsNullOrWhiteSpace(query) ? "naruto" : query.Trim(), cancellationToken),
-            _ => new PluginDevScenarioResult(normalizedScenario, false, [$"Unknown scenario '{scenarioName}'. Supported scenarios: paged-smoke"]) 
+            "video-smoke" => await RunVideoSmokeAsync(session, string.IsNullOrWhiteSpace(query) ? "demo-video-1" : query.Trim(), cancellationToken),
+            "audio-placeholder" => new PluginDevScenarioResult("audio-placeholder", false, ["Audio scenario support is intentionally placeholder-only right now."]),
+            "text-paged-placeholder" => new PluginDevScenarioResult("text-paged-placeholder", false, ["Text-based paged media scenario support is intentionally placeholder-only right now."]),
+            _ => new PluginDevScenarioResult(normalizedScenario, false, [$"Unknown scenario '{scenarioName}'. Supported scenarios: {string.Join(", ", GetAvailableScenarios(session).Select(static item => item.Name))}"])
         };
+    }
+
+    private static async Task<PluginDevScenarioResult> RunConfiguredScenarioAsync(PluginDevSession session, PluginDevConfiguredScenario scenario, string? queryOverride, CancellationToken cancellationToken)
+    {
+        var messages = new List<string>();
+        var runtime = session.RuntimeAdapter;
+        var variables = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["query"] = string.IsNullOrWhiteSpace(queryOverride) ? scenario.DefaultQuery ?? string.Empty : queryOverride.Trim(),
+            ["profile"] = session.Profile.Name,
+            ["pluginId"] = session.Profile.PluginId,
+            ["runtimeTarget"] = session.Profile.RuntimeTarget.ToString(),
+            ["executionMode"] = session.Profile.ExecutionMode.ToString()
+        };
+
+        try
+        {
+            foreach (var step in scenario.Steps)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var op = step.Op.Trim().ToLowerInvariant();
+                switch (op)
+                {
+                    case "search":
+                    {
+                        var searchQuery = ResolveRequiredString(step, "query", variables);
+                        var result = await runtime.SearchAsync(searchQuery, cancellationToken);
+                        SaveValue(variables, step.Save, result);
+                        messages.Add($"Search('{searchQuery}') returned {result.Count} item(s).");
+                        break;
+                    }
+                    case "enrich":
+                    {
+                        var input = ResolveRequiredObject(step, "from", variables);
+                        var inputItems = CoerceSearchItems(input);
+                        var result = await runtime.EnrichSearchItemsAsync(inputItems, cancellationToken);
+                        object? savedValue = input is SearchItem ? result.FirstOrDefault() : result;
+                        SaveValue(variables, step.Save, savedValue);
+                        messages.Add($"Enrich resolved {result.Count} item(s) from '{ResolveRequiredString(step, "from", variables)}'.");
+                        break;
+                    }
+                    case "chapters":
+                    {
+                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                        var result = await runtime.GetChaptersAsync(mediaId, cancellationToken);
+                        SaveValue(variables, step.Save, result);
+                        messages.Add($"Chapters('{mediaId}') returned {result.Count} item(s).");
+                        break;
+                    }
+                    case "page":
+                    {
+                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                        var chapterId = ResolveRequiredString(step, "chapterId", variables);
+                        var index = ResolveRequiredInt(step, "index", variables);
+                        var result = await runtime.GetPageAsync(mediaId, chapterId, index, cancellationToken);
+                        SaveValue(variables, step.Save, result);
+                        messages.Add(result is null
+                            ? $"Page('{mediaId}', '{chapterId}', {index}) returned no page."
+                            : $"Page('{mediaId}', '{chapterId}', {index}) resolved '{result.contentUri}'.");
+                        break;
+                    }
+                    case "pages":
+                    {
+                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                        var chapterId = ResolveRequiredString(step, "chapterId", variables);
+                        var startIndex = ResolveRequiredInt(step, "startIndex", variables);
+                        var count = ResolveRequiredInt(step, "count", variables);
+                        var result = await runtime.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
+                        SaveValue(variables, step.Save, result);
+                        messages.Add($"Pages('{mediaId}', '{chapterId}', {startIndex}, {count}) returned {result.Count} item(s).");
+                        break;
+                    }
+                    case "videostreams":
+                    {
+                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                        var result = await runtime.GetVideoStreamsAsync(mediaId, cancellationToken);
+                        SaveValue(variables, step.Save, result);
+                        messages.Add($"VideoStreams('{mediaId}') returned {result.Count} item(s).");
+                        break;
+                    }
+                    case "videosegment":
+                    {
+                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                        var streamId = ResolveRequiredString(step, "streamId", variables);
+                        var sequence = ResolveRequiredInt(step, "sequence", variables);
+                        var result = await runtime.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
+                        SaveValue(variables, step.Save, result);
+                        messages.Add(result is null
+                            ? $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned no payload."
+                            : $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned {result.SizeBytes} byte(s) as '{result.ContentType}'.");
+                        break;
+                    }
+                    case "selectfirst":
+                    {
+                        var collection = ResolveRequiredCollection(step, "from", variables);
+                        if (collection.Count == 0)
+                        {
+                            messages.Add($"SelectFirst from '{ResolveRequiredString(step, "from", variables)}' failed because the collection was empty.");
+                            return new PluginDevScenarioResult(scenario.Name, false, messages);
+                        }
+
+                        var result = collection[0];
+                        SaveValue(variables, step.Save, result);
+                        messages.Add($"Selected first item: {StringifyValue(result)}.");
+                        break;
+                    }
+                    case "selectat":
+                    {
+                        var collection = ResolveRequiredCollection(step, "from", variables);
+                        var index = ResolveRequiredInt(step, "index", variables);
+                        if (index < 0 || index >= collection.Count)
+                        {
+                            messages.Add($"SelectAt failed because index {index} is outside the collection range 0..{collection.Count - 1}.");
+                            return new PluginDevScenarioResult(scenario.Name, false, messages);
+                        }
+
+                        var result = collection[index];
+                        SaveValue(variables, step.Save, result);
+                        messages.Add($"Selected item at index {index}: {StringifyValue(result)}.");
+                        break;
+                    }
+                    case "requirecount":
+                    {
+                        var collection = ResolveRequiredCollection(step, "from", variables);
+                        var min = ResolveOptionalInt(step, "min", variables);
+                        var max = ResolveOptionalInt(step, "max", variables);
+                        if (min is not null && collection.Count < min.Value)
+                        {
+                            messages.Add($"RequireCount failed: expected at least {min.Value} item(s), but found {collection.Count}.");
+                            return new PluginDevScenarioResult(scenario.Name, false, messages);
+                        }
+
+                        if (max is not null && collection.Count > max.Value)
+                        {
+                            messages.Add($"RequireCount failed: expected at most {max.Value} item(s), but found {collection.Count}.");
+                            return new PluginDevScenarioResult(scenario.Name, false, messages);
+                        }
+
+                        messages.Add($"RequireCount passed with {collection.Count} item(s).");
+                        break;
+                    }
+                    case "requirenotnull":
+                    {
+                        var value = ResolveRequiredObject(step, "value", variables);
+                        if (value is null)
+                        {
+                            var failureMessage = ResolveOptionalString(step, "message", variables) ?? "RequireNotNull failed because the resolved value was null.";
+                            messages.Add(failureMessage);
+                            return new PluginDevScenarioResult(scenario.Name, false, messages);
+                        }
+
+                        SaveValue(variables, step.Save, value);
+                        messages.Add($"RequireNotNull passed for '{ResolveRequiredString(step, "value", variables)}'.");
+                        break;
+                    }
+                    case "set":
+                    {
+                        var value = ResolveRequiredObject(step, "value", variables);
+                        if (string.IsNullOrWhiteSpace(step.Save))
+                        {
+                            throw new InvalidOperationException("Scenario step 'set' requires a save target.");
+                        }
+
+                        SaveValue(variables, step.Save, value);
+                        messages.Add($"Set '{step.Save}' to {StringifyValue(value)}.");
+                        break;
+                    }
+                    case "log":
+                    {
+                        var message = ResolveRequiredString(step, "message", variables);
+                        messages.Add(message);
+                        break;
+                    }
+                    case "placeholder":
+                    {
+                        var message = ResolveRequiredString(step, "message", variables);
+                        messages.Add(message);
+                        return new PluginDevScenarioResult(scenario.Name, false, messages);
+                    }
+                    default:
+                        throw new InvalidOperationException($"Scenario '{scenario.Name}' uses unsupported op '{step.Op}'.");
+                }
+            }
+
+            return new PluginDevScenarioResult(scenario.Name, true, messages);
+        }
+        catch (Exception ex)
+        {
+            messages.Add($"Scenario '{scenario.Name}' failed: {ex.Message}");
+            return new PluginDevScenarioResult(scenario.Name, false, messages);
+        }
+    }
+
+    private static async Task<PluginDevScenarioResult> RunSearchSmokeAsync(PluginDevSession session, string query, CancellationToken cancellationToken)
+    {
+        var messages = new List<string>();
+        var runtime = session.RuntimeAdapter;
+
+        var searchItems = await runtime.SearchAsync(query, cancellationToken);
+        messages.Add($"Search('{query}') returned {searchItems.Count} item(s).");
+        if (searchItems.Count == 0)
+        {
+            return new PluginDevScenarioResult("search-smoke", false, messages);
+        }
+
+        var firstItem = searchItems[0];
+        messages.Add($"Selected media '{firstItem.title}' ({firstItem.id}).");
+        return new PluginDevScenarioResult("search-smoke", true, messages);
+    }
+
+    private static async Task<PluginDevScenarioResult> RunChaptersSmokeAsync(PluginDevSession session, string query, CancellationToken cancellationToken)
+    {
+        var messages = new List<string>();
+        var runtime = session.RuntimeAdapter;
+
+        var searchItems = await runtime.SearchAsync(query, cancellationToken);
+        messages.Add($"Search('{query}') returned {searchItems.Count} item(s).");
+        if (searchItems.Count == 0)
+        {
+            return new PluginDevScenarioResult("chapters-smoke", false, messages);
+        }
+
+        var firstItem = searchItems[0];
+        messages.Add($"Selected media '{firstItem.title}' ({firstItem.id}).");
+
+        var chapters = await runtime.GetChaptersAsync(firstItem.id, cancellationToken);
+        messages.Add($"Chapters returned {chapters.Count} item(s).");
+        if (chapters.Count == 0)
+        {
+            return new PluginDevScenarioResult("chapters-smoke", false, messages);
+        }
+
+        var firstChapter = chapters[0];
+        messages.Add($"Selected chapter '{firstChapter.title}' ({firstChapter.id}).");
+        return new PluginDevScenarioResult("chapters-smoke", true, messages);
     }
 
     private static async Task<PluginDevScenarioResult> RunPagedSmokeAsync(PluginDevSession session, string query, CancellationToken cancellationToken)
@@ -1428,6 +2210,287 @@ public sealed class PluginDevScenarioRunner
 
         messages.Add($"Page(0) resolved content URI '{page.contentUri}'.");
         return new PluginDevScenarioResult("paged-smoke", true, messages);
+    }
+
+    private static async Task<PluginDevScenarioResult> RunVideoSmokeAsync(PluginDevSession session, string mediaId, CancellationToken cancellationToken)
+    {
+        var messages = new List<string>();
+        var streams = await session.RuntimeAdapter.GetVideoStreamsAsync(mediaId, cancellationToken);
+        messages.Add($"VideoStreams('{mediaId}') returned {streams.Count} item(s).");
+        if (streams.Count == 0)
+        {
+            messages.Add("No video streams were returned. This keeps the transport path testable even while the sample plugin still has placeholder stream data.");
+            return new PluginDevScenarioResult("video-smoke", true, messages);
+        }
+
+        var first = streams[0];
+        messages.Add($"First video stream: {first.Label} ({first.Id}) playlist={first.PlaylistUri}");
+        return new PluginDevScenarioResult("video-smoke", true, messages);
+    }
+
+    private static IReadOnlyList<SearchItem> CoerceSearchItems(object? value)
+    {
+        return value switch
+        {
+            null => throw new InvalidOperationException("Search enrichment requires a non-null SearchItem or collection of SearchItem values."),
+            SearchItem item => [item],
+            IEnumerable<SearchItem> typedItems => typedItems.ToArray(),
+            IEnumerable<object?> objects => objects.OfType<SearchItem>().ToArray() is { Length: > 0 } items ? items : throw new InvalidOperationException("Search enrichment requires SearchItem values."),
+            _ => throw new InvalidOperationException($"Search enrichment cannot operate on value '{StringifyValue(value)}'.")
+        };
+    }
+
+    private static string ResolveRequiredString(PluginDevScenarioStep step, string parameterName, IReadOnlyDictionary<string, object?> variables)
+    {
+        var value = ResolveOptionalString(step, parameterName, variables);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"Scenario step '{step.Op}' requires a non-empty '{parameterName}' parameter.");
+        }
+
+        return value;
+    }
+
+    private static string? ResolveOptionalString(PluginDevScenarioStep step, string parameterName, IReadOnlyDictionary<string, object?> variables)
+    {
+        if (!TryGetParameter(step, parameterName, out var element))
+        {
+            return null;
+        }
+
+        var resolved = ResolveElement(element, variables);
+        return resolved as string ?? StringifyValue(resolved, nullAsEmpty: true);
+    }
+
+    private static int ResolveRequiredInt(PluginDevScenarioStep step, string parameterName, IReadOnlyDictionary<string, object?> variables)
+    {
+        var value = ResolveOptionalInt(step, parameterName, variables);
+        if (value is null)
+        {
+            throw new InvalidOperationException($"Scenario step '{step.Op}' requires integer parameter '{parameterName}'.");
+        }
+
+        return value.Value;
+    }
+
+    private static int? ResolveOptionalInt(PluginDevScenarioStep step, string parameterName, IReadOnlyDictionary<string, object?> variables)
+    {
+        if (!TryGetParameter(step, parameterName, out var element))
+        {
+            return null;
+        }
+
+        var resolved = ResolveElement(element, variables);
+        return resolved switch
+        {
+            int intValue => intValue,
+            long longValue => checked((int)longValue),
+            JsonElement jsonElement when jsonElement.ValueKind == JsonValueKind.Number && jsonElement.TryGetInt32(out var jsonInt) => jsonInt,
+            string stringValue when int.TryParse(stringValue, CultureInfo.InvariantCulture, out var parsed) => parsed,
+            _ => throw new InvalidOperationException($"Scenario parameter '{parameterName}' on step '{step.Op}' did not resolve to an integer.")
+        };
+    }
+
+    private static object? ResolveRequiredObject(PluginDevScenarioStep step, string parameterName, IReadOnlyDictionary<string, object?> variables)
+    {
+        if (!TryGetParameter(step, parameterName, out var element))
+        {
+            throw new InvalidOperationException($"Scenario step '{step.Op}' requires parameter '{parameterName}'.");
+        }
+
+        return ResolveElement(element, variables);
+    }
+
+    private static IReadOnlyList<object?> ResolveRequiredCollection(PluginDevScenarioStep step, string parameterName, IReadOnlyDictionary<string, object?> variables)
+    {
+        var resolved = ResolveRequiredObject(step, parameterName, variables);
+        return resolved switch
+        {
+            IReadOnlyList<object?> objectList => objectList,
+            System.Collections.IEnumerable enumerable when resolved is not string => enumerable.Cast<object?>().ToArray(),
+            _ => throw new InvalidOperationException($"Scenario parameter '{parameterName}' on step '{step.Op}' did not resolve to a collection.")
+        };
+    }
+
+    private static bool TryGetParameter(PluginDevScenarioStep step, string parameterName, out JsonElement element)
+    {
+        if (step.Parameters.TryGetValue(parameterName, out element))
+        {
+            return true;
+        }
+
+        foreach (var (key, value) in step.Parameters)
+        {
+            if (string.Equals(key, parameterName, StringComparison.OrdinalIgnoreCase))
+            {
+                element = value;
+                return true;
+            }
+        }
+
+        element = default;
+        return false;
+    }
+
+    private static object? ResolveElement(JsonElement element, IReadOnlyDictionary<string, object?> variables)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => ResolveStringElement(element.GetString() ?? string.Empty, variables),
+            JsonValueKind.Number when element.TryGetInt64(out var integerValue) => integerValue,
+            JsonValueKind.Number => element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null or JsonValueKind.Undefined => null,
+            _ => element
+        };
+    }
+
+    private static object? ResolveStringElement(string rawValue, IReadOnlyDictionary<string, object?> variables)
+    {
+        var trimmed = rawValue.Trim();
+        if (trimmed.StartsWith('$') && !trimmed.Contains("{{", StringComparison.Ordinal))
+        {
+            return ResolveExpression(trimmed[1..], variables);
+        }
+
+        return RenderTemplate(rawValue, variables);
+    }
+
+    private static string RenderTemplate(string template, IReadOnlyDictionary<string, object?> variables)
+    {
+        return TemplatePattern.Replace(template, match => StringifyValue(ResolveExpression(match.Groups["expr"].Value.Trim(), variables), nullAsEmpty: true));
+    }
+
+    private static IReadOnlyList<string> ExtractExpressions(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            return [];
+        }
+
+        var raw = element.GetString() ?? string.Empty;
+        var expressions = new List<string>();
+        var trimmed = raw.Trim();
+        if (trimmed.StartsWith('$') && !trimmed.Contains("{{", StringComparison.Ordinal))
+        {
+            expressions.Add(trimmed[1..]);
+        }
+
+        foreach (Match match in TemplatePattern.Matches(raw))
+        {
+            var value = match.Groups["expr"].Value.Trim();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                expressions.Add(value);
+            }
+        }
+
+        return expressions;
+    }
+
+    private static string? ExtractRootSymbol(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return null;
+        }
+
+        var trimmed = expression.Trim();
+        if (trimmed.StartsWith('$'))
+        {
+            trimmed = trimmed[1..];
+        }
+
+        var dotIndex = trimmed.IndexOf('.');
+        return dotIndex >= 0 ? trimmed[..dotIndex] : trimmed;
+    }
+
+    private static object? ResolveExpression(string expression, IReadOnlyDictionary<string, object?> variables)
+    {
+        var segments = expression.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (segments.Length == 0)
+        {
+            return null;
+        }
+
+        if (!variables.TryGetValue(segments[0], out var current))
+        {
+            return null;
+        }
+
+        for (var index = 1; index < segments.Length; index++)
+        {
+            current = ResolveSegment(current, segments[index]);
+            if (current is null)
+            {
+                return null;
+            }
+        }
+
+        return current;
+    }
+
+    private static object? ResolveSegment(object? current, string segment)
+    {
+        if (current is null)
+        {
+            return null;
+        }
+
+        if (current is IReadOnlyDictionary<string, object?> dictionary)
+        {
+            return dictionary.TryGetValue(segment, out var value) ? value : null;
+        }
+
+        if (current is IEnumerable<MetadataItem> metadataItems)
+        {
+            return metadataItems.FirstOrDefault(item => string.Equals(item.key, segment, StringComparison.OrdinalIgnoreCase))?.value;
+        }
+
+        if (current is System.Collections.IEnumerable enumerable && segment.Equals("count", StringComparison.OrdinalIgnoreCase) && current is not string)
+        {
+            return enumerable.Cast<object?>().Count();
+        }
+
+        var type = current.GetType();
+        var property = type.GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, segment, StringComparison.OrdinalIgnoreCase));
+        if (property is not null)
+        {
+            return property.GetValue(current);
+        }
+
+        var field = type.GetFields(BindingFlags.Instance | BindingFlags.Public)
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, segment, StringComparison.OrdinalIgnoreCase));
+        return field?.GetValue(current);
+    }
+
+    private static void SaveValue(IDictionary<string, object?> variables, string? saveName, object? value)
+    {
+        if (!string.IsNullOrWhiteSpace(saveName))
+        {
+            variables[saveName.Trim()] = value;
+        }
+    }
+
+    private static string StringifyValue(object? value, bool nullAsEmpty = false)
+    {
+        if (value is null)
+        {
+            return nullAsEmpty ? string.Empty : "<null>";
+        }
+
+        return value switch
+        {
+            string stringValue => stringValue,
+            MetadataItem metadataItem => $"{metadataItem.key}={metadataItem.value}",
+            IEnumerable<MetadataItem> metadataItems => string.Join(", ", metadataItems.Select(static item => $"{item.key}={item.value}")),
+            JsonElement jsonElement when jsonElement.ValueKind == JsonValueKind.String => jsonElement.GetString() ?? string.Empty,
+            JsonElement jsonElement => jsonElement.ToString(),
+            System.Collections.IEnumerable enumerable when value is not string => JsonSerializer.Serialize(enumerable.Cast<object?>().ToArray()),
+            _ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? value.ToString() ?? string.Empty
+        };
     }
 }
 

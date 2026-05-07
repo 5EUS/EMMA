@@ -12,3 +12,5 @@ applyTo: "**"
 - Preserve the existing architecture unless there is a clear improvement.
 - Avoid throwaway, prototype, or placeholder code unless it is explicitly requested.
 - Ask before using terminal tools unless the user explicitly asks for terminal use.
+- ALWAYS CREATE A MEMORY FILE AFTER LOOKING UP EXTERNAL DOCS OR CODE.
+- Mangadex references allowed only in emma-test-plugin. NOWHERE ELSE.

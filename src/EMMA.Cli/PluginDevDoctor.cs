@@ -4,6 +4,8 @@ namespace EMMA.Cli;
 
 public sealed class PluginDevDoctor
 {
+    private const string SharedHostBridgeUrl = "http://localhost:5000";
+
     public IReadOnlyList<PluginDevDiagnostic> Run(PluginDevDiscoveryResult discovery, PluginDevProfile activeProfile, IReadOnlyList<PluginDevProfile> availableProfiles)
     {
         var diagnostics = new List<PluginDevDiagnostic>();
@@ -12,26 +14,34 @@ public sealed class PluginDevDoctor
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.discovery.manifest_missing",
-                "No plugin manifest (*.plugin.json) was found while walking up from the current working directory."));
+                "No plugin manifest (*.plugin.json) was found while walking up from the current working directory.",
+                PluginDevDiagnosticSeverity.Warning,
+                "discovery"));
         }
         else
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.discovery.manifest_found",
-                $"Discovered plugin manifest at '{discovery.ManifestPath}'."));
+                $"Discovered plugin manifest at '{discovery.ManifestPath}'.",
+                PluginDevDiagnosticSeverity.Info,
+                "discovery"));
         }
 
         if (string.IsNullOrWhiteSpace(discovery.ProjectFilePath))
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.discovery.project_missing",
-                "No plugin project file (*.csproj) was found while walking up from the current working directory."));
+                "No plugin project file (*.csproj) was found while walking up from the current working directory.",
+                PluginDevDiagnosticSeverity.Warning,
+                "discovery"));
         }
         else
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.discovery.project_found",
-                $"Discovered plugin project at '{discovery.ProjectFilePath}'."));
+                $"Discovered plugin project at '{discovery.ProjectFilePath}'.",
+                PluginDevDiagnosticSeverity.Info,
+                "discovery"));
         }
 
         if (!string.IsNullOrWhiteSpace(discovery.PluginId)
@@ -39,20 +49,26 @@ public sealed class PluginDevDoctor
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.profile.plugin_id_mismatch",
-                $"Active profile plugin id '{activeProfile.PluginId}' differs from discovered manifest id '{discovery.PluginId}'."));
+                $"Active profile plugin id '{activeProfile.PluginId}' differs from discovered manifest id '{discovery.PluginId}'.",
+                PluginDevDiagnosticSeverity.Warning,
+                "profile"));
         }
 
         if (discovery.SupportedTargets.Count == 0)
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.discovery.targets_unknown",
-                "No supported runtime targets could be inferred from the discovered project metadata."));
+                "No supported runtime targets could be inferred from the discovered project metadata.",
+                PluginDevDiagnosticSeverity.Warning,
+                "discovery"));
         }
         else
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.discovery.targets_found",
-                $"Discovered runtime targets: {string.Join(", ", discovery.SupportedTargets)}."));
+                $"Discovered runtime targets: {string.Join(", ", discovery.SupportedTargets)}.",
+                PluginDevDiagnosticSeverity.Info,
+                "discovery"));
         }
 
         foreach (var target in discovery.SupportedTargets)
@@ -62,7 +78,9 @@ public sealed class PluginDevDoctor
             {
                 diagnostics.Add(new PluginDevDiagnostic(
                     $"doctor.artifacts.{target.ToString().ToLowerInvariant()}.unknown",
-                    $"No artifact locations are defined yet for target '{target}'."));
+                    $"No artifact locations are defined yet for target '{target}'.",
+                    PluginDevDiagnosticSeverity.Warning,
+                    "artifacts"));
                 continue;
             }
 
@@ -70,13 +88,17 @@ public sealed class PluginDevDoctor
             {
                 diagnostics.Add(new PluginDevDiagnostic(
                     $"doctor.artifacts.{target.ToString().ToLowerInvariant()}.ready",
-                    $"Discovered existing artifacts for target '{target}'."));
+                    $"Discovered existing artifacts for target '{target}'.",
+                    PluginDevDiagnosticSeverity.Info,
+                    "artifacts"));
             }
             else
             {
                 diagnostics.Add(new PluginDevDiagnostic(
                     $"doctor.artifacts.{target.ToString().ToLowerInvariant()}.missing",
-                    $"Target '{target}' is inferred but no current artifacts were found. A build step is likely required before local execution can run."));
+                    $"Target '{target}' is inferred but no current artifacts were found. A build step is likely required before local execution can run.",
+                    PluginDevDiagnosticSeverity.Warning,
+                    "artifacts"));
             }
         }
 
@@ -87,7 +109,9 @@ public sealed class PluginDevDoctor
             {
                 diagnostics.Add(new PluginDevDiagnostic(
                     "doctor.profile.target_artifacts_missing",
-                    $"Active profile target '{activeProfile.RuntimeTarget}' does not currently have discovered artifacts on disk."));
+                    $"Active profile target '{activeProfile.RuntimeTarget}' does not currently have discovered artifacts on disk.",
+                    PluginDevDiagnosticSeverity.Warning,
+                    "artifacts"));
             }
         }
 
@@ -95,34 +119,44 @@ public sealed class PluginDevDoctor
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.profile.host_bridge_target_metadata",
-                $"Profile '{activeProfile.Name}' is currently using host-bridge execution. The inferred runtime target '{activeProfile.RuntimeTarget}' is metadata for an externally managed host or fallback workflow."));
+                $"Profile '{activeProfile.Name}' is currently using host-bridge execution. The inferred runtime target '{activeProfile.RuntimeTarget}' is metadata for an externally managed host or fallback workflow.",
+                PluginDevDiagnosticSeverity.Info,
+                "profile"));
         }
 
         if (activeProfile.WatchGlobs.Count == 0)
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.watch.not_configured",
-                $"Profile '{activeProfile.Name}' has no watch globs configured. Phase 6 watch mode will only observe the active plugin.dev.json file when one is resolved."));
+                $"Profile '{activeProfile.Name}' has no watch globs configured. Phase 6 watch mode will only observe the active plugin.dev.json file when one is resolved.",
+                PluginDevDiagnosticSeverity.Warning,
+                "watch"));
         }
         else
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.watch.configured",
-                $"Profile '{activeProfile.Name}' has {activeProfile.WatchGlobs.Count} watch glob(s) configured for debounced reload."));
+                $"Profile '{activeProfile.Name}' has {activeProfile.WatchGlobs.Count} watch glob(s) configured for debounced reload.",
+                PluginDevDiagnosticSeverity.Info,
+                "watch"));
         }
 
         if (activeProfile.Sync.Enabled)
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.sync.configured",
-                $"Profile '{activeProfile.Name}' syncs build outputs to '{activeProfile.Sync.DestinationPath}' (onBuild={(activeProfile.Sync.OnBuild ? "on" : "off")}, cleanDestination={(activeProfile.Sync.CleanDestination ? "on" : "off")})."));
+                $"Profile '{activeProfile.Name}' syncs build outputs to '{activeProfile.Sync.DestinationPath}' (onBuild={(activeProfile.Sync.OnBuild ? "on" : "off")}, cleanDestination={(activeProfile.Sync.CleanDestination ? "on" : "off")}).",
+                PluginDevDiagnosticSeverity.Info,
+                "sync"));
         }
 
         if (activeProfile.ExecutionMode != PluginExecutionMode.Direct)
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.watch.reload_unsupported",
-                $"Profile '{activeProfile.Name}' can still observe file changes, but runtime adapter reload is not available for execution mode '{activeProfile.ExecutionMode}'."));
+                $"Profile '{activeProfile.Name}' can still observe file changes, but runtime adapter reload is not available for execution mode '{activeProfile.ExecutionMode}'.",
+                PluginDevDiagnosticSeverity.Warning,
+                "watch"));
         }
 
         if (activeProfile.ExecutionMode == PluginExecutionMode.Direct
@@ -133,14 +167,28 @@ public sealed class PluginDevDoctor
                 diagnostics.Add(new PluginDevDiagnostic(
                     "doctor.profile.native_platform_fallback_required",
                     $"Profile '{activeProfile.Name}' targets {activeProfile.RuntimeTarget}, but the current host OS cannot run that native artifact directly. Use 'host-bridge' or validate the package on a matching machine.",
-                    true));
+                    PluginDevDiagnosticSeverity.Error,
+                    "platform"));
             }
             else
             {
                 diagnostics.Add(new PluginDevDiagnostic(
                     "doctor.profile.native_local_ready",
-                    $"Profile '{activeProfile.Name}' can use local native process execution on this host OS when a published artifact is available."));
+                    $"Profile '{activeProfile.Name}' can use local native process execution on this host OS when a published artifact is available.",
+                    PluginDevDiagnosticSeverity.Info,
+                    "platform"));
             }
+        }
+
+        if (activeProfile.ExecutionMode == PluginExecutionMode.Direct
+            && activeProfile.RuntimeTarget is PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows
+            && string.Equals(activeProfile.HostUrl, SharedHostBridgeUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            diagnostics.Add(new PluginDevDiagnostic(
+                "doctor.profile.native_host_url_shared_port",
+                $"Profile '{activeProfile.Name}' uses '{SharedHostBridgeUrl}', which is also the default host-bridge port. If another local service is already listening there, native direct requests can be sent to the wrong process and surface misleading unauthenticated errors.",
+                PluginDevDiagnosticSeverity.Warning,
+                "profile"));
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
@@ -148,7 +196,9 @@ public sealed class PluginDevDoctor
         {
             diagnostics.Add(new PluginDevDiagnostic(
                 "doctor.platform.macos_docker_required",
-                "macOS development flows that require '-p:NativeCodeGen=llvm' should assume a Docker-backed build path unless proven otherwise."));
+                "macOS development flows that require '-p:NativeCodeGen=llvm' should assume a Docker-backed build path unless proven otherwise.",
+                PluginDevDiagnosticSeverity.Warning,
+                "platform"));
         }
 
         return diagnostics;
