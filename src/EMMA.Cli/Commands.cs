@@ -1,22 +1,17 @@
 using ConsoleAppFramework;
-using EMMA.Api;
-using EMMA.Api.Embedded;
-using EMMA.Domain;
-using EMMA.Contracts.Api.V1;
+using EMMA.Plugin.Common;
 
 namespace EMMA.Cli;
 
 public class MyCommands
 {
     private readonly PluginDevSession _session;
-    private readonly EmbeddedRuntime _runtime;
-    private readonly EmbeddedPagedMediaApi _api;
+    private readonly IPluginDevRuntimeAdapter _runtime;
 
     public MyCommands()
     {
         _session = PluginDevSessionHolder.RequireCurrent();
-        _runtime = _session.Runtime;
-        _api = _session.Api;
+        _runtime = _session.RuntimeAdapter;
     }
 
     /// <summary>
@@ -26,37 +21,20 @@ public class MyCommands
     [Command("search")]
     public async Task SearchAsync(string query)
     {
+        var response = await _runtime.SearchAsync(query, CancellationToken.None);
 
-        var response = await _api.SearchAsync(new SearchRequest
+        foreach (var item in response)
         {
-            Query = query,
-            Context = new ApiRequestContext
-            {
-                CorrelationId = Guid.NewGuid().ToString("n"),
-                DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
-                ClientId = "cli"
-            }
-        }, CancellationToken.None);
-
-        if (response.OutcomeCase == SearchResponse.OutcomeOneofCase.Error)
-        {
-            Console.WriteLine($"Search failed: {response.Error.Code} {response.Error.Message}");
-            return;
-        }
-
-        foreach (var item in response.Result.Items)
-        {
-
             CommandContextHolder.Context.AddResult(new SimpleResult(
-                $"{item.Title} ({item.Id})",
+                $"{item.title} ({item.id})",
                 [
                     new ResultAction
                 {
                     Name = "Open",
                     Execute = async () =>
                     {
-                        Console.WriteLine($"Fetching media chapters (id: {item.Id})...");
-                        await ChaptersAsync(item.Id);
+                        Console.WriteLine($"Fetching media chapters (id: {item.id})...");
+                        await ChaptersAsync(item.id);
                     }
                 }
                 ]));
@@ -70,34 +48,19 @@ public class MyCommands
     [Command("chapters")]
     public async Task ChaptersAsync(string id)
     {
-        var response = await _api.GetChaptersAsync(new ChaptersRequest
-        {
-            MediaId = id,
-            Context = new ApiRequestContext
-            {
-                CorrelationId = Guid.NewGuid().ToString("n"),
-                DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
-                ClientId = "cli"
-            }
-        }, CancellationToken.None);
-
-        if (response.OutcomeCase == ChaptersResponse.OutcomeOneofCase.Error)
-        {
-            Console.WriteLine($"Chapters failed: {response.Error.Code} {response.Error.Message}");
-            return;
-        }
-        foreach (var item in response.Result.Items)
+        var response = await _runtime.GetChaptersAsync(id, CancellationToken.None);
+        foreach (var item in response)
         {
             CommandContextHolder.Context.AddResult(new SimpleResult(
-                $"{item.Title} ({item.Id})",
+                $"{item.title} ({item.id})",
                 [
                     new ResultAction
                     {
                         Name = "Open",
                         Execute = async () =>
                         {
-                            Console.WriteLine($"Fetching chapter pages (media id: {id}, chapter id: {item.Id})...");
-                            await PageAsync(id, item.Id, 0);
+                            Console.WriteLine($"Fetching chapter pages (media id: {id}, chapter id: {item.id})...");
+                            await PageAsync(id, item.id, 0);
                         }
                     },
                     new ResultAction
@@ -105,16 +68,14 @@ public class MyCommands
                         Name = "Pages",
                         Execute = async () =>
                         {
-                            Console.WriteLine($"Fetching pages list (media id: {id}, chapter id: {item.Id})...");
+                            Console.WriteLine($"Fetching pages list (media id: {id}, chapter id: {item.id})...");
                             try
                             {
-                                // Fetch a large batch of pages; pipeline will return reachable pages and indicate end.
                                 var startIndex = 0;
-                                var pagesResult = await _runtime.Pipeline.GetPagesAsync(MediaId.Create(id), item.Id, startIndex, 10000, CancellationToken.None);
-                                for (int p = 0; p < pagesResult.Pages.Count; p++)
+                                var pagesResult = await _runtime.GetPagesAsync(id, item.id, startIndex, 10000, CancellationToken.None);
+                                for (int p = 0; p < pagesResult.Count; p++)
                                 {
-                                    var page = pagesResult.Pages[p];
-                                    var pageIndex = startIndex + p; // preserve absolute index
+                                    var pageIndex = startIndex + p;
                                     CommandContextHolder.Context.AddResult(new SimpleResult(
                                         $"Page {pageIndex}",
                                         [
@@ -123,7 +84,7 @@ public class MyCommands
                                                 Name = "Open",
                                                 Execute = async () =>
                                                 {
-                                                    await PageAsync(id, item.Id, pageIndex);
+                                                    await PageAsync(id, item.id, pageIndex);
                                                 }
                                             }
                                         ]));
@@ -147,23 +108,19 @@ public class MyCommands
     [Command("page-asset")]
     public async Task PageAssetAsync(string mid, string cid)
     {
-        var response = await _api.GetPageAssetAsync(new PageAssetRequest
+        if (!_runtime.SupportsPageAsset)
         {
-            MediaId = mid,
-            ChapterId = cid,
-            Context = new ApiRequestContext
-            {
-                CorrelationId = Guid.NewGuid().ToString("n"),
-                DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
-                ClientId = "cli"
-            }
-        }, CancellationToken.None);
-
-        if (response.OutcomeCase == PageAssetResponse.OutcomeOneofCase.Error)
-        {
-            Console.WriteLine($"Page asset failed: {response.Error.Code} {response.Error.Message}");
+            Console.WriteLine($"Page asset is not supported by runtime adapter '{_runtime.Name}'.");
             return;
         }
+
+        var response = await _runtime.GetPageAssetAsync(mid, cid, CancellationToken.None);
+        if (response is null)
+        {
+            Console.WriteLine("Page asset returned no payload.");
+            return;
+        }
+
         CommandContextHolder.Context.AddResult(new SimpleResult(
             $"Page Asset (media: {mid}, chapter: {cid})",
             [
@@ -172,7 +129,7 @@ public class MyCommands
                     Name = "Show Base64",
                     Execute = () =>
                     {
-                        Console.WriteLine($"Content Base64: {Convert.ToBase64String(response.Asset.Payload.ToArray())}");
+                        Console.WriteLine($"Content Base64: {Convert.ToBase64String(response)}");
                         return Task.CompletedTask;
                     }
                 }
@@ -188,27 +145,16 @@ public class MyCommands
     [Command("page")]
     public async Task PageAsync(string mid, string cid, int index)
     {
-        var response = await _api.GetPageAsync(new PageRequest
-        {
-            MediaId = mid,
-            ChapterId = cid,
-            Index = index,
-            Context = new ApiRequestContext
-            {
-                CorrelationId = Guid.NewGuid().ToString("n"),
-                DeadlineUtc = DateTimeOffset.UtcNow.AddSeconds(5).ToString("O"),
-                ClientId = "cli"
-            }
-        }, CancellationToken.None);
+        var response = await _runtime.GetPageAsync(mid, cid, index, CancellationToken.None);
 
-        if (response.OutcomeCase == PageResponse.OutcomeOneofCase.Error)
+        if (response is null)
         {
-            Console.WriteLine($"Page failed: {response.Error.Code} {response.Error.Message}");
+            Console.WriteLine("Page returned no content.");
             return;
         }
 
-        Console.WriteLine($"Content URI: {response.Page.ContentUri}");
-        Console.WriteLine($"Index: {response.Page.Index}");
+        Console.WriteLine($"Content URI: {response.contentUri}");
+        Console.WriteLine($"Index: {response.index}");
 
     }
 
@@ -226,6 +172,7 @@ public class MyCommands
         Console.WriteLine($"Host URL: {_session.Profile.HostUrl}");
         Console.WriteLine($"Runtime Target: {_session.Profile.RuntimeTarget}");
         Console.WriteLine($"Execution Mode: {_session.Profile.ExecutionMode}");
+        Console.WriteLine($"Runtime Adapter: {_session.RuntimeAdapter.Name}");
         Console.WriteLine($"Profile Source: {(_session.Profile.IsInferred ? "inferred" : "configured")}");
 
         if (!string.IsNullOrWhiteSpace(_session.Profile.ArtifactPath))
@@ -263,6 +210,53 @@ public class MyCommands
         {
             var level = diagnostic.IsError ? "error" : "info";
             Console.WriteLine($"  [{level}] {diagnostic.Code}: {diagnostic.Message}");
+        }
+    }
+
+    [Command("build")]
+    public async Task BuildAsync()
+    {
+        var plan = _session.BuildService.GetBuildPlan(_session);
+        if (plan is null)
+        {
+            Console.WriteLine("No normalized build plan is available for the active profile.");
+            return;
+        }
+
+        Console.WriteLine($"Running build plan '{plan.Name}'...");
+        var output = await _session.BuildService.BuildAsync(_session, CancellationToken.None);
+        Console.WriteLine(output);
+    }
+
+    [Command("pack")]
+    public Task PackAsync()
+    {
+        var result = _session.BuildService.PackWasm(_session);
+        Console.WriteLine($"Package: {result.PackagePath}");
+        Console.WriteLine($"Manifest: {result.ManifestPath}");
+        Console.WriteLine($"Artifact: {result.ArtifactPath}");
+        return Task.CompletedTask;
+    }
+
+    [Command("reload")]
+    public async Task ReloadAsync()
+    {
+        var message = await _session.RuntimeAdapter.ReloadAsync(CancellationToken.None);
+        Console.WriteLine(message);
+    }
+
+    [Command("scenario")]
+    public async Task ScenarioAsync(string name, string? query = null)
+    {
+        var result = await _session.ScenarioRunner.RunAsync(_session, name, query, CancellationToken.None);
+        foreach (var message in result.Messages)
+        {
+            Console.WriteLine(message);
+        }
+
+        if (!result.Succeeded)
+        {
+            Console.WriteLine($"Scenario '{result.Name}' failed.");
         }
     }
 
@@ -325,7 +319,11 @@ public class MyCommands
     public Task Help()
     {
         Console.WriteLine("Available commands:");
+        Console.WriteLine("  build                                          Run the normalized build plan for the active profile");
         Console.WriteLine("  doctor                                         Show discovery and pre-launch diagnostics");
+        Console.WriteLine("  pack                                           Package the active WASM profile artifact");
+        Console.WriteLine("  reload                                         Refresh runtime state for the active profile");
+        Console.WriteLine("  scenario <name> [query]                        Run a built-in dev scenario (for example paged-smoke)");
         Console.WriteLine("  session                                        Show resolved session details");
         Console.WriteLine("  search -q <query>                              Search for media");
         Console.WriteLine("  chapters -i <mediaId>                          List chapters of a media");

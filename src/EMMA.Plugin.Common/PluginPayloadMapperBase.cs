@@ -10,6 +10,62 @@ namespace EMMA.Plugin.Common;
 /// </summary>
 public static class PluginPayloadMapperBase
 {
+    public static IReadOnlyList<TResult> ParseStructArray<TResult>(
+        JsonElement root,
+        string propertyName,
+        Func<JsonElement, TResult?> selector)
+        where TResult : struct
+    {
+        return ParseStructArray(GetArray(root, propertyName), selector);
+    }
+
+    public static IReadOnlyList<TResult> ParseStructArray<TResult>(
+        JsonElement? arrayElement,
+        Func<JsonElement, TResult?> selector)
+        where TResult : struct
+    {
+        if (arrayElement is null || arrayElement.Value.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var results = new List<TResult>();
+        foreach (var item in arrayElement.Value.EnumerateArray())
+        {
+            var mapped = selector(item);
+            if (mapped.HasValue)
+            {
+                results.Add(mapped.Value);
+            }
+        }
+
+        return results;
+    }
+
+    public static IReadOnlyDictionary<string, List<TMetadata>> ParseObjectMetadataByKey<TMetadata>(
+        JsonElement root,
+        string propertyName,
+        Func<JsonProperty, List<TMetadata>> selector)
+    {
+        var metadataById = new Dictionary<string, List<TMetadata>>(StringComparer.OrdinalIgnoreCase);
+        var obj = GetObject(root, propertyName);
+        if (obj is null)
+        {
+            return metadataById;
+        }
+
+        foreach (var property in obj.Value.EnumerateObject())
+        {
+            var metadata = selector(property);
+            if (metadata.Count > 0)
+            {
+                metadataById[property.Name] = metadata;
+            }
+        }
+
+        return metadataById;
+    }
+
     /// <summary>
     /// Safely extracts a property from a JsonElement, handling null/empty cases.
     /// </summary>

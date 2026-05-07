@@ -263,12 +263,12 @@ public sealed class WasmPluginRuntimeHost(
             return [];
         }
 
-        var mappedResults = searchItems.Select(item => 
+        var mappedResults = searchItems.Select(item =>
         {
             var metadataDict = item.Metadata is { Count: > 0 }
                 ? item.Metadata.ToDictionary(metadata => metadata.key, metadata => metadata.value, StringComparer.OrdinalIgnoreCase)
                 : null;
-            
+
             if (metadataDict is null)
             {
                 _logger.LogWarning(
@@ -276,7 +276,7 @@ public sealed class WasmPluginRuntimeHost(
                     item.Id,
                     item.Source);
             }
-            
+
             return new MediaSummary(
                 MediaId.Create(item.Id),
                 item.Source ?? record.Manifest.Id,

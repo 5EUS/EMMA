@@ -4,6 +4,7 @@
     <ProjectReference Include="..\EMMA.Api\EMMA.Api.csproj" />
     <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
     <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="..\EMMA.Plugin.Common\EMMA.Plugin.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

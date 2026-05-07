@@ -4015,7 +4015,7 @@ public static class PluginHostExports
                 }
 
                 var metadataDict = new Dictionary<string, string>();
-                
+
                 // Parse the metadata attributes JSON
                 if (!string.IsNullOrWhiteSpace(metadata.Attributes))
                 {
@@ -4031,7 +4031,7 @@ public static class PluginHostExports
                                 var value = prop.Value.ValueKind switch
                                 {
                                     JsonValueKind.String => prop.Value.GetString(),
-                                    JsonValueKind.Array => 
+                                    JsonValueKind.Array =>
                                         string.Join(", ", prop.Value.EnumerateArray().Select(v => v.GetString())),
                                     _ => prop.Value.ToString(),
                                 };
@@ -4437,7 +4437,7 @@ public static class PluginHostExports
                                 metadataJson[prop.Name] = prop.Value.ValueKind switch
                                 {
                                     System.Text.Json.JsonValueKind.String => prop.Value.GetString(),
-                                    System.Text.Json.JsonValueKind.Array => 
+                                    System.Text.Json.JsonValueKind.Array =>
                                         prop.Value.EnumerateArray().Select(v => v.GetString()).ToList(),
                                     _ => prop.Value.ToString(),
                                 };
@@ -4457,7 +4457,7 @@ public static class PluginHostExports
             var attributesJsonString = metadataJson.Count > 0
                 ? SerializeMetadataAttributes(metadataJson)
                 : null;
-            
+
             mediaCatalog.UpsertMediaAsync(
                 new MediaMetadata(
                     MediaId.Create(mediaId),

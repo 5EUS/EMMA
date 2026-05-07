@@ -1,4 +1,5 @@
 using System.Reflection;
+using EMMA.Plugin.Common;
 using EMMA.Contracts.Plugins;
 using Grpc.AspNetCore.Server;
 using Grpc.Core;
@@ -37,6 +38,67 @@ public sealed record PluginSdkControlDefaults(
     IReadOnlyList<string> Capabilities,
     IReadOnlyList<string>? Domains = null,
     IReadOnlyList<string>? Paths = null);
+
+public sealed record PluginSdkManifestDefaultsOptions(
+    string PluginManifestFileName,
+    PluginManifestDefaults Fallback,
+    string? PluginProjectFolderName = null,
+    int DefaultPort = 5000,
+    IReadOnlyList<string>? DevelopmentPortEnvironmentVariables = null,
+    IReadOnlyList<string>? ProductionPortEnvironmentVariables = null,
+    string DevelopmentPortArgumentName = "--port",
+    string ProductionPortArgumentName = "",
+    string RootMessage = "EMMA plugin is running.");
+
+public static class PluginSdkControlOptionsExtensions
+{
+    public static PluginSdkControlOptions ApplyManifestDefaults(
+        this PluginSdkControlOptions options,
+        PluginManifestDefaults defaults)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        options.CpuBudgetMs = defaults.CpuBudgetMs;
+        options.MemoryMb = defaults.MemoryMb;
+
+        options.Domains.Clear();
+        foreach (var domain in defaults.Domains)
+        {
+            options.Domains.Add(domain);
+        }
+
+        options.Paths.Clear();
+        foreach (var path in defaults.Paths)
+        {
+            options.Paths.Add(path);
+        }
+
+        return options;
+    }
+
+    public static PluginSdkControlOptions ApplyDefaults(
+        this PluginSdkControlOptions options,
+        PluginSdkControlDefaults defaults)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(defaults);
+
+        options.Message = defaults.Message;
+        options.ApplyManifestDefaults(new PluginManifestDefaults(
+            defaults.CpuBudgetMs,
+            defaults.MemoryMb,
+            defaults.Domains?.ToArray() ?? [],
+            defaults.Paths?.ToArray() ?? []));
+
+        options.Capabilities.Clear();
+        foreach (var capability in defaults.Capabilities)
+        {
+            options.Capabilities.Add(capability);
+        }
+
+        return options;
+    }
+}
 
 public sealed class PluginDefaultControlService(IOptions<PluginSdkControlOptions> options)
     : PluginControl.PluginControlBase
@@ -277,6 +339,7 @@ public sealed class PluginBuilder
     private Action<PluginEndpointBuilder> _endpointRegistrations = _ => { };
     private Action<PluginSdkSecurityOptions>? _security;
     private Action<PluginSdkControlOptions>? _defaultControl;
+    private bool _usesDefaultControlService;
 
     private PluginBuilder(string[] args, PluginAspNetHostOptions hostOptions)
     {
@@ -286,6 +349,30 @@ public sealed class PluginBuilder
 
     public static PluginBuilder Create(string[] args, PluginAspNetHostOptions hostOptions)
         => new(args, hostOptions);
+
+    public static PluginBuilder CreateWithDefaults(
+        string[] args,
+        PluginSdkManifestDefaultsOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var manifestDefaults = PluginManifestDefaultsProvider.Load(
+            options.PluginManifestFileName,
+            options.Fallback,
+            options.PluginProjectFolderName);
+
+        var devMode = PluginEnvironment.IsDevelopmentMode();
+        var hostOptions = new PluginAspNetHostOptions(
+            DefaultPort: PluginEnvironment.GetPort(args, options.DefaultPort),
+            PortEnvironmentVariables: devMode
+                ? options.DevelopmentPortEnvironmentVariables?.ToArray() ?? ["EMMA_PLUGIN_PORT"]
+                : options.ProductionPortEnvironmentVariables?.ToArray() ?? ["EMMA_PLUGIN_PORT"],
+            PortArgumentName: devMode ? options.DevelopmentPortArgumentName : options.ProductionPortArgumentName,
+            RootMessage: options.RootMessage);
+
+        return new PluginBuilder(args, hostOptions)
+            .UseDefaultControlService(control => control.ApplyManifestDefaults(manifestDefaults));
+    }
 
     public PluginBuilder ConfigureServices(Action<IServiceCollection> configure)
     {
@@ -301,14 +388,27 @@ public sealed class PluginBuilder
         return this;
     }
 
+    public PluginBuilder ConfigureDefaultControl(Action<PluginSdkControlOptions> configure)
+    {
+        _defaultControl = _defaultControl is null
+            ? configure
+            : _defaultControl + configure;
+        return this;
+    }
+
     public PluginBuilder UseDefaultControlService(Action<PluginSdkControlOptions>? configure = null)
     {
-        _defaultControl = configure is null
-            ? (_ => { })
-            : _defaultControl is null
-                ? configure
-                : _defaultControl + configure;
+        if (configure is not null)
+        {
+            ConfigureDefaultControl(configure);
+        }
 
+        if (_usesDefaultControlService)
+        {
+            return this;
+        }
+
+        _usesDefaultControlService = true;
         return AddControlService<PluginDefaultControlService>();
     }
 
@@ -316,30 +416,7 @@ public sealed class PluginBuilder
     {
         ArgumentNullException.ThrowIfNull(defaults);
 
-        return UseDefaultControlService(options =>
-        {
-            options.Message = defaults.Message;
-            options.CpuBudgetMs = defaults.CpuBudgetMs;
-            options.MemoryMb = defaults.MemoryMb;
-
-            options.Capabilities.Clear();
-            foreach (var capability in defaults.Capabilities)
-            {
-                options.Capabilities.Add(capability);
-            }
-
-            options.Domains.Clear();
-            foreach (var domain in defaults.Domains ?? [])
-            {
-                options.Domains.Add(domain);
-            }
-
-            options.Paths.Clear();
-            foreach (var path in defaults.Paths ?? [])
-            {
-                options.Paths.Add(path);
-            }
-        });
+        return UseDefaultControlService(options => options.ApplyDefaults(defaults));
     }
 
     public PluginBuilder AddGrpcService<TService>() where TService : class

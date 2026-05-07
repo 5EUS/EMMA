@@ -13,7 +13,7 @@ It is intentionally status-first rather than plan-only.
 | 4 - Video support | Partial | Contracts and plugin-host video endpoints exist; adaptive orchestration and segment cache strategy still open |
 | 5 - API surface | In progress | gRPC + REST + auth + rate limiting implemented; versioning/error standardization pending |
 | 6 - Hardening and sandboxing | In progress | Baseline signing, quarantine, and budget monitoring implemented; delegated trust and enforcement parity pending |
-| 7 - Plugin developer experience | Planned | Unify CLI-driven plugin sessions across WASM, Linux, and Windows with future UI-ready session APIs |
+| 7 - Plugin developer experience | In progress | Session/tooling work remains open; SDK authoring surface reduction has started with host defaults, WASM generation, and mapper presets |
 
 ## Milestone 1 - Core runtime skeleton
 
@@ -118,13 +118,27 @@ It is intentionally status-first rather than plan-only.
 
 ## Milestone 7 - Plugin developer experience
 
-### Planned
+### Implemented
+- ASP.NET plugin bootstrap now has a manifest-driven default path instead of
+	forcing every sample plugin to re-open-code host options and permission
+	copying.
+- WASM plugin authoring now has a generator-backed path for standard dispatch
+	exports and JSON context registration.
+- `EMMA.Plugin.Common` now includes preset helpers for standard WASM CLI host
+	registration and collection-level payload mapper helpers.
+
+### In progress
 - Build a stable plugin development session model that works across WASM,
 	Linux, and Windows plugin targets.
 - Evolve `EMMA.Cli` into a thin client over a reusable session orchestration
 	layer instead of growing target-specific command logic.
 - Add profile-based plugin discovery, diagnostics, watch/reload support, and a
 	local session API that can back both CLI and future UI surfaces.
+
+### Validation
+- `emma-test-plugin` is the first sample plugin updated to the new authoring
+	path.
+- `EMMA.Plugin.Common` tests cover the new payload-mapper helpers.
 
 ### Validation target
 - Plugin developers can run a common command flow against unpacked projects,
@@ -133,4 +147,5 @@ It is intentionally status-first rather than plan-only.
 	later without changing runtime adapters.
 - Scenario-driven smoke tests can run in CI using the same session model.
 
-See `milestone-7-plugin-developer-experience.md` for the concrete plan.
+See `milestone-7-plugin-developer-experience.md` for the broader milestone plan
+and `plugin-sdk-authoring-surface.md` for the current SDK authoring surface.

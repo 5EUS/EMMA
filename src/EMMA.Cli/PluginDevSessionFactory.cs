@@ -16,6 +16,8 @@ public sealed class PluginDevSessionFactory
     private readonly PluginDevConfigLoader _configLoader = new();
     private readonly PluginDevDiscoveryService _discoveryService = new();
     private readonly PluginDevDoctor _doctor = new();
+    private readonly PluginDevBuildService _buildService = new();
+    private readonly PluginDevScenarioRunner _scenarioRunner = new();
 
     public PluginDevSession Create(string workingDirectory)
     {
@@ -23,12 +25,6 @@ public sealed class PluginDevSessionFactory
         var discovery = _discoveryService.Discover(workingDirectory);
         var availableProfiles = BuildAvailableProfiles(loadResult, discovery);
         var profile = ResolveProfile(loadResult, availableProfiles);
-
-        if (profile.ExecutionMode != PluginExecutionMode.HostBridge)
-        {
-            throw new NotSupportedException(
-                $"Execution mode '{profile.ExecutionMode}' is not implemented yet. Phase 1 only supports host-bridge sessions.");
-        }
 
         var httpClient = new HttpClient { BaseAddress = new Uri(profile.HostUrl, UriKind.Absolute) };
         var pluginPort = new PluginHostPagedMediaPort(
@@ -45,13 +41,19 @@ public sealed class PluginDevSessionFactory
             new HostPolicyEvaluator(),
             metadataCache: new InMemoryCachePort());
 
+        var api = new EmbeddedPagedMediaApi(runtime);
+        var runtimeAdapter = CreateRuntimeAdapter(profile, runtime, api, discovery, availableProfiles);
+
         var session = new PluginDevSession(
             workingDirectory,
             discovery,
             availableProfiles,
             profile,
+            runtimeAdapter,
+            _buildService,
+            _scenarioRunner,
             runtime,
-            new EmbeddedPagedMediaApi(runtime));
+            api);
 
         session.TransitionTo(PluginDevSessionState.Prepared);
         session.AddDiagnostic(
@@ -77,6 +79,21 @@ public sealed class PluginDevSessionFactory
         }
 
         return session;
+    }
+
+    private static IPluginDevRuntimeAdapter CreateRuntimeAdapter(
+        PluginDevProfile profile,
+        EmbeddedRuntime runtime,
+        EmbeddedPagedMediaApi api,
+        PluginDevDiscoveryResult discovery,
+        IReadOnlyList<PluginDevProfile> availableProfiles)
+    {
+        if (profile.ExecutionMode == PluginExecutionMode.Direct && profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
+        {
+            return new WasmCliRuntimeAdapter(discovery.RootDirectory, discovery.ProjectFilePath);
+        }
+
+        return new HostBridgeRuntimeAdapter(runtime, api);
     }
 
     private static PluginDevProfile ResolveProfile(
@@ -149,7 +166,7 @@ public sealed class PluginDevSessionFactory
                 ResolvePluginId(null, discovery),
                 ResolveHostUrl(null),
                 target,
-                PluginExecutionMode.HostBridge,
+                target == PluginRuntimeTarget.Wasm ? PluginExecutionMode.Direct : PluginExecutionMode.HostBridge,
                 Array.Empty<string>(),
                 configPath,
                 artifactPath,

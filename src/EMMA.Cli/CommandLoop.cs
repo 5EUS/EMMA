@@ -17,7 +17,7 @@ public class CommandLoop(Action<string[]> executor)
 
             if (string.IsNullOrWhiteSpace(input))
                 continue;
-    
+
             _history.Add(input);
 
             var args = input.Split(' ', StringSplitOptions.RemoveEmptyEntries);

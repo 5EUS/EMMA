@@ -50,6 +50,9 @@ public sealed class PluginDevSession
         PluginDevDiscoveryResult discovery,
         IReadOnlyList<PluginDevProfile> availableProfiles,
         PluginDevProfile profile,
+        IPluginDevRuntimeAdapter runtimeAdapter,
+        PluginDevBuildService buildService,
+        PluginDevScenarioRunner scenarioRunner,
         EmbeddedRuntime runtime,
         EmbeddedPagedMediaApi api)
     {
@@ -58,6 +61,9 @@ public sealed class PluginDevSession
         Discovery = discovery;
         AvailableProfiles = availableProfiles;
         Profile = profile;
+        RuntimeAdapter = runtimeAdapter;
+        BuildService = buildService;
+        ScenarioRunner = scenarioRunner;
         Runtime = runtime;
         Api = api;
         State = PluginDevSessionState.Discovered;
@@ -73,6 +79,12 @@ public sealed class PluginDevSession
     public IReadOnlyList<PluginDevProfile> AvailableProfiles { get; }
 
     public PluginDevProfile Profile { get; }
+
+    public IPluginDevRuntimeAdapter RuntimeAdapter { get; }
+
+    public PluginDevBuildService BuildService { get; }
+
+    public PluginDevScenarioRunner ScenarioRunner { get; }
 
     public EmbeddedRuntime Runtime { get; }
 

@@ -15,11 +15,14 @@
 
 ## Current Status (2026-05-07)
 
-Planned. `EMMA.Cli` already provides an interactive command loop over embedded
-API calls, which makes it a good starting point for a broader plugin
-developer-experience milestone. What is missing is a stable session model,
-runtime abstraction, discovery/config flow, diagnostics, and a UI-ready local
-API.
+In progress. `EMMA.Cli` already provides an interactive command loop over
+embedded API calls, which makes it a good starting point for a broader plugin
+developer-experience milestone. Separately, the SDK authoring surface has now
+started to converge around shared bootstrap defaults, WASM export generation,
+JSON context generation, and smaller payload-mapper helpers.
+
+What is still missing is a stable session model, runtime abstraction,
+discovery/config flow, diagnostics, and a UI-ready local API.
 
 ## Goals
 
@@ -144,6 +147,14 @@ required environment prerequisites.
 
 ## Work items
 
+0) SDK authoring surface reduction
+- Keep pulling repeated transport/bootstrap glue out of sample plugins and into
+  documented SDK surfaces.
+- Prefer declarative SDK contracts that can later feed templates, generators,
+  diagnostics, and docs.
+- Use `emma-test-plugin` as the first proving ground before applying the same
+  reductions to the other sample plugins.
+
 1) Session orchestration
 - Extract a reusable application layer from the current CLI flow.
 - Move session lifecycle, state, logs, and diagnostics into shared services.
@@ -216,6 +227,13 @@ required environment prerequisites.
   profile resolution.
 - Refactor `EMMA.Cli` to use session services without breaking the current
   interactive workflow.
+
+### Phase 0 - SDK authoring surface
+- Land shared plugin bootstrap defaults for ASP.NET sample plugins.
+- Land generator-backed WASM exports and JSON context registration for the
+  standard operation surface.
+- Land small reusable mapper helpers so sample plugins stop hand-writing the
+  same parse loops.
 
 ### Phase 2 - Discovery and diagnostics
 - Implement plugin/project/artifact discovery.
