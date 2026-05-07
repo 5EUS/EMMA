@@ -16,6 +16,7 @@ public sealed record PluginDevDiscoveryResult(
     string? PluginId,
     string? PluginName,
     IReadOnlyList<string> MediaTypes,
+    IReadOnlyList<string> PermittedDomains,
     IReadOnlyList<PluginRuntimeTarget> SupportedTargets,
     IReadOnlyList<PluginDevArtifactCandidate> ArtifactCandidates);
 
@@ -43,6 +44,7 @@ public sealed class PluginDevDiscoveryService
             manifest.PluginId,
             manifest.PluginName,
             manifest.MediaTypes,
+            manifest.PermittedDomains,
             supportedTargets,
             artifactCandidates);
     }
@@ -66,11 +68,11 @@ public sealed class PluginDevDiscoveryService
         return null;
     }
 
-    private static (string? PluginId, string? PluginName, IReadOnlyList<string> MediaTypes) ReadManifest(string? manifestPath)
+    private static (string? PluginId, string? PluginName, IReadOnlyList<string> MediaTypes, IReadOnlyList<string> PermittedDomains) ReadManifest(string? manifestPath)
     {
         if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
         {
-            return (null, null, Array.Empty<string>());
+            return (null, null, Array.Empty<string>(), Array.Empty<string>());
         }
 
         using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
@@ -81,8 +83,14 @@ public sealed class PluginDevDiscoveryService
         var mediaTypes = root.TryGetProperty("mediaTypes", out var mediaNode) && mediaNode.ValueKind == JsonValueKind.Array
             ? mediaNode.EnumerateArray().Select(static item => item.GetString()).Where(static item => !string.IsNullOrWhiteSpace(item)).Select(static item => item!).ToArray()
             : Array.Empty<string>();
+        var permittedDomains = root.TryGetProperty("permissions", out var permissionsNode)
+            && permissionsNode.ValueKind == JsonValueKind.Object
+            && permissionsNode.TryGetProperty("domains", out var domainsNode)
+            && domainsNode.ValueKind == JsonValueKind.Array
+                ? domainsNode.EnumerateArray().Select(static item => item.GetString()).Where(static item => !string.IsNullOrWhiteSpace(item)).Select(static item => item!).ToArray()
+                : Array.Empty<string>();
 
-        return (pluginId, pluginName, mediaTypes);
+        return (pluginId, pluginName, mediaTypes, permittedDomains);
     }
 
     private static IReadOnlyList<PluginRuntimeTarget> DiscoverSupportedTargets(string? projectFilePath)

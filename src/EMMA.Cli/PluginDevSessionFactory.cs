@@ -90,7 +90,22 @@ public sealed class PluginDevSessionFactory
     {
         if (profile.ExecutionMode == PluginExecutionMode.Direct && profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
         {
-            return new WasmCliRuntimeAdapter(discovery.RootDirectory, discovery.ProjectFilePath);
+            var buildService = new PluginDevBuildService();
+            var tempSession = new PluginDevSession(
+                discovery.RootDirectory,
+                discovery,
+                availableProfiles,
+                profile,
+                runtimeAdapter: null!,
+                buildService,
+                scenarioRunner: null!,
+                runtime,
+                api);
+
+            var componentPath = buildService.ResolveWasmArtifactPath(tempSession)
+                ?? throw new InvalidOperationException("Direct WASM profile could not resolve a built .wasm component artifact.");
+            var runtimeLibraryPath = PluginDevRuntimeLibraryResolver.Resolve(discovery.RootDirectory);
+            return new WasmCliRuntimeAdapter(discovery.RootDirectory, componentPath, runtimeLibraryPath, discovery.PermittedDomains);
         }
 
         return new HostBridgeRuntimeAdapter(runtime, api);

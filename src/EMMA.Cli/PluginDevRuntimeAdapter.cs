@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using EMMA.Api;
 using EMMA.Api.Embedded;
@@ -132,42 +134,68 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
 
 public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
 {
-    private readonly string _rootDirectory;
-    private readonly string? _projectPath;
+    private static readonly JsonSerializerOptions SerializerOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
-    public WasmCliRuntimeAdapter(string rootDirectory, string? projectPath)
+    private readonly string _rootDirectory;
+    private readonly string _componentPath;
+    private readonly string _runtimeLibraryPath;
+    private readonly IReadOnlyList<string> _permittedDomains;
+
+    public WasmCliRuntimeAdapter(string rootDirectory, string componentPath, string runtimeLibraryPath, IReadOnlyList<string> permittedDomains)
     {
         _rootDirectory = rootDirectory;
-        _projectPath = projectPath;
+        _componentPath = componentPath;
+        _runtimeLibraryPath = runtimeLibraryPath;
+        _permittedDomains = permittedDomains;
+        NativeWasmRuntimeBindings.Configure(_runtimeLibraryPath);
     }
 
-    public string Name => "wasm-cli-direct";
+    public string Name => "wasm-native-direct";
     public bool SupportsReload => true;
     public bool SupportsPageAsset => false;
     public bool SupportsScenarios => true;
 
     public async Task<IReadOnlyList<SearchItem>> SearchAsync(string query, CancellationToken cancellationToken)
     {
-        var json = await InvokeAsync(PluginOperationNames.Search, [query], cancellationToken);
-        return DeserializeSearchItems(json);
+        return await InvokeTypedOperationAsync<IReadOnlyList<SearchItem>>(
+            nestedOperation: PluginOperationNames.Search,
+            mediaId: null,
+            mediaType: PluginMediaTypes.Paged,
+            argsJson: JsonSerializer.Serialize(new { query }),
+            cancellationToken) ?? [];
     }
 
     public async Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
     {
-        var json = await InvokeAsync(PluginOperationNames.Chapters, [mediaId], cancellationToken);
-        return DeserializeChapterItems(json);
+        return await InvokeTypedOperationAsync<IReadOnlyList<ChapterItem>>(
+            nestedOperation: PluginOperationNames.Chapters,
+            mediaId: mediaId,
+            mediaType: PluginMediaTypes.Paged,
+            argsJson: null,
+            cancellationToken) ?? [];
     }
 
     public async Task<PageItem?> GetPageAsync(string mediaId, string chapterId, int index, CancellationToken cancellationToken)
     {
-        var json = await InvokeAsync(PluginOperationNames.Page, [mediaId, chapterId, index.ToString()], cancellationToken);
-        return DeserializePageItem(json);
+        return await InvokeTypedOperationAsync<PageItem>(
+            nestedOperation: PluginOperationNames.Page,
+            mediaId: mediaId,
+            mediaType: PluginMediaTypes.Paged,
+            argsJson: JsonSerializer.Serialize(new { chapterId, pageIndex = index }),
+            cancellationToken);
     }
 
     public async Task<IReadOnlyList<PageItem>> GetPagesAsync(string mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken)
     {
-        var json = await InvokeAsync(PluginOperationNames.Pages, [mediaId, chapterId, startIndex.ToString(), count.ToString()], cancellationToken);
-        return DeserializePageItems(json);
+        return await InvokeTypedOperationAsync<IReadOnlyList<PageItem>>(
+            nestedOperation: PluginOperationNames.Pages,
+            mediaId: mediaId,
+            mediaType: PluginMediaTypes.Paged,
+            argsJson: JsonSerializer.Serialize(new { chapterId, startIndex, count }),
+            cancellationToken) ?? [];
     }
 
     public Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
@@ -184,75 +212,160 @@ public sealed class WasmCliRuntimeAdapter : IPluginDevRuntimeAdapter
 
     private async Task<string> InvokeAsync(string operation, IReadOnlyList<string> operationArgs, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_projectPath))
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (!File.Exists(_componentPath))
         {
-            throw new InvalidOperationException("No plugin project was discovered for the active WASM profile.");
+            throw new InvalidOperationException($"Resolved WASM component was not found: {_componentPath}");
         }
 
-        var args = new List<string>
-        {
-            "run",
-            "--project",
-            _projectPath,
-            "-p:PluginTransport=Wasm",
-            "--"
-        };
-        args.Add(operation);
-        args.AddRange(operationArgs);
-
-        var result = await PluginDevProcessRunner.RunAsync(
-            workingDirectory: _rootDirectory,
-            fileName: "dotnet",
-            arguments: args,
-            cancellationToken: cancellationToken);
-
-        if (result.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"Direct WASM runtime invocation failed for operation '{operation}'.\n{result.StandardError}");
-        }
-
-        return result.StandardOutput.Trim();
+        return await Task.Run(() => NativeWasmRuntimeBindings.Invoke(_componentPath, operation, operationArgs, _permittedDomains), cancellationToken);
     }
 
-    private static IReadOnlyList<SearchItem> DeserializeSearchItems(string json)
+    private async Task<T?> InvokeTypedOperationAsync<T>(
+        string nestedOperation,
+        string? mediaId,
+        string? mediaType,
+        string? argsJson,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(json))
+        var resultJson = await InvokeAsync(
+            PluginOperationNames.Invoke,
+            [
+                nestedOperation,
+                mediaId ?? string.Empty,
+                mediaType ?? string.Empty,
+                argsJson ?? string.Empty
+            ],
+            cancellationToken);
+
+        var operationResult = Deserialize<OperationResult>(resultJson)
+            ?? throw new InvalidOperationException($"Direct WASM runtime returned an invalid invoke envelope for '{nestedOperation}'.");
+
+        if (operationResult.isError)
         {
-            return [];
+            throw new InvalidOperationException(operationResult.error ?? $"Direct WASM invoke failed for '{nestedOperation}'.");
         }
 
-        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.SearchItemArray) ?? [];
-    }
-
-    private static IReadOnlyList<ChapterItem> DeserializeChapterItems(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
+        if (string.IsNullOrWhiteSpace(operationResult.payloadJson))
         {
-            return [];
+            return default;
         }
 
-        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.ChapterItemArray) ?? [];
+        return Deserialize<T>(operationResult.payloadJson);
     }
 
-    private static PageItem? DeserializePageItem(string json)
+    private static T? Deserialize<T>(string json)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
             return default;
         }
 
-        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.PageItem);
+        return JsonSerializer.Deserialize<T>(json, SerializerOptions);
     }
+}
 
-    private static IReadOnlyList<PageItem> DeserializePageItems(string json)
+public static class NativeWasmRuntimeBindings
+{
+    private static readonly Lock ResolverLock = new();
+    private static bool _configured;
+    private static string? _configuredLibraryPath;
+
+    public static void Configure(string runtimeLibraryPath)
     {
-        if (string.IsNullOrWhiteSpace(json))
+        if (string.IsNullOrWhiteSpace(runtimeLibraryPath))
         {
-            return [];
+            throw new InvalidOperationException("A native WASM runtime library path is required for direct component execution.");
         }
 
-        return JsonSerializer.Deserialize(json, PluginDevJsonContexts.Runtime.PageItemArray) ?? [];
+        lock (ResolverLock)
+        {
+            if (_configured && string.Equals(_configuredLibraryPath, runtimeLibraryPath, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            NativeLibrary.SetDllImportResolver(typeof(NativeWasmRuntimeBindings).Assembly, (libraryName, _, _) =>
+            {
+                if (!string.Equals(libraryName, "emma_wasm_runtime", StringComparison.Ordinal))
+                {
+                    return IntPtr.Zero;
+                }
+
+                return NativeLibrary.TryLoad(runtimeLibraryPath, out var handle)
+                    ? handle
+                    : IntPtr.Zero;
+            });
+
+            _configured = true;
+            _configuredLibraryPath = runtimeLibraryPath;
+        }
     }
+
+    public static string Invoke(string componentPath, string operation, IReadOnlyList<string> operationArgs, IReadOnlyList<string> permittedDomains)
+    {
+        var argsJson = JsonSerializer.Serialize(new
+        {
+            args = operationArgs,
+            permittedDomains
+        });
+        var componentPtr = Marshal.StringToCoTaskMemUTF8(componentPath);
+        var operationPtr = Marshal.StringToCoTaskMemUTF8(operation);
+        var argsPtr = Marshal.StringToCoTaskMemUTF8(argsJson);
+
+        try
+        {
+            var code = InvokeNative(componentPtr, operationPtr, argsPtr, 30_000u, out var outJson, out var outError);
+            try
+            {
+                var json = PtrToString(outJson);
+                var error = PtrToString(outError);
+                if (code != 0)
+                {
+                    throw new InvalidOperationException(
+                        string.IsNullOrWhiteSpace(error)
+                            ? $"Native WASM runtime invocation failed with code {code}."
+                            : error);
+                }
+
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    throw new InvalidOperationException($"Native WASM runtime returned empty output for operation '{operation}'.");
+                }
+
+                return json;
+            }
+            finally
+            {
+                FreeString(outJson);
+                FreeString(outError);
+            }
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(componentPtr);
+            Marshal.FreeCoTaskMem(operationPtr);
+            Marshal.FreeCoTaskMem(argsPtr);
+        }
+    }
+
+    private static string? PtrToString(IntPtr ptr)
+    {
+        return ptr == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(ptr);
+    }
+
+    [DllImport("emma_wasm_runtime", EntryPoint = "emma_wasm_component_invoke", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int InvokeNative(
+        IntPtr componentPath,
+        IntPtr operation,
+        IntPtr operationArgsJson,
+        uint timeoutMs,
+        out IntPtr outJson,
+        out IntPtr outError);
+
+    [DllImport("emma_wasm_runtime", EntryPoint = "emma_wasm_runtime_free_string", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void FreeString(IntPtr value);
 }
 
 public sealed class PluginDevBuildService
@@ -362,7 +475,7 @@ public sealed class PluginDevBuildService
         return new PluginDevPackResult(zipPath, manifestOutPath, artifactOutPath);
     }
 
-    private static string? ResolveWasmArtifactPath(PluginDevSession session)
+    public string? ResolveWasmArtifactPath(PluginDevSession session)
     {
         if (!string.IsNullOrWhiteSpace(session.Profile.ArtifactPath))
         {
@@ -385,7 +498,7 @@ public sealed class PluginDevBuildService
         return null;
     }
 
-    private static string? ResolveWasmFile(string path)
+    public string? ResolveWasmFile(string path)
     {
         if (File.Exists(path) && path.EndsWith(".wasm", StringComparison.OrdinalIgnoreCase))
         {
@@ -406,6 +519,58 @@ public sealed class PluginDevBuildService
     }
 }
 
+public static class PluginDevRuntimeLibraryResolver
+{
+    public static string Resolve(string workingDirectory)
+    {
+        var root = FindRepoRoot(workingDirectory)
+            ?? FindRepoRoot(AppContext.BaseDirectory)
+            ?? FindRepoRoot(Path.GetDirectoryName(typeof(PluginDevRuntimeLibraryResolver).Assembly.Location) ?? string.Empty)
+            ?? throw new InvalidOperationException("Unable to locate the EMMA repository root while resolving the native WASM runtime library.");
+
+        var libraryFileName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "emma_wasm_runtime.dll"
+            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                ? "libemma_wasm_runtime.dylib"
+                : "libemma_wasm_runtime.so";
+
+        var platformDir = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "win-x64"
+            : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                ? "osx-arm64"
+                : "linux-x64";
+
+        var path = Path.Combine(root, "artifacts", "wasm-runtime-native", platformDir, libraryFileName);
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException($"Native WASM runtime library was not found: {path}");
+        }
+
+        return path;
+    }
+
+    private static string? FindRepoRoot(string workingDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(workingDirectory) || !Directory.Exists(workingDirectory))
+        {
+            return null;
+        }
+
+        var current = new DirectoryInfo(workingDirectory);
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "EMMA.sln")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        return null;
+    }
+}
+
 public sealed class PluginDevScenarioRunner
 {
     public async Task<PluginDevScenarioResult> RunAsync(PluginDevSession session, string scenarioName, string? query, CancellationToken cancellationToken)
@@ -414,7 +579,7 @@ public sealed class PluginDevScenarioRunner
         return normalizedScenario switch
         {
             "paged-smoke" => await RunPagedSmokeAsync(session, string.IsNullOrWhiteSpace(query) ? "naruto" : query.Trim(), cancellationToken),
-            _ => new PluginDevScenarioResult(normalizedScenario, false, [$"Unknown scenario '{scenarioName}'. Supported scenarios: paged-smoke"])
+            _ => new PluginDevScenarioResult(normalizedScenario, false, [$"Unknown scenario '{scenarioName}'. Supported scenarios: paged-smoke"]) 
         };
     }
 
