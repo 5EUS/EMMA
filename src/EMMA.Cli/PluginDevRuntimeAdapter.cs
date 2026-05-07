@@ -26,7 +26,7 @@ public sealed record PluginDevBuildPlan(
     string? ArtifactPath,
     string Description);
 
-public sealed record PluginDevPackResult(string PackagePath, string ManifestPath, string ArtifactPath);
+public sealed record PluginDevPackResult(string PackagePath, string ManifestPath, string ArtifactPath, string PackageDirectory);
 
 public sealed record PluginDevScenarioResult(string Name, bool Succeeded, IReadOnlyList<string> Messages);
 
@@ -212,7 +212,7 @@ public sealed class DeferredWasmRuntimeAdapter(
         => _inner.IsValueCreated ? _inner.Value.DrainRuntimeLogs() : [];
 }
 
-public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
+public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPluginDevRuntimeLogSource
 {
     private const string HostAuthHeaderName = "x-emma-plugin-host-auth";
     private const string CorrelationIdHeaderName = "x-correlation-id";
@@ -220,6 +220,7 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
     private readonly string _entryPointPath;
     private readonly Uri _hostUri;
     private readonly PluginRuntimeTarget _target;
+    private readonly PluginDevLoggingOptions _logging;
     private readonly string _authToken = Guid.NewGuid().ToString("n");
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly StringBuilder _stdout = new();
@@ -229,11 +230,13 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
     public NativeProcessRuntimeAdapter(
         string entryPointPath,
         Uri hostUri,
-        PluginRuntimeTarget target)
+        PluginRuntimeTarget target,
+        PluginDevLoggingOptions logging)
     {
         _entryPointPath = entryPointPath;
         _hostUri = hostUri;
         _target = target;
+        _logging = logging;
         AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
         AppDomain.CurrentDomain.ProcessExit += (_, _) => StopProcess();
     }
@@ -336,6 +339,14 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
         return $"Restarted native {_target} runtime at '{_entryPointPath}'.";
     }
 
+    public IReadOnlyList<PluginDevRuntimeLogLine> DrainRuntimeLogs()
+    {
+        var lines = new List<PluginDevRuntimeLogLine>();
+        DrainBufferedLog(_stdout, "info", lines);
+        DrainBufferedLog(_stderr, "error", lines);
+        return lines;
+    }
+
     private async Task EnsureRunningAsync(CancellationToken cancellationToken)
     {
         await _lifecycleLock.WaitAsync(cancellationToken);
@@ -395,6 +406,14 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
         startInfo.Environment["EMMA_PLUGIN_PORT"] = port;
         startInfo.Environment["EMMA_TEST_PLUGIN_PORT"] = port;
         startInfo.Environment["EMMA_PLUGIN_HOST_AUTH_TOKEN"] = _authToken;
+        startInfo.Environment["EMMA_PLUGIN_DEV_MODE"] = _logging.Plugin ? "1" : "0";
+        startInfo.Environment["Logging__LogLevel__EMMA"] = _logging.Plugin ? "Information" : "None";
+        startInfo.Environment["Logging__LogLevel__Microsoft.Hosting"] = _logging.AspNetHost ? "Information" : "None";
+        startInfo.Environment["Logging__LogLevel__Microsoft.AspNetCore"] = _logging.AspNetHost ? "Information" : "None";
+        startInfo.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = _logging.AspNetHost ? "Information" : "None";
+        startInfo.Environment["Logging__LogLevel__Microsoft.AspNetCore.Hosting.Diagnostics"] = _logging.AspNetHost ? "Information" : "None";
+        startInfo.Environment["Logging__LogLevel__Microsoft.AspNetCore.Server.Kestrel"] = _logging.AspNetHost ? "Information" : "None";
+        startInfo.Environment["Logging__LogLevel__System.Net.Http.HttpClient"] = _logging.HttpClient ? "Information" : "None";
         startInfo.Environment["ASPNETCORE_URLS"] = _hostUri.GetLeftPart(UriPartial.Authority);
 
         var process = new Process
@@ -508,6 +527,23 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter
         lock (builder)
         {
             builder.AppendLine(line);
+        }
+    }
+
+    private static void DrainBufferedLog(StringBuilder builder, string level, List<PluginDevRuntimeLogLine> lines)
+    {
+        string[] drainedLines;
+        lock (builder)
+        {
+            drainedLines = builder
+                .ToString()
+                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            builder.Clear();
+        }
+
+        foreach (var line in drainedLines)
+        {
+            lines.Add(new PluginDevRuntimeLogLine(level, line));
         }
     }
 
@@ -873,29 +909,31 @@ public sealed class PluginDevBuildService
 {
     public PluginDevBuildPlan? GetBuildPlan(PluginDevSession session)
     {
-        var projectPath = session.Discovery.ProjectFilePath;
+        return session.Profile.RuntimeTarget switch
+        {
+            PluginRuntimeTarget.Wasm => CreateWasmBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Wasm), session.Profile.WasiSdkPath),
+            PluginRuntimeTarget.Linux => CreateNativeBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Linux), PluginRuntimeTarget.Linux),
+            PluginRuntimeTarget.Windows => CreateNativeBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Windows), PluginRuntimeTarget.Windows),
+            _ => null
+        };
+    }
+
+    private static PluginDevBuildPlan? CreateWasmBuildPlan(string rootDirectory, string? projectPath, string? wasiSdkPath)
+    {
         if (string.IsNullOrWhiteSpace(projectPath))
         {
             return null;
         }
 
-        return session.Profile.RuntimeTarget switch
-        {
-            PluginRuntimeTarget.Wasm => CreateWasmBuildPlan(session.Discovery.RootDirectory, projectPath),
-            PluginRuntimeTarget.Linux => CreateNativeBuildPlan(session.Discovery.RootDirectory, projectPath, PluginRuntimeTarget.Linux),
-            PluginRuntimeTarget.Windows => CreateNativeBuildPlan(session.Discovery.RootDirectory, projectPath, PluginRuntimeTarget.Windows),
-            _ => null
-        };
-    }
-
-    private static PluginDevBuildPlan CreateWasmBuildPlan(string rootDirectory, string projectPath)
-    {
         var publishDirectory = Path.Combine(rootDirectory, "artifacts", "build-wasm", "publish");
         var projectDirectory = Path.GetDirectoryName(projectPath)
             ?? throw new InvalidOperationException($"Unable to resolve project directory for '{projectPath}'.");
         var quotedProjectDirectory = PluginDevProcessRunner.QuoteForShell(projectDirectory);
         var quotedProjectPath = PluginDevProcessRunner.QuoteForShell(projectPath);
         var quotedPublishDirectory = PluginDevProcessRunner.QuoteForShell(publishDirectory);
+        var wasiSdkPrefix = string.IsNullOrWhiteSpace(wasiSdkPath)
+            ? "WASI_SDK_PATH=\"${WASI_SDK_PATH:-}\""
+            : $"WASI_SDK_PATH={PluginDevProcessRunner.QuoteForShell(wasiSdkPath)}";
 
         return new PluginDevBuildPlan(
             "wasm-build",
@@ -903,36 +941,69 @@ public sealed class PluginDevBuildService
             "sh",
             [
                 "-lc",
-                $"set -euo pipefail; rm -rf {quotedProjectDirectory}/bin {quotedProjectDirectory}/obj {quotedPublishDirectory}; mkdir -p {quotedPublishDirectory}; dotnet restore {quotedProjectPath} --no-cache --force-evaluate --runtime wasi-wasm -p:PluginTransport=Wasm >/dev/null; publish_none_log={quotedPublishDirectory}/publish-nativecodegen-none.log; if ! WASI_SDK_PATH=\"${{WASI_SDK_PATH:-}}\" dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=none -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -p:PluginTransport=Wasm -o {quotedPublishDirectory} 2>&1 | tee \"$publish_none_log\"; then if grep -q 'native/.*\\.wasm\" because it was not found' \"$publish_none_log\"; then echo 'WASM publish produced no native artifact with NativeCodeGen=none; retrying with NativeCodeGen=llvm...'; WASI_SDK_PATH=\"${{WASI_SDK_PATH:-}}\" dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=llvm -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -p:PluginTransport=Wasm -o {quotedPublishDirectory}; else exit 1; fi; fi"
+                $"set -euo pipefail; rm -rf {quotedProjectDirectory}/bin {quotedProjectDirectory}/obj {quotedPublishDirectory}; mkdir -p {quotedPublishDirectory}; dotnet restore {quotedProjectPath} --no-cache --force-evaluate --runtime wasi-wasm >/dev/null; publish_none_log={quotedPublishDirectory}/publish-nativecodegen-none.log; if ! {wasiSdkPrefix} dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=none -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -o {quotedPublishDirectory} 2>&1 | tee \"$publish_none_log\"; then if grep -q 'native/.*\\.wasm\" because it was not found' \"$publish_none_log\"; then echo 'WASM publish produced no native artifact with NativeCodeGen=none; retrying with NativeCodeGen=llvm...'; {wasiSdkPrefix} dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=llvm -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -o {quotedPublishDirectory}; else exit 1; fi; fi"
             ],
             publishDirectory,
             "Normalized WASM publish plan for CLI-driven plugin development.");
     }
 
-    private static PluginDevBuildPlan CreateNativeBuildPlan(string rootDirectory, string projectPath, PluginRuntimeTarget target)
+    private static PluginDevBuildPlan? CreateNativeBuildPlan(string rootDirectory, string? projectPath, PluginRuntimeTarget target)
     {
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            return null;
+        }
+
         var runtimeIdentifier = target == PluginRuntimeTarget.Windows ? "win-x64" : "linux-x64";
         var publishDirectory = Path.Combine(rootDirectory, "artifacts", $"build-{runtimeIdentifier}", "publish");
+        var quotedProjectPath = PluginDevProcessRunner.QuoteForShell(projectPath);
+        var quotedPublishDirectory = PluginDevProcessRunner.QuoteForShell(publishDirectory);
 
         return new PluginDevBuildPlan(
             $"{target.ToString().ToLowerInvariant()}-native-build",
             rootDirectory,
-            "dotnet",
+            "sh",
             [
-                "publish",
-                projectPath,
-                "-c",
-                "Release",
-                "-r",
-                runtimeIdentifier,
-                "--self-contained",
-                "true",
-                "-p:PluginTransport=AspNet",
-                "-o",
-                publishDirectory
+                "-lc",
+                $"set -euo pipefail; rm -rf {quotedPublishDirectory}; mkdir -p {quotedPublishDirectory}; dotnet publish {quotedProjectPath} -c Release -r {runtimeIdentifier} --self-contained false -p:UseAppHost=true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -o {quotedPublishDirectory}; find {quotedPublishDirectory} -maxdepth 1 -type f \\( -name '*.pdb' -o -name '*.dbg' -o -name '*.xml' \\) -delete || true; rm -f {quotedPublishDirectory}/createdump"
             ],
             publishDirectory,
             $"Normalized {target} native publish plan for CLI-driven plugin development.");
+    }
+
+    private static string? ResolveProjectPathForTarget(PluginDevSession session, PluginRuntimeTarget target)
+    {
+        var rootDirectory = session.Discovery.RootDirectory;
+        var manifestStem = string.IsNullOrWhiteSpace(session.Discovery.ManifestPath)
+            ? null
+            : Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(session.Discovery.ManifestPath));
+
+        if (target == PluginRuntimeTarget.Wasm)
+        {
+            if (!string.IsNullOrWhiteSpace(manifestStem))
+            {
+                var exactWasmProject = Path.Combine(rootDirectory, $"{manifestStem}.Wasm.csproj");
+                if (File.Exists(exactWasmProject))
+                {
+                    return exactWasmProject;
+                }
+            }
+
+            return Directory.EnumerateFiles(rootDirectory, "*.Wasm.csproj", SearchOption.TopDirectoryOnly)
+                .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+        }
+
+        if (!string.IsNullOrWhiteSpace(manifestStem))
+        {
+            var exactHostProject = Path.Combine(rootDirectory, $"{manifestStem}.csproj");
+            if (File.Exists(exactHostProject))
+            {
+                return exactHostProject;
+            }
+        }
+
+        return session.Discovery.ProjectFilePath;
     }
 
     public async Task<string> BuildAsync(PluginDevSession session, CancellationToken cancellationToken)
@@ -943,12 +1014,76 @@ public sealed class PluginDevBuildService
         var result = await PluginDevProcessRunner.RunAsync(plan.WorkingDirectory, plan.Command, plan.Arguments, cancellationToken);
         if (result.ExitCode != 0)
         {
-            throw new InvalidOperationException($"Build failed.\n{result.StandardError}");
+            throw new PluginDevBuildException(
+                plan.Name,
+                result.ExitCode,
+                PluginDevBuildException.FormatProcessOutput(result));
         }
 
         return string.IsNullOrWhiteSpace(result.StandardOutput)
             ? $"Build completed for profile '{session.Profile.Name}'."
             : result.StandardOutput.Trim();
+    }
+
+    public string? SyncBuildArtifacts(PluginDevSession session)
+    {
+        var sync = session.Profile.Sync;
+        if (!sync.Enabled || !sync.OnBuild)
+        {
+            return null;
+        }
+
+        var plan = GetBuildPlan(session)
+            ?? throw new InvalidOperationException("Cannot sync build outputs because no normalized build plan is available for the active profile.");
+        if (string.IsNullOrWhiteSpace(plan.ArtifactPath))
+        {
+            throw new InvalidOperationException($"Cannot sync build outputs for plan '{plan.Name}' because it does not declare an artifact path.");
+        }
+
+        var sourcePath = Path.GetFullPath(plan.ArtifactPath);
+        var destinationPath = sync.DestinationPath
+            ?? throw new InvalidOperationException("Cannot sync build outputs because no sync destination path is configured.");
+
+        if (File.Exists(sourcePath))
+        {
+            var destinationDirectory = Path.GetDirectoryName(destinationPath);
+            if (!string.IsNullOrWhiteSpace(destinationDirectory))
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
+
+            File.Copy(sourcePath, destinationPath, overwrite: true);
+            return $"Synced build artifact '{sourcePath}' to '{destinationPath}'.";
+        }
+
+        if (!Directory.Exists(sourcePath))
+        {
+            throw new InvalidOperationException($"Cannot sync build outputs because the built artifact path does not exist: {sourcePath}");
+        }
+
+        if (sync.CleanDestination && Directory.Exists(destinationPath))
+        {
+            Directory.Delete(destinationPath, recursive: true);
+        }
+
+        CopyDirectoryContents(sourcePath, destinationPath);
+        return $"Synced build outputs from '{sourcePath}' to '{destinationPath}'.";
+    }
+
+    public PluginDevPackResult PackCurrentProfile(PluginDevSession session)
+    {
+        return session.Profile.RuntimeTarget switch
+        {
+            PluginRuntimeTarget.Wasm => PackWasm(session),
+            PluginRuntimeTarget.Linux => PackNative(session, "linux-x64"),
+            PluginRuntimeTarget.Windows => PackNative(session, "win-x64"),
+            _ => throw new InvalidOperationException($"Packing is not implemented for runtime target '{session.Profile.RuntimeTarget}'.")
+        };
+    }
+
+    public string GetPackDirectory(PluginDevSession session)
+    {
+        return Path.Combine(session.Discovery.RootDirectory, "artifacts", "pack");
     }
 
     public PluginDevPackResult PackWasm(PluginDevSession session)
@@ -996,7 +1131,54 @@ public sealed class PluginDevBuildService
         File.Copy(artifactPath, artifactOutPath, overwrite: true);
 
         ZipFile.CreateFromDirectory(packageRoot, zipPath);
-        return new PluginDevPackResult(zipPath, manifestOutPath, artifactOutPath);
+        return new PluginDevPackResult(zipPath, manifestOutPath, artifactOutPath, Path.GetDirectoryName(zipPath) ?? packageRoot);
+    }
+
+    public PluginDevPackResult PackNative(PluginDevSession session, string targetMoniker)
+    {
+        if (session.Profile.RuntimeTarget is not (PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows))
+        {
+            throw new InvalidOperationException("The normalized native pack flow is only implemented for Linux and Windows profiles.");
+        }
+
+        var manifestPath = session.Discovery.ManifestPath;
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            throw new InvalidOperationException("Cannot pack a native plugin without a discovered plugin manifest.");
+        }
+
+        var artifactDirectory = ResolveNativeArtifactDirectory(session)
+            ?? throw new InvalidOperationException("No published native artifact directory could be resolved for packing. Run 'build' for the active profile first.");
+
+        using var manifestDoc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var pluginId = manifestDoc.RootElement.GetProperty("id").GetString() ?? "plugin";
+        var version = manifestDoc.RootElement.GetProperty("version").GetString() ?? "0.0.0";
+
+        var packDirectory = GetPackDirectory(session);
+        var packageRoot = Path.Combine(packDirectory, $"{version}-{targetMoniker}");
+        var manifestOutDir = Path.Combine(packageRoot, "manifest");
+        var pluginOutDir = Path.Combine(packageRoot, pluginId);
+        var zipPath = Path.Combine(packDirectory, $"{pluginId}_{version}_{targetMoniker}.zip");
+
+        if (Directory.Exists(packageRoot))
+        {
+            Directory.Delete(packageRoot, recursive: true);
+        }
+
+        if (File.Exists(zipPath))
+        {
+            File.Delete(zipPath);
+        }
+
+        Directory.CreateDirectory(manifestOutDir);
+        Directory.CreateDirectory(pluginOutDir);
+
+        var manifestOutPath = Path.Combine(manifestOutDir, $"{pluginId}.json");
+        File.Copy(manifestPath, manifestOutPath, overwrite: true);
+        CopyDirectoryContents(artifactDirectory, pluginOutDir);
+
+        ZipFile.CreateFromDirectory(packageRoot, zipPath);
+        return new PluginDevPackResult(zipPath, manifestOutPath, pluginOutDir, packDirectory);
     }
 
     public string? ResolveWasmArtifactPath(PluginDevSession session)
@@ -1078,6 +1260,26 @@ public sealed class PluginDevBuildService
         return null;
     }
 
+    public string? ResolveNativeArtifactDirectory(PluginDevSession session)
+    {
+        if (session.Profile.RuntimeTarget is not (PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.Profile.ArtifactPath) && Directory.Exists(session.Profile.ArtifactPath))
+        {
+            return session.Profile.ArtifactPath;
+        }
+
+        foreach (var candidate in session.Discovery.ArtifactCandidates.Where(candidate => candidate.Target == session.Profile.RuntimeTarget && Directory.Exists(candidate.Path)))
+        {
+            return candidate.Path;
+        }
+
+        return null;
+    }
+
     private static string? ResolveNativeEntrypointPath(string path, string projectName, PluginRuntimeTarget target)
     {
         var executableName = target == PluginRuntimeTarget.Windows ? $"{projectName}.exe" : projectName;
@@ -1106,6 +1308,25 @@ public sealed class PluginDevBuildService
             .ToArray();
 
         return candidates.FirstOrDefault();
+    }
+
+    private static void CopyDirectoryContents(string sourceDirectory, string destinationDirectory)
+    {
+        Directory.CreateDirectory(destinationDirectory);
+
+        foreach (var directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDirectory, directory);
+            Directory.CreateDirectory(Path.Combine(destinationDirectory, relativePath));
+        }
+
+        foreach (var file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDirectory, file);
+            var destinationPath = Path.Combine(destinationDirectory, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(file, destinationPath, overwrite: true);
+        }
     }
 }
 
@@ -1224,6 +1445,43 @@ public static class PluginDevRequestContext
 }
 
 public sealed record PluginDevProcessResult(int ExitCode, string StandardOutput, string StandardError);
+
+public sealed class PluginDevBuildException : InvalidOperationException
+{
+    public PluginDevBuildException(string planName, int exitCode, string formattedOutput)
+        : base($"Build failed using plan '{planName}' with exit code {exitCode}.\n{formattedOutput}")
+    {
+        PlanName = planName;
+        ExitCode = exitCode;
+        FormattedOutput = formattedOutput;
+    }
+
+    public string PlanName { get; }
+    public int ExitCode { get; }
+    public string FormattedOutput { get; }
+
+    public static string FormatProcessOutput(PluginDevProcessResult result)
+    {
+        var sections = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+        {
+            sections.Add($"stdout:\n{result.StandardOutput.Trim()}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.StandardError))
+        {
+            sections.Add($"stderr:\n{result.StandardError.Trim()}");
+        }
+
+        if (sections.Count == 0)
+        {
+            return "The build process did not emit any stdout or stderr output.";
+        }
+
+        return string.Join("\n\n", sections);
+    }
+}
 
 public static class PluginDevProcessRunner
 {

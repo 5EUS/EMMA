@@ -6,6 +6,8 @@ namespace EMMA.Cli;
 
 [JsonSerializable(typeof(PluginDevConfigDocument))]
 [JsonSerializable(typeof(PluginDevProfileDocument))]
+[JsonSerializable(typeof(PluginDevLoggingDocument))]
+[JsonSerializable(typeof(PluginDevSyncDocument))]
 [JsonSerializable(typeof(SearchItem[]))]
 [JsonSerializable(typeof(ChapterItem[]))]
 [JsonSerializable(typeof(PageItem))]

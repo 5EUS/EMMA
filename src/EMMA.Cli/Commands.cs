@@ -173,6 +173,15 @@ public class MyCommands
         Console.WriteLine($"Host URL: {session.Profile.HostUrl}");
         Console.WriteLine($"Runtime Target: {session.Profile.RuntimeTarget}");
         Console.WriteLine($"Execution Mode: {session.Profile.ExecutionMode}");
+        Console.WriteLine($"Logging: plugin={(session.Profile.Logging.Plugin ? "on" : "off")}, aspNetHost={(session.Profile.Logging.AspNetHost ? "on" : "off")}, httpClient={(session.Profile.Logging.HttpClient ? "on" : "off")}");
+        if (session.Profile.Sync.Enabled)
+        {
+            Console.WriteLine($"Sync: onBuild={(session.Profile.Sync.OnBuild ? "on" : "off")}, cleanDestination={(session.Profile.Sync.CleanDestination ? "on" : "off")}, destination={session.Profile.Sync.DestinationPath}");
+        }
+        if (!string.IsNullOrWhiteSpace(session.Profile.WasiSdkPath))
+        {
+            Console.WriteLine($"WASI SDK Path: {session.Profile.WasiSdkPath}");
+        }
         Console.WriteLine($"Runtime Adapter: {session.RuntimeAdapterName}");
         Console.WriteLine($"Profile Source: {(session.Profile.IsInferred ? "inferred" : "configured")}");
 
@@ -186,6 +195,19 @@ public class MyCommands
             Console.WriteLine($"Watch Globs: {string.Join(", ", session.Profile.WatchGlobs)}");
         }
 
+        Console.WriteLine($"Watch Status: {session.Watch.Status}");
+        Console.WriteLine($"Watch Behavior: {session.Watch.Behavior}");
+
+        if (session.Watch.LastChangedUtc is not null)
+        {
+            Console.WriteLine($"Watch Last Change: {session.Watch.LastChangedUtc:O} ({session.Watch.LastChangedPath})");
+        }
+
+        if (session.Watch.LastReloadUtc is not null)
+        {
+            Console.WriteLine($"Watch Last Reload: {session.Watch.LastReloadUtc:O} ({session.Watch.LastReloadMessage})");
+        }
+
         Console.WriteLine($"Discovery Root: {session.RootDirectory}");
         Console.WriteLine($"Manifest: {session.ManifestPath ?? "<not found>"}");
         Console.WriteLine($"Project: {session.ProjectFilePath ?? "<not found>"}");
@@ -197,7 +219,8 @@ public class MyCommands
             {
                 var source = profile.IsInferred ? "inferred" : "configured";
                 var artifactSuffix = string.IsNullOrWhiteSpace(profile.ArtifactPath) ? string.Empty : $" artifact={profile.ArtifactPath}";
-                Console.WriteLine($"  - {profile.Name} [{source}] target={profile.RuntimeTarget} mode={profile.ExecutionMode}{artifactSuffix}");
+                var syncSuffix = profile.Sync.Enabled ? $" sync={profile.Sync.DestinationPath}" : string.Empty;
+                Console.WriteLine($"  - {profile.Name} [{source}] target={profile.RuntimeTarget} mode={profile.ExecutionMode}{artifactSuffix}{syncSuffix}");
             }
         }
 
@@ -235,6 +258,7 @@ public class MyCommands
     {
         var result = _application.Pack();
         Console.WriteLine($"Package: {result.PackagePath}");
+        Console.WriteLine($"Pack Directory: {result.PackageDirectory}");
         Console.WriteLine($"Manifest: {result.ManifestPath}");
         Console.WriteLine($"Artifact: {result.ArtifactPath}");
         return Task.CompletedTask;
@@ -245,6 +269,89 @@ public class MyCommands
     {
         var message = await _application.ReloadAsync(CancellationToken.None);
         Console.WriteLine(message);
+    }
+
+    [Command("watch")]
+    public async Task WatchAsync([Argument] string action = "start")
+    {
+        PluginDevWatchSnapshot snapshot;
+
+        switch (action.Trim().ToLowerInvariant())
+        {
+            case "start":
+                snapshot = _application.StartWatch();
+                Console.WriteLine($"Watch Enabled: {snapshot.IsEnabled}");
+                Console.WriteLine($"Watch Status: {snapshot.Status}");
+                Console.WriteLine($"Supports Reload: {snapshot.SupportsReload}");
+                Console.WriteLine($"Behavior: {snapshot.Behavior}");
+
+                if (snapshot.WatchGlobs.Count > 0)
+                {
+                    Console.WriteLine($"Watch Globs: {string.Join(", ", snapshot.WatchGlobs)}");
+                }
+
+                Console.WriteLine("Watching for matching file changes. Press Ctrl+C to stop.");
+
+                using (var cts = new CancellationTokenSource())
+                {
+                    var seenLogCount = _application.GetLogs().Count;
+                    Console.CancelKeyPress += (_, args) =>
+                    {
+                        args.Cancel = true;
+                        cts.Cancel();
+                    };
+
+                    try
+                    {
+                        while (!cts.Token.IsCancellationRequested)
+                        {
+                            await Task.Delay(TimeSpan.FromMilliseconds(500), cts.Token);
+                            var entries = _application.GetLogs();
+                            for (var index = seenLogCount; index < entries.Count; index++)
+                            {
+                                var entry = entries[index];
+                                Console.WriteLine($"[{entry.Level}] {entry.TimestampUtc:HH:mm:ss} {entry.Message}");
+                            }
+
+                            seenLogCount = entries.Count;
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                }
+
+                snapshot = _application.StopWatch();
+                break;
+            case "stop":
+                snapshot = _application.StopWatch();
+                break;
+            case "status":
+                snapshot = _application.GetWatchSnapshot();
+                break;
+            default:
+                throw new InvalidOperationException($"Unknown watch action '{action}'. Use start, stop, or status.");
+        }
+
+        Console.WriteLine($"Watch Enabled: {snapshot.IsEnabled}");
+        Console.WriteLine($"Watch Status: {snapshot.Status}");
+        Console.WriteLine($"Supports Reload: {snapshot.SupportsReload}");
+        Console.WriteLine($"Behavior: {snapshot.Behavior}");
+
+        if (snapshot.WatchGlobs.Count > 0)
+        {
+            Console.WriteLine($"Watch Globs: {string.Join(", ", snapshot.WatchGlobs)}");
+        }
+
+        if (snapshot.LastChangedUtc is not null)
+        {
+            Console.WriteLine($"Last Change: {snapshot.LastChangedUtc:O} ({snapshot.LastChangedPath})");
+        }
+
+        if (snapshot.LastReloadUtc is not null)
+        {
+            Console.WriteLine($"Last Reload: {snapshot.LastReloadUtc:O} ({snapshot.LastReloadMessage})");
+        }
     }
 
     [Command("scenario")]
@@ -317,6 +424,12 @@ public class MyCommands
     [Command("serve")]
     public async Task ServeAsync([Argument] int port = 5075)
     {
+        if (PluginDevCliRuntimeContext.IsInteractive)
+        {
+            Console.WriteLine(PluginDevLocalServer.StartInBackground(_application, port));
+            return;
+        }
+
         Console.WriteLine($"Serving plugin dev UI at http://127.0.0.1:{port}");
         await PluginDevLocalServer.RunAsync(_application, port, CancellationToken.None);
     }
@@ -335,6 +448,7 @@ public class MyCommands
         Console.WriteLine("  reload                                         Refresh runtime state for the active profile");
         Console.WriteLine("  scenario <name> [query]                        Run a built-in dev scenario (for example paged-smoke)");
         Console.WriteLine("  session                                        Show resolved session details");
+        Console.WriteLine("  watch [start|stop|status]                      Manage file watching and debounced reload");
         Console.WriteLine("  search -q <query>                              Search for media");
         Console.WriteLine("  chapters -i <mediaId>                          List chapters of a media");
         Console.WriteLine("  page-asset -mi <mediaId> -ci <chapterId>       Get a chapter page asset");

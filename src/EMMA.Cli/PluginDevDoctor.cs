@@ -98,6 +98,33 @@ public sealed class PluginDevDoctor
                 $"Profile '{activeProfile.Name}' is currently using host-bridge execution. The inferred runtime target '{activeProfile.RuntimeTarget}' is metadata for an externally managed host or fallback workflow."));
         }
 
+        if (activeProfile.WatchGlobs.Count == 0)
+        {
+            diagnostics.Add(new PluginDevDiagnostic(
+                "doctor.watch.not_configured",
+                $"Profile '{activeProfile.Name}' has no watch globs configured. Phase 6 watch mode will only observe the active plugin.dev.json file when one is resolved."));
+        }
+        else
+        {
+            diagnostics.Add(new PluginDevDiagnostic(
+                "doctor.watch.configured",
+                $"Profile '{activeProfile.Name}' has {activeProfile.WatchGlobs.Count} watch glob(s) configured for debounced reload."));
+        }
+
+        if (activeProfile.Sync.Enabled)
+        {
+            diagnostics.Add(new PluginDevDiagnostic(
+                "doctor.sync.configured",
+                $"Profile '{activeProfile.Name}' syncs build outputs to '{activeProfile.Sync.DestinationPath}' (onBuild={(activeProfile.Sync.OnBuild ? "on" : "off")}, cleanDestination={(activeProfile.Sync.CleanDestination ? "on" : "off")})."));
+        }
+
+        if (activeProfile.ExecutionMode != PluginExecutionMode.Direct)
+        {
+            diagnostics.Add(new PluginDevDiagnostic(
+                "doctor.watch.reload_unsupported",
+                $"Profile '{activeProfile.Name}' can still observe file changes, but runtime adapter reload is not available for execution mode '{activeProfile.ExecutionMode}'."));
+        }
+
         if (activeProfile.ExecutionMode == PluginExecutionMode.Direct
             && activeProfile.RuntimeTarget is PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows)
         {
@@ -136,4 +163,5 @@ public sealed class PluginDevDoctor
             _ => true
         };
     }
+
 }

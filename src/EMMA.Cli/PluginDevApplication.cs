@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using EMMA.Plugin.Common;
 
 namespace EMMA.Cli;
@@ -21,21 +23,28 @@ public sealed record PluginDevSessionSnapshot(
     IReadOnlyList<string> MediaTypes,
     IReadOnlyList<PluginRuntimeTarget> SupportedTargets,
     IReadOnlyList<PluginDevArtifactCandidate> ArtifactCandidates,
-    IReadOnlyList<PluginDevDiagnostic> Diagnostics);
+    IReadOnlyList<PluginDevDiagnostic> Diagnostics,
+    PluginDevWatchSnapshot Watch);
 
 public sealed class PluginDevApplication
 {
+    private static readonly TimeSpan WatchBuildEchoSuppressionWindow = TimeSpan.FromSeconds(5);
+
     private readonly object _gate = new();
     private readonly PluginDevSessionFactory _sessionFactory;
     private readonly string _workingDirectory;
     private readonly List<PluginDevLogEntry> _logs = [];
+    private readonly PluginDevWatchService _watchService = new();
     private PluginDevSession _session;
+    private string? _lastWatchBuildArtifactPath;
+    private DateTimeOffset? _lastWatchBuildUtc;
 
     public PluginDevApplication(PluginDevSessionFactory sessionFactory, string workingDirectory, PluginDevSession session)
     {
         _sessionFactory = sessionFactory;
         _workingDirectory = workingDirectory;
         _session = session;
+        ApplyProfileEnvironment(session.Profile);
         RecordInfo($"Session '{session.Id}' initialized for profile '{session.Profile.Name}'.");
     }
 
@@ -64,13 +73,45 @@ public sealed class PluginDevApplication
 
         lock (_gate)
         {
+            var restartWatch = _watchService.IsEnabled;
+            _watchService.Stop();
             _session = _sessionFactory.Create(_workingDirectory, profileName.Trim());
             _session.TransitionTo(PluginDevSessionState.Prepared);
+            ApplyProfileEnvironment(_session.Profile);
+            _lastWatchBuildArtifactPath = null;
+            _lastWatchBuildUtc = null;
             PluginDevSessionHolder.SetCurrent(_session);
             _logs.Clear();
             RecordInfo($"Switched active profile to '{_session.Profile.Name}'.");
+
+            if (restartWatch)
+            {
+                var watch = StartWatchInternal(_session);
+                RecordInfo($"Watch restarted for profile '{_session.Profile.Name}' ({watch.WatchGlobs.Count} glob(s)).");
+            }
+
             return Snapshot(_session);
         }
+    }
+
+    public PluginDevWatchSnapshot StartWatch()
+    {
+        var session = RequireSession();
+        var snapshot = StartWatchInternal(session);
+        RecordInfo($"Watch started for profile '{session.Profile.Name}'.");
+        return snapshot;
+    }
+
+    public PluginDevWatchSnapshot StopWatch()
+    {
+        var snapshot = _watchService.Stop();
+        RecordInfo("Watch stopped.");
+        return snapshot;
+    }
+
+    public PluginDevWatchSnapshot GetWatchSnapshot()
+    {
+        return GetEffectiveWatchSnapshot(RequireSession());
     }
 
     public async Task<IReadOnlyList<SearchItem>> SearchAsync(string query, CancellationToken cancellationToken)
@@ -129,18 +170,47 @@ public sealed class PluginDevApplication
             ?? throw new InvalidOperationException("No normalized build plan is available for the active profile.");
 
         RecordInfo($"Build started using plan '{plan.Name}'.");
-        var output = await session.BuildService.BuildAsync(session, cancellationToken);
-        RecordInfo($"Build completed using plan '{plan.Name}'.");
-        RecordInfo(output);
-        return output;
+        try
+        {
+            var output = await session.BuildService.BuildAsync(session, cancellationToken);
+            var syncMessage = session.BuildService.SyncBuildArtifacts(session);
+            RecordInfo($"Build completed using plan '{plan.Name}'.");
+            RecordInfo(output);
+            if (!string.IsNullOrWhiteSpace(syncMessage))
+            {
+                RecordInfo(syncMessage);
+                return $"{output}\n{syncMessage}";
+            }
+
+            return output;
+        }
+        catch (PluginDevBuildException ex)
+        {
+            RecordError(ex.Message);
+            throw;
+        }
     }
 
     public PluginDevPackResult Pack()
     {
         var session = RequireSession();
-        var result = session.BuildService.PackWasm(session);
+        var result = session.BuildService.PackCurrentProfile(session);
         RecordInfo($"Pack completed: {result.PackagePath}");
         return result;
+    }
+
+    public string OpenPackDirectory()
+    {
+        var session = RequireSession();
+        var packDirectory = session.BuildService.GetPackDirectory(session);
+        Directory.CreateDirectory(packDirectory);
+
+        var command = GetOpenDirectoryCommand(packDirectory);
+        using var process = Process.Start(command.startInfo)
+            ?? throw new InvalidOperationException($"Failed to open pack directory '{packDirectory}'.");
+
+        RecordInfo($"Opened pack directory: {packDirectory}");
+        return packDirectory;
     }
 
     public async Task<string> ReloadAsync(CancellationToken cancellationToken)
@@ -225,7 +295,208 @@ public sealed class PluginDevApplication
         }
     }
 
-    private static PluginDevSessionSnapshot Snapshot(PluginDevSession session)
+    private PluginDevWatchSnapshot StartWatchInternal(PluginDevSession session)
+    {
+        return _watchService.Start(session, trigger => HandleWatchTriggerAsync(session.Id, trigger));
+    }
+
+    private async Task<string> HandleWatchTriggerAsync(string sessionId, PluginDevWatchTrigger trigger)
+    {
+        PluginDevSession session;
+        lock (_gate)
+        {
+            if (!string.Equals(_session.Id, sessionId, StringComparison.Ordinal))
+            {
+                return "Watch trigger ignored because the active profile changed.";
+            }
+
+            session = _session;
+            session.TransitionTo(PluginDevSessionState.Reloading);
+        }
+
+        var relativePath = GetWatchDisplayPath(session, trigger.ChangedPath);
+        RecordInfo($"Watch detected {trigger.EventCount} change(s). Last change: {relativePath}");
+
+        try
+        {
+            if (ShouldIgnoreWatchTrigger(session, trigger.ChangedPath, trigger.ChangedUtc))
+            {
+                var ignoreMessage = $"Watch ignored build output echo for '{relativePath}'.";
+                RecordInfo(ignoreMessage);
+                return ignoreMessage;
+            }
+
+            if (!session.RuntimeAdapter.SupportsReload)
+            {
+                var noReloadMessage = $"Watch observed '{relativePath}', but runtime adapter '{session.RuntimeAdapter.Name}' does not support explicit reload.";
+                RecordInfo(noReloadMessage);
+                return noReloadMessage;
+            }
+
+            string? buildMessage = null;
+            if (ShouldBuildOnWatch(session, trigger.ChangedPath))
+            {
+                var plan = session.BuildService.GetBuildPlan(session);
+                if (plan is not null)
+                {
+                    RecordInfo($"Watch build started using plan '{plan.Name}'.");
+                    var buildOutput = await session.BuildService.BuildAsync(session, CancellationToken.None);
+                    var syncMessage = session.BuildService.SyncBuildArtifacts(session);
+                    RememberWatchBuildArtifactPath(plan.ArtifactPath ?? session.Profile.ArtifactPath);
+                    buildMessage = string.IsNullOrWhiteSpace(buildOutput)
+                        ? $"Watch build completed using plan '{plan.Name}'."
+                        : $"Watch build completed using plan '{plan.Name}'.\n{buildOutput}";
+                    if (!string.IsNullOrWhiteSpace(syncMessage))
+                    {
+                        buildMessage = $"{buildMessage}\n{syncMessage}";
+                    }
+                    RecordInfo(buildMessage);
+                }
+            }
+
+            var message = await RunWithRuntimeLogsAsync(session, adapter => adapter.ReloadAsync(CancellationToken.None));
+            var combinedMessage = buildMessage is null
+                ? message
+                : $"{buildMessage}\n{message}";
+            RecordInfo($"Watch reload completed: {message}");
+            return combinedMessage;
+        }
+        catch (Exception ex)
+        {
+            RecordError($"Watch build/reload failed:\n{ex.Message}");
+            throw;
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                if (string.Equals(_session.Id, sessionId, StringComparison.Ordinal)
+                    && _session.State != PluginDevSessionState.Failed)
+                {
+                    _session.TransitionTo(PluginDevSessionState.Running);
+                }
+            }
+        }
+    }
+
+    private static string GetWatchDisplayPath(PluginDevSession session, string changedPath)
+    {
+        try
+        {
+            return Path.GetRelativePath(session.Discovery.RootDirectory, changedPath);
+        }
+        catch
+        {
+            return changedPath;
+        }
+    }
+
+    private static void ApplyProfileEnvironment(PluginDevProfile profile)
+    {
+        Environment.SetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE", profile.Logging.Plugin ? "1" : "0");
+    }
+
+    private static (ProcessStartInfo startInfo, string commandName) GetOpenDirectoryCommand(string directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return (new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                ArgumentList = { directory },
+                UseShellExecute = true
+            }, "explorer.exe");
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            return (new ProcessStartInfo
+            {
+                FileName = "open",
+                ArgumentList = { directory },
+                UseShellExecute = false
+            }, "open");
+        }
+
+        return (new ProcessStartInfo
+        {
+            FileName = "xdg-open",
+            ArgumentList = { directory },
+            UseShellExecute = false
+        }, "xdg-open");
+    }
+
+    private static bool ShouldBuildOnWatch(PluginDevSession session, string changedPath)
+    {
+        var fullChangedPath = Path.GetFullPath(changedPath);
+
+        if (!string.IsNullOrWhiteSpace(session.Profile.ConfigPath)
+            && string.Equals(Path.GetFullPath(session.Profile.ConfigPath), fullChangedPath, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(session.Profile.ArtifactPath))
+        {
+            return true;
+        }
+
+        var artifactPath = Path.GetFullPath(session.Profile.ArtifactPath);
+        if (File.Exists(artifactPath))
+        {
+            return !string.Equals(artifactPath, fullChangedPath, StringComparison.Ordinal);
+        }
+
+        if (Directory.Exists(artifactPath))
+        {
+            var normalizedArtifactPath = artifactPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            return !fullChangedPath.StartsWith(normalizedArtifactPath, StringComparison.Ordinal);
+        }
+
+        return true;
+    }
+
+    private bool ShouldIgnoreWatchTrigger(PluginDevSession session, string changedPath, DateTimeOffset changedUtc)
+    {
+        lock (_gate)
+        {
+            if (string.IsNullOrWhiteSpace(_lastWatchBuildArtifactPath)
+                || _lastWatchBuildUtc is null
+                || changedUtc - _lastWatchBuildUtc > WatchBuildEchoSuppressionWindow)
+            {
+                return false;
+            }
+
+            var artifactPath = Path.GetFullPath(_lastWatchBuildArtifactPath);
+            var fullChangedPath = Path.GetFullPath(changedPath);
+
+            if (File.Exists(artifactPath))
+            {
+                return string.Equals(artifactPath, fullChangedPath, StringComparison.Ordinal);
+            }
+
+            if (!Directory.Exists(artifactPath))
+            {
+                return false;
+            }
+
+            var normalizedArtifactPath = artifactPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            return fullChangedPath.StartsWith(normalizedArtifactPath, StringComparison.Ordinal);
+        }
+    }
+
+    private void RememberWatchBuildArtifactPath(string? artifactPath)
+    {
+        lock (_gate)
+        {
+            _lastWatchBuildArtifactPath = artifactPath;
+            _lastWatchBuildUtc = artifactPath is null ? null : DateTimeOffset.UtcNow;
+        }
+    }
+
+    private PluginDevSessionSnapshot Snapshot(PluginDevSession session)
     {
         return new PluginDevSessionSnapshot(
             session.Id,
@@ -243,7 +514,40 @@ public sealed class PluginDevApplication
             session.Discovery.MediaTypes,
             session.Discovery.SupportedTargets,
             session.Discovery.ArtifactCandidates,
-            session.Diagnostics);
+            session.Diagnostics,
+            GetEffectiveWatchSnapshot(session));
+    }
+
+    private PluginDevWatchSnapshot GetEffectiveWatchSnapshot(PluginDevSession session)
+    {
+        var snapshot = _watchService.GetSnapshot();
+        if (snapshot.IsEnabled)
+        {
+            return snapshot;
+        }
+
+        return snapshot with
+        {
+            CanWatch = session.Profile.WatchGlobs.Count > 0 || !string.IsNullOrWhiteSpace(session.Profile.ConfigPath),
+            SupportsReload = session.RuntimeAdapter.SupportsReload,
+            Behavior = DescribeWatchBehavior(session),
+            WatchGlobs = session.Profile.WatchGlobs
+        };
+    }
+
+    private static string DescribeWatchBehavior(PluginDevSession session)
+    {
+        if (!session.RuntimeAdapter.SupportsReload)
+        {
+            return $"Watch can observe matching changes, but runtime adapter '{session.RuntimeAdapter.Name}' does not support explicit reload.";
+        }
+
+        return session.Profile.RuntimeTarget switch
+        {
+            PluginRuntimeTarget.Wasm => "Watch will debounce matching changes and request a WASM runtime refresh. Source changes still require a rebuild before updated artifacts can be observed.",
+            PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows => "Watch will debounce matching changes and restart the managed native runtime after each change batch.",
+            _ => $"Watch will debounce matching changes and request reload through '{session.RuntimeAdapter.Name}'."
+        };
     }
 }
 

@@ -1,6 +1,13 @@
 ﻿using EMMA.Cli;
 using ConsoleAppFramework;
 
+if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE")))
+{
+    Environment.SetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE", "1");
+}
+
+PluginDevCliRuntimeContext.IsInteractive = args.Length == 0;
+
 var sessionFactory = new PluginDevSessionFactory();
 var session = sessionFactory.Create(Environment.CurrentDirectory);
 session.TransitionTo(PluginDevSessionState.Starting);

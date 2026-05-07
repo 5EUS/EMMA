@@ -79,6 +79,42 @@ public sealed class PluginDevProfileDocument
     [JsonPropertyName("executionMode")]
     public string? ExecutionMode { get; init; }
 
+    [JsonPropertyName("logging")]
+    public PluginDevLoggingDocument? Logging { get; init; }
+
+    [JsonPropertyName("sync")]
+    public PluginDevSyncDocument? Sync { get; init; }
+
+    [JsonPropertyName("wasiSdkPath")]
+    public string? WasiSdkPath { get; init; }
+
     [JsonPropertyName("watchGlobs")]
     public List<string>? WatchGlobs { get; init; }
+}
+
+public sealed class PluginDevLoggingDocument
+{
+    [JsonPropertyName("plugin")]
+    public bool? Plugin { get; init; }
+
+    [JsonPropertyName("aspNetHost")]
+    public bool? AspNetHost { get; init; }
+
+    [JsonPropertyName("httpClient")]
+    public bool? HttpClient { get; init; }
+}
+
+public sealed class PluginDevSyncDocument
+{
+    [JsonPropertyName("enabled")]
+    public bool? Enabled { get; init; }
+
+    [JsonPropertyName("destinationPath")]
+    public string? DestinationPath { get; init; }
+
+    [JsonPropertyName("onBuild")]
+    public bool? OnBuild { get; init; }
+
+    [JsonPropertyName("cleanDestination")]
+    public bool? CleanDestination { get; init; }
 }

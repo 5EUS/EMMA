@@ -143,7 +143,8 @@ public sealed class PluginDevSessionFactory
             return new NativeProcessRuntimeAdapter(
                 entryPointPath,
                 new Uri(profile.HostUrl, UriKind.Absolute),
-                profile.RuntimeTarget);
+                profile.RuntimeTarget,
+                profile.Logging);
         }
 
         return new HostBridgeRuntimeAdapter(runtime, api);
@@ -217,6 +218,9 @@ public sealed class PluginDevSessionFactory
             ResolveHostUrl(null),
             PluginRuntimeTarget.Auto,
             PluginExecutionMode.HostBridge,
+            PluginDevLoggingOptions.Default,
+            PluginDevSyncOptions.Disabled,
+            null,
             Array.Empty<string>(),
             configPath,
             null,
@@ -233,6 +237,9 @@ public sealed class PluginDevSessionFactory
                 ResolveHostUrl(null),
                 target,
                 target is PluginRuntimeTarget.Wasm or PluginRuntimeTarget.Linux or PluginRuntimeTarget.Windows ? PluginExecutionMode.Direct : PluginExecutionMode.HostBridge,
+                PluginDevLoggingOptions.Default,
+                PluginDevSyncOptions.Disabled,
+                null,
                 Array.Empty<string>(),
                 configPath,
                 artifactPath,
@@ -263,6 +270,9 @@ public sealed class PluginDevSessionFactory
                     Environment.GetEnvironmentVariable("EMMA_PLUGIN_EXECUTION_MODE"),
                     profileDocument.ExecutionMode,
                     PluginExecutionMode.HostBridge.ToString())),
+            ResolveLogging(profileDocument.Logging),
+                    ResolveSync(profileDocument.Sync, configPath, discovery.RootDirectory),
+            ResolveWasiSdkPath(profileDocument),
             (IReadOnlyList<string>)(profileDocument.WatchGlobs?.Where(static value => !string.IsNullOrWhiteSpace(value)).ToArray() ?? []),
             configPath,
             discovery.ArtifactCandidates.FirstOrDefault(candidate => candidate.Target == runtimeTarget && candidate.Exists)?.Path
@@ -304,6 +314,85 @@ public sealed class PluginDevSessionFactory
     private static string NormalizeHostUrl(string hostUrl)
     {
         return hostUrl.Trim().TrimEnd('/');
+    }
+
+    private static PluginDevLoggingOptions ResolveLogging(PluginDevLoggingDocument? logging)
+    {
+        var defaults = PluginDevLoggingOptions.Default;
+        return new PluginDevLoggingOptions(
+            logging?.Plugin ?? defaults.Plugin,
+            logging?.AspNetHost ?? defaults.AspNetHost,
+            logging?.HttpClient ?? defaults.HttpClient);
+    }
+
+    private static PluginDevSyncOptions ResolveSync(PluginDevSyncDocument? sync, string? configPath, string rootDirectory)
+    {
+        if (sync is null)
+        {
+            return PluginDevSyncOptions.Disabled;
+        }
+
+        var destinationPath = ResolveOptionalPath(sync.DestinationPath, configPath, rootDirectory);
+        var enabled = sync.Enabled ?? !string.IsNullOrWhiteSpace(destinationPath);
+        if (!enabled)
+        {
+            return PluginDevSyncOptions.Disabled;
+        }
+
+        if (string.IsNullOrWhiteSpace(destinationPath))
+        {
+            throw new InvalidOperationException("Profile sync is enabled, but no sync.destinationPath was configured.");
+        }
+
+        return new PluginDevSyncOptions(
+            Enabled: true,
+            DestinationPath: destinationPath,
+            OnBuild: sync.OnBuild ?? true,
+            CleanDestination: sync.CleanDestination ?? false);
+    }
+
+    private static string? ResolveWasiSdkPath(PluginDevProfileDocument profileDocument)
+    {
+        var value = FirstNonEmpty(
+            Environment.GetEnvironmentVariable("WASI_SDK_PATH"),
+            profileDocument.WasiSdkPath);
+        return string.IsNullOrWhiteSpace(value) ? null : ResolveOptionalPath(value, configPath: null, rootDirectory: Directory.GetCurrentDirectory());
+    }
+
+    private static string? ResolveOptionalPath(string? value, string? configPath, string rootDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var expanded = ExpandPath(value.Trim());
+        if (Path.IsPathRooted(expanded))
+        {
+            return Path.GetFullPath(expanded);
+        }
+
+        var baseDirectory = !string.IsNullOrWhiteSpace(configPath)
+            ? Path.GetDirectoryName(configPath)
+            : rootDirectory;
+        baseDirectory ??= rootDirectory;
+        return Path.GetFullPath(Path.Combine(baseDirectory, expanded));
+    }
+
+    private static string ExpandPath(string value)
+    {
+        if (value.StartsWith("~/", StringComparison.Ordinal) || value == "~")
+        {
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(home))
+            {
+                return value.Length == 1
+                    ? home
+                    : Path.Combine(home, value[2..]);
+            }
+        }
+
+        return value;
     }
 
     private static string? FirstNonEmpty(params string?[] values)

@@ -5,15 +5,23 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace EMMA.Cli;
 
 public static class PluginDevLocalServer
 {
+  private static readonly object BackgroundGate = new();
+  private static Task? _backgroundTask;
+  private static CancellationTokenSource? _backgroundCancellation;
+  private static int? _backgroundPort;
+
     public static async Task RunAsync(PluginDevApplication application, int port, CancellationToken cancellationToken)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+    builder.Logging.ClearProviders();
+    builder.Logging.SetMinimumLevel(LogLevel.None);
         builder.Services.Configure<JsonOptions>(options =>
         {
             options.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
@@ -34,8 +42,20 @@ public static class PluginDevLocalServer
         app.MapPost("/api/build", async (PluginDevApplication backend) =>
             await ExecuteAsync(async () => new MessageResponse(await backend.BuildAsync(CancellationToken.None)), backend));
 
+        app.MapPost("/api/pack", async (PluginDevApplication backend) =>
+          await ExecuteAsync(() => Task.FromResult<object>(backend.Pack()), backend));
+
+        app.MapPost("/api/pack/open-directory", async (PluginDevApplication backend) =>
+          await ExecuteAsync(() => Task.FromResult<object>(new OpenDirectoryResponse(backend.OpenPackDirectory())), backend));
+
         app.MapPost("/api/reload", async (PluginDevApplication backend) =>
             await ExecuteAsync(async () => new MessageResponse(await backend.ReloadAsync(CancellationToken.None)), backend));
+
+        app.MapPost("/api/watch/start", async (PluginDevApplication backend) =>
+          await ExecuteAsync(() => Task.FromResult<object>(backend.StartWatch()), backend));
+
+        app.MapPost("/api/watch/stop", async (PluginDevApplication backend) =>
+          await ExecuteAsync(() => Task.FromResult<object>(backend.StopWatch()), backend));
 
         app.MapPost("/api/scenarios/run", async (RunScenarioRequest request, PluginDevApplication backend) =>
             await ExecuteAsync(async () => await backend.RunScenarioAsync(request.Name, request.Query, CancellationToken.None), backend));
@@ -44,6 +64,54 @@ public static class PluginDevLocalServer
         cancellationToken.ThrowIfCancellationRequested();
         await app.RunAsync();
     }
+
+      public static string StartInBackground(PluginDevApplication application, int port)
+      {
+        lock (BackgroundGate)
+        {
+          if (_backgroundTask is { IsCompleted: false })
+          {
+            if (_backgroundPort == port)
+            {
+              return $"Plugin dev UI already running at http://127.0.0.1:{port}.";
+            }
+
+            throw new InvalidOperationException($"Plugin dev UI is already running at http://127.0.0.1:{_backgroundPort}. Stop that session before starting another port.");
+          }
+
+          _backgroundCancellation?.Dispose();
+          _backgroundCancellation = new CancellationTokenSource();
+          _backgroundPort = port;
+
+          var cancellationToken = _backgroundCancellation.Token;
+          _backgroundTask = Task.Run(async () =>
+          {
+            try
+            {
+              await RunAsync(application, port, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+              application.RecordError($"Local session API stopped unexpectedly: {ex.Message}");
+            }
+            finally
+            {
+              lock (BackgroundGate)
+              {
+                _backgroundCancellation?.Dispose();
+                _backgroundCancellation = null;
+                _backgroundTask = null;
+                _backgroundPort = null;
+              }
+            }
+          }, cancellationToken);
+
+          return $"Serving plugin dev UI at http://127.0.0.1:{port} in the background.";
+        }
+      }
 
     private static async Task<IResult> ExecuteAsync(Func<Task<object>> action, PluginDevApplication backend)
     {
@@ -61,6 +129,7 @@ public static class PluginDevLocalServer
     private sealed record SelectProfileRequest(string Name);
     private sealed record RunScenarioRequest(string Name, string? Query);
     private sealed record MessageResponse(string Message);
+    private sealed record OpenDirectoryResponse(string Directory);
     private sealed record ErrorResponse(string Error);
 }
 
@@ -227,7 +296,7 @@ internal static class PluginDevLocalUi
     <header class="hero">
       <div class="eyebrow">EMMA Plugin Dev Platform</div>
       <h1>Session API and browser control surface</h1>
-      <div class="sub">Phase 5 puts the CLI and browser on the same session backend. Use this page to inspect the active session, switch profiles, run a smoke scenario, and watch operation logs without leaving the repo.</div>
+      <div class="sub">Phase 6 keeps the CLI and browser on the same session backend while adding debounced watch/reload control, smoke scenarios, and richer diagnostics without leaving the repo.</div>
     </header>
 
     <main class="grid">
@@ -249,7 +318,17 @@ internal static class PluginDevLocalUi
             <h2 class="section-title">Actions</h2>
             <div class="control-row">
               <button id="build-btn">Build active profile</button>
+              <button id="pack-btn">Pack active profile</button>
+              <button id="open-pack-dir-btn">Open pack directory</button>
               <button id="reload-btn">Reload active runtime</button>
+            </div>
+          </div>
+          <div>
+            <h2 class="section-title">Watch</h2>
+            <div class="kv" id="watch-meta"></div>
+            <div class="control-row">
+              <button id="watch-start-btn">Start watch</button>
+              <button id="watch-stop-btn">Stop watch</button>
             </div>
           </div>
           <div>
@@ -279,10 +358,16 @@ internal static class PluginDevLocalUi
   <script>
     const sessionMeta = document.getElementById('session-meta');
     const profileSelect = document.getElementById('profile-select');
+    const watchMeta = document.getElementById('watch-meta');
     const diagnostics = document.getElementById('diagnostics');
     const logs = document.getElementById('logs');
     const logStatus = document.getElementById('log-status');
     const scenarioQuery = document.getElementById('scenario-query');
+    let refreshEpoch = 0;
+    let suppressRefreshRender = false;
+    let lastSessionProfileName = null;
+    let pendingProfileName = null;
+    let profileSwitchInFlight = false;
 
     async function api(path, options = {}) {
       const response = await fetch(path, {
@@ -299,6 +384,16 @@ internal static class PluginDevLocalUi
     }
 
     function renderSession(session) {
+      lastSessionProfileName = session.profile.name;
+      if (pendingProfileName === session.profile.name) {
+        pendingProfileName = null;
+      }
+
+      const availableProfileNames = new Set(session.availableProfiles.map(profile => profile.name));
+      const selectedProfileName = pendingProfileName && availableProfileNames.has(pendingProfileName)
+        ? pendingProfileName
+        : session.profile.name;
+
       sessionMeta.innerHTML = '';
       const fields = [
         ['Session', session.id],
@@ -322,8 +417,24 @@ internal static class PluginDevLocalUi
         const option = document.createElement('option');
         option.value = profile.name;
         option.textContent = `${profile.name} (${profile.runtimeTarget}/${profile.executionMode})`;
-        option.selected = profile.name === session.profile.name;
+        option.selected = profile.name === selectedProfileName;
         profileSelect.appendChild(option);
+      });
+
+      watchMeta.innerHTML = '';
+      const watchFields = [
+        ['Status', session.watch.status],
+        ['Enabled', String(session.watch.isEnabled)],
+        ['Behavior', session.watch.behavior],
+        ['Globs', session.watch.watchGlobs.length ? session.watch.watchGlobs.join(', ') : '<none>'],
+        ['Last Change', session.watch.lastChangedUtc ? `${new Date(session.watch.lastChangedUtc).toLocaleTimeString()} · ${session.watch.lastChangedPath}` : '<none>'],
+        ['Last Reload', session.watch.lastReloadUtc ? `${new Date(session.watch.lastReloadUtc).toLocaleTimeString()} · ${session.watch.lastReloadMessage}` : '<none>']
+      ];
+
+      watchFields.forEach(([label, value]) => {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `<div class="label">${label}</div><div class="value">${value}</div>`;
+        watchMeta.appendChild(wrap);
       });
 
       diagnostics.innerHTML = '';
@@ -355,35 +466,111 @@ internal static class PluginDevLocalUi
       });
     }
 
+    function deriveStatusLabel(session, entries) {
+      const latestInfo = entries.length ? entries[entries.length - 1] : null;
+      const latestMessage = latestInfo?.message || '';
+
+      if (session.watch.status === 'error') {
+        return 'watch error';
+      }
+
+      if (session.watch.status === 'change-detected') {
+        return 'watch change detected';
+      }
+
+      if (session.watch.status === 'reload-pending') {
+        return 'watch reload pending';
+      }
+
+      if (session.watch.status === 'reloading') {
+        return latestMessage.startsWith('Watch build started')
+          ? 'watch building'
+          : 'watch reloading';
+      }
+
+      if (latestInfo) {
+        const ageMs = Date.now() - new Date(latestInfo.timestampUtc).getTime();
+        if (ageMs <= 15000) {
+          if (latestMessage.startsWith('Watch build completed')) {
+            return 'watch build completed';
+          }
+
+          if (latestMessage.startsWith('Watch reload completed')) {
+            return 'watch reload completed';
+          }
+
+          if (latestMessage.startsWith('Watch detected')) {
+            return 'watch change detected';
+          }
+        }
+      }
+
+      return session.watch.isEnabled ? 'watching' : 'idle';
+    }
+
     async function refresh() {
+      const currentEpoch = ++refreshEpoch;
       const [session, entries] = await Promise.all([
         api('/api/session'),
         api('/api/logs')
       ]);
 
+      if (suppressRefreshRender || currentEpoch !== refreshEpoch) {
+        return;
+      }
+
       renderSession(session);
       renderLogs(entries);
+      logStatus.textContent = deriveStatusLabel(session, entries);
     }
 
     async function perform(label, action) {
+      suppressRefreshRender = true;
+      refreshEpoch += 1;
       logStatus.textContent = label;
       try {
         await action();
       } catch (error) {
         alert(error.message);
       } finally {
+        suppressRefreshRender = false;
         logStatus.textContent = 'idle';
         await refresh();
       }
     }
 
-    document.getElementById('profile-switch').addEventListener('click', () => perform('switching profile', () => api('/api/profiles/select', {
-      method: 'POST',
-      body: JSON.stringify({ name: profileSelect.value })
-    })));
+    async function switchProfile(name) {
+      if (!name || profileSwitchInFlight || name === lastSessionProfileName) {
+        pendingProfileName = null;
+        return;
+      }
+
+      pendingProfileName = name;
+      profileSwitchInFlight = true;
+      try {
+        await perform('switching profile', () => api('/api/profiles/select', {
+          method: 'POST',
+          body: JSON.stringify({ name })
+        }));
+        pendingProfileName = null;
+      } finally {
+        profileSwitchInFlight = false;
+      }
+    }
+
+    profileSelect.addEventListener('change', () => {
+      pendingProfileName = profileSelect.value;
+      return switchProfile(profileSelect.value);
+    });
+
+    document.getElementById('profile-switch').addEventListener('click', () => switchProfile(profileSelect.value));
 
     document.getElementById('build-btn').addEventListener('click', () => perform('building', () => api('/api/build', { method: 'POST' })));
+    document.getElementById('pack-btn').addEventListener('click', () => perform('packing', () => api('/api/pack', { method: 'POST' })));
+    document.getElementById('open-pack-dir-btn').addEventListener('click', () => perform('opening pack directory', () => api('/api/pack/open-directory', { method: 'POST' })));
     document.getElementById('reload-btn').addEventListener('click', () => perform('reloading', () => api('/api/reload', { method: 'POST' })));
+    document.getElementById('watch-start-btn').addEventListener('click', () => perform('starting watch', () => api('/api/watch/start', { method: 'POST' })));
+    document.getElementById('watch-stop-btn').addEventListener('click', () => perform('stopping watch', () => api('/api/watch/stop', { method: 'POST' })));
     document.getElementById('scenario-btn').addEventListener('click', () => perform('running scenario', () => api('/api/scenarios/run', {
       method: 'POST',
       body: JSON.stringify({ name: 'paged-smoke', query: scenarioQuery.value })

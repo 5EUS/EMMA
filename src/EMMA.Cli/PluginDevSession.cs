@@ -30,12 +30,39 @@ public enum PluginDevSessionState
 
 public sealed record PluginDevDiagnostic(string Code, string Message, bool IsError = false);
 
+public sealed record PluginDevLoggingOptions(
+    bool Plugin,
+    bool AspNetHost,
+    bool HttpClient)
+{
+    public static PluginDevLoggingOptions Default { get; } = new(
+        Plugin: true,
+        AspNetHost: false,
+        HttpClient: false);
+}
+
+public sealed record PluginDevSyncOptions(
+    bool Enabled,
+    string? DestinationPath,
+    bool OnBuild,
+    bool CleanDestination)
+{
+    public static PluginDevSyncOptions Disabled { get; } = new(
+        Enabled: false,
+        DestinationPath: null,
+        OnBuild: false,
+        CleanDestination: false);
+}
+
 public sealed record PluginDevProfile(
     string Name,
     string PluginId,
     string HostUrl,
     PluginRuntimeTarget RuntimeTarget,
     PluginExecutionMode ExecutionMode,
+    PluginDevLoggingOptions Logging,
+    PluginDevSyncOptions Sync,
+    string? WasiSdkPath,
     IReadOnlyList<string> WatchGlobs,
     string? ConfigPath,
     string? ArtifactPath,

@@ -29,12 +29,13 @@ public sealed class PluginDevDiscoveryService
             .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
 
-        var projectFilePath = Directory.EnumerateFiles(rootDirectory, "*.csproj", SearchOption.TopDirectoryOnly)
+        var projectFilePaths = Directory.EnumerateFiles(rootDirectory, "*.csproj", SearchOption.TopDirectoryOnly)
             .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault();
+            .ToArray();
+        var projectFilePath = SelectPreferredProject(projectFilePaths, manifestPath);
 
         var manifest = ReadManifest(manifestPath);
-        var supportedTargets = DiscoverSupportedTargets(projectFilePath);
+        var supportedTargets = DiscoverSupportedTargets(projectFilePaths);
         var artifactCandidates = BuildArtifactCandidates(rootDirectory, supportedTargets);
 
         return new PluginDevDiscoveryResult(
@@ -93,29 +94,60 @@ public sealed class PluginDevDiscoveryService
         return (pluginId, pluginName, mediaTypes, permittedDomains);
     }
 
-    private static IReadOnlyList<PluginRuntimeTarget> DiscoverSupportedTargets(string? projectFilePath)
+    private static string? SelectPreferredProject(IReadOnlyList<string> projectFilePaths, string? manifestPath)
     {
-        if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+        if (projectFilePaths.Count == 0)
         {
-            return Array.Empty<PluginRuntimeTarget>();
+            return null;
         }
 
+        var manifestStem = string.IsNullOrWhiteSpace(manifestPath)
+            ? null
+            : Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(manifestPath));
+
+        if (!string.IsNullOrWhiteSpace(manifestStem))
+        {
+            var exactMatch = projectFilePaths.FirstOrDefault(path =>
+                string.Equals(Path.GetFileNameWithoutExtension(path), manifestStem, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(exactMatch))
+            {
+                return exactMatch;
+            }
+        }
+
+        return projectFilePaths
+            .OrderByDescending(ProjectOutputTypeIsExe)
+            .ThenBy(static path => path, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
+    private static IReadOnlyList<PluginRuntimeTarget> DiscoverSupportedTargets(IEnumerable<string> projectFilePaths)
+    {
         var supportedTargets = new HashSet<PluginRuntimeTarget>();
 
-        var content = File.ReadAllText(projectFilePath);
-        if (content.Contains("wasi-wasm", StringComparison.OrdinalIgnoreCase)
-            || content.Contains("PluginTransport)' == 'Wasm'", StringComparison.OrdinalIgnoreCase)
-            || content.Contains("PLUGIN_TRANSPORT_WASM", StringComparison.OrdinalIgnoreCase))
+        foreach (var projectFilePath in projectFilePaths)
         {
-            supportedTargets.Add(PluginRuntimeTarget.Wasm);
-        }
+            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+            {
+                continue;
+            }
 
-        if (content.Contains("PluginTransport)' == 'AspNet'", StringComparison.OrdinalIgnoreCase)
-            || content.Contains("PLUGIN_TRANSPORT_ASPNET", StringComparison.OrdinalIgnoreCase)
-            || ProjectOutputTypeIsExe(projectFilePath))
-        {
-            supportedTargets.Add(PluginRuntimeTarget.Linux);
-            supportedTargets.Add(PluginRuntimeTarget.Windows);
+            var content = File.ReadAllText(projectFilePath);
+            if (content.Contains("wasi-wasm", StringComparison.OrdinalIgnoreCase)
+                || content.Contains("BytecodeAlliance.Componentize.DotNet.Wasm.SDK", StringComparison.OrdinalIgnoreCase)
+                || content.Contains("PLUGIN_TRANSPORT_WASM", StringComparison.OrdinalIgnoreCase))
+            {
+                supportedTargets.Add(PluginRuntimeTarget.Wasm);
+            }
+
+            if (content.Contains("Microsoft.AspNetCore.App", StringComparison.OrdinalIgnoreCase)
+                || content.Contains("EMMA.Plugin.AspNetCore", StringComparison.OrdinalIgnoreCase)
+                || content.Contains("PLUGIN_TRANSPORT_ASPNET", StringComparison.OrdinalIgnoreCase)
+                || ProjectOutputTypeIsExe(projectFilePath))
+            {
+                supportedTargets.Add(PluginRuntimeTarget.Linux);
+                supportedTargets.Add(PluginRuntimeTarget.Windows);
+            }
         }
 
         return supportedTargets.OrderBy(static item => item).ToArray();
