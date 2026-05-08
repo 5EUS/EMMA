@@ -3,8 +3,18 @@ using System.Text.Json.Serialization.Metadata;
 
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Provides paging-specific JSON helpers for WASM plugin operations.
+/// </summary>
 public static class PluginWasmPagingJsonHelpers
 {
+    /// <summary>
+    /// Merges paged chapter-feed payloads into a single payload, stopping when the page limit or total item count is reached.
+    /// </summary>
+    /// <param name="firstPayload">The first chapter-feed payload to merge.</param>
+    /// <param name="maxPages">The maximum number of feed pages to merge.</param>
+    /// <param name="fetchNextPayload">The callback used to fetch subsequent payloads by offset.</param>
+    /// <returns>The merged payload JSON, the original payload when paging stats are unavailable, or an empty string when the first payload is empty.</returns>
     public static string MergeChapterFeedPages(
         string firstPayload,
         int maxPages,
@@ -52,6 +62,14 @@ public static class PluginWasmPagingJsonHelpers
         return BuildMergedChapterPayload(dataEntries, includedEntries);
     }
 
+    /// <summary>
+    /// Executes a single-page handler and serializes the result for CLI output.
+    /// </summary>
+    /// <param name="args">The CLI arguments that contain media, chapter, and page identifiers.</param>
+    /// <param name="stdinPayload">The payload text read from standard input.</param>
+    /// <param name="pageHandler">The handler that resolves the requested page.</param>
+    /// <param name="pageTypeInfo">The JSON type metadata for the page result.</param>
+    /// <returns>The serialized page JSON, <c>null</c> JSON when the handler returns no page, or an empty string when the arguments are invalid.</returns>
     public static string SerializePageForCli(
         string[] args,
         string stdinPayload,
@@ -79,6 +97,14 @@ public static class PluginWasmPagingJsonHelpers
         return JsonSerializer.Serialize(result, pageTypeInfo);
     }
 
+    /// <summary>
+    /// Executes a page-range handler and serializes the result for CLI output.
+    /// </summary>
+    /// <param name="args">The CLI arguments that contain media, chapter, start, and count values.</param>
+    /// <param name="stdinPayload">The payload text read from standard input.</param>
+    /// <param name="pagesHandler">The handler that resolves the requested page range.</param>
+    /// <param name="pageArrayTypeInfo">The JSON type metadata for the page array result.</param>
+    /// <returns>The serialized page array JSON, or an empty string when the arguments are invalid.</returns>
     public static string SerializePagesForCli(
         string[] args,
         string stdinPayload,
@@ -103,6 +129,12 @@ public static class PluginWasmPagingJsonHelpers
         return JsonSerializer.Serialize(results, pageArrayTypeInfo);
     }
 
+    /// <summary>
+    /// Maps chapter operation items into another wire format.
+    /// </summary>
+    /// <param name="items">The chapter operation items to map.</param>
+    /// <param name="mapper">The mapper that converts each item.</param>
+    /// <returns>The mapped items, or an empty list when the input is empty.</returns>
     public static IReadOnlyList<TWire> MapChapterOperationItems<TWire>(
         IReadOnlyList<ChapterOperationItem> items,
         Func<ChapterOperationItem, TWire> mapper)

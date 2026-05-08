@@ -6,6 +6,9 @@ using Microsoft.CodeAnalysis;
 
 namespace EMMA.Plugin.Common.Generators;
 
+/// <summary>
+/// Generates WASM export scaffolding and dispatch glue for plugin entry points annotated with <c>PluginWasmExportsAttribute</c>.
+/// </summary>
 [Generator]
 public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
 {
@@ -22,6 +25,10 @@ public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
         new("Invoke", "invoke", "PluginOperationNames.Invoke", 1, "PluginInvokeHelper.Invoke1"),
     ];
 
+    /// <summary>
+    /// Registers the incremental source generation pipeline for plugin WASM export stubs.
+    /// </summary>
+    /// <param name="context">The generator initialization context used to register syntax and output pipelines.</param>
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         var annotatedPrograms = context.SyntaxProvider.ForAttributeWithMetadataName(

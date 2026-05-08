@@ -6,11 +6,44 @@ using EMMA.Plugin.Common;
 
 namespace EMMA.Plugin.AspNetCore;
 
+/// <summary>
+/// Defines the paged-media runtime operations required by the default gRPC services.
+/// </summary>
 public interface IPluginPagedMediaRuntime
 {
+    /// <summary>
+    /// Searches the upstream source for media that matches the provided query.
+    /// </summary>
+    /// <param name="query">The user query to search for.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>A list of matching media summaries.</returns>
     Task<IReadOnlyList<MediaSummary>> SearchAsync(string query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads the chapter list for a specific media item.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to resolve chapters for.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The chapters exposed by the runtime for the media item.</returns>
     Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads a single page from a chapter.
+    /// </summary>
+    /// <param name="chapterId">The chapter identifier that owns the page.</param>
+    /// <param name="pageIndex">The zero-based page index to load.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The page when available; otherwise <see langword="null"/>.</returns>
     Task<MediaPage?> GetPageAsync(string chapterId, int pageIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads a range of pages from a chapter.
+    /// </summary>
+    /// <param name="chapterId">The chapter identifier that owns the requested pages.</param>
+    /// <param name="startIndex">The zero-based page index to start from.</param>
+    /// <param name="count">The maximum number of pages to load.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>A page batch and a flag indicating whether the chapter was exhausted.</returns>
     Task<(IReadOnlyList<MediaPage> Pages, bool ReachedEnd)> GetPagesAsync(
         string chapterId,
         int startIndex,
@@ -18,19 +51,52 @@ public interface IPluginPagedMediaRuntime
         CancellationToken cancellationToken);
 }
 
-    public interface IPluginSearchMetadataRuntime
-    {
-        Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
+/// <summary>
+/// Defines search-result metadata enrichment operations.
+/// </summary>
+public interface IPluginSearchMetadataRuntime
+{
+    /// <summary>
+    /// Enriches search results with additional metadata before they are returned to the host.
+    /// </summary>
+    /// <param name="items">The search items to enrich.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The enriched search items.</returns>
+    Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
         IReadOnlyList<SearchItem> items,
         CancellationToken cancellationToken);
-    }
+}
 
+/// <summary>
+/// Defines the video runtime operations required by the default gRPC services.
+/// </summary>
 public interface IPluginVideoRuntime
 {
+    /// <summary>
+    /// Loads the playable streams for a video media item.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to resolve streams for.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The stream response returned by the runtime.</returns>
     Task<StreamResponse> GetStreamsAsync(string mediaId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads a single stream segment for a video media item.
+    /// </summary>
+    /// <param name="mediaId">The media identifier that owns the segment.</param>
+    /// <param name="streamId">The stream identifier that owns the segment.</param>
+    /// <param name="sequence">The segment sequence number to fetch.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The segment response returned by the runtime.</returns>
     Task<SegmentResponse> GetSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Implements the default search gRPC service by delegating requests to a paged-media runtime.
+/// </summary>
+/// <param name="runtime">The runtime that executes search operations.</param>
+/// <param name="metrics">The metrics recorder used for RPC instrumentation.</param>
+/// <param name="logger">The logger used for request diagnostics.</param>
 public sealed class PluginDefaultSearchProviderService<TRuntime>(
     TRuntime runtime,
     IPluginSdkMetrics metrics,
@@ -42,6 +108,12 @@ public sealed class PluginDefaultSearchProviderService<TRuntime>(
     private readonly IPluginSdkMetrics _metrics = metrics;
     private readonly ILogger<PluginDefaultSearchProviderService<TRuntime>> _logger = logger;
 
+    /// <summary>
+    /// Handles a gRPC search request by delegating to the runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming search request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A search response containing any matching results.</returns>
     public override async Task<SearchResponse> Search(SearchRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -82,6 +154,12 @@ public sealed class PluginDefaultSearchProviderService<TRuntime>(
     }
 }
 
+/// <summary>
+/// Implements the default page gRPC service by delegating requests to a paged-media runtime.
+/// </summary>
+/// <param name="runtime">The runtime that executes page operations.</param>
+/// <param name="metrics">The metrics recorder used for RPC instrumentation.</param>
+/// <param name="logger">The logger used for request diagnostics.</param>
 public sealed class PluginDefaultPageProviderService<TRuntime>(
     TRuntime runtime,
     IPluginSdkMetrics metrics,
@@ -93,6 +171,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
     private readonly IPluginSdkMetrics _metrics = metrics;
     private readonly ILogger<PluginDefaultPageProviderService<TRuntime>> _logger = logger;
 
+    /// <summary>
+    /// Handles a gRPC chapter request by delegating to the paged runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming chapters request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the chapter list for the requested media item.</returns>
     public override async Task<ChaptersResponse> GetChapters(ChaptersRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -123,6 +207,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
         }
     }
 
+    /// <summary>
+    /// Handles a gRPC single-page request by delegating to the paged runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming page request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the requested page when one is available.</returns>
     public override async Task<PageResponse> GetPage(PageRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -159,6 +249,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
         }
     }
 
+    /// <summary>
+    /// Handles a gRPC paged batch request by delegating to the paged runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming pages request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the requested page range.</returns>
     public override async Task<PagesResponse> GetPages(PagesRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -201,6 +297,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
     }
 }
 
+/// <summary>
+/// Implements the default video gRPC service by delegating requests to a video runtime.
+/// </summary>
+/// <param name="runtime">The runtime that executes video operations.</param>
+/// <param name="metrics">The metrics recorder used for RPC instrumentation.</param>
+/// <param name="logger">The logger used for request diagnostics.</param>
 public sealed class PluginDefaultVideoProviderService<TRuntime>(
     TRuntime runtime,
     IPluginSdkMetrics metrics,
@@ -212,6 +314,12 @@ public sealed class PluginDefaultVideoProviderService<TRuntime>(
     private readonly IPluginSdkMetrics _metrics = metrics;
     private readonly ILogger<PluginDefaultVideoProviderService<TRuntime>> _logger = logger;
 
+    /// <summary>
+    /// Handles a gRPC video streams request by delegating to the runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming stream request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the available streams for the requested media item.</returns>
     public override Task<StreamResponse> GetStreams(StreamRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -229,6 +337,12 @@ public sealed class PluginDefaultVideoProviderService<TRuntime>(
             () => _runtime.GetStreamsAsync(request.MediaId, context.CancellationToken));
     }
 
+            /// <summary>
+            /// Handles a gRPC video segment request by delegating to the runtime and recording metrics.
+            /// </summary>
+            /// <param name="request">The incoming segment request.</param>
+            /// <param name="context">The active gRPC server call context.</param>
+            /// <returns>A response containing the requested stream segment.</returns>
     public override Task<SegmentResponse> GetSegment(SegmentRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();

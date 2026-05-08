@@ -6,52 +6,110 @@ option csharp_namespace = "EMMA.Contracts.Plugins";
 
 import "request_context.proto";
 
+// Exposes stream and segment retrieval for video plugins.
 service VideoProvider {
+  // Returns the available streams for a video item.
   rpc GetStreams (StreamRequest) returns (StreamResponse);
+
+  // Returns a single media segment for a stream.
   rpc GetSegment (SegmentRequest) returns (SegmentResponse);
 }
 
+// Requests the stream list for a video item.
 message StreamRequest {
+  // The media identifier to resolve streams for.
   string media_id = 1;
+
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Returns the available streams for a video item.
 message StreamResponse {
+  // The stream definitions returned by the plugin.
   repeated StreamInfo streams = 1;
 }
 
+// Requests a single segment from a stream.
 message SegmentRequest {
+  // The media identifier that owns the stream.
   string media_id = 1;
+
+  // The stream identifier that owns the segment.
   string stream_id = 2;
+
+  // The segment sequence number to fetch.
   int32 sequence = 3;
+
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Returns a single media segment payload.
 message SegmentResponse {
+  // The raw segment bytes.
   bytes payload = 1;
+
+  // The segment content type.
   string content_type = 2;
 }
 
+// Describes a playable media stream.
 message StreamInfo {
+  // The plugin-specific stream identifier.
   string id = 1;
+
+  // The display label for the stream.
   string label = 2;
+
+  // The playlist or manifest URI for the stream.
   string playlist_uri = 3;
+
+  // Request headers required when fetching the stream.
   map<string, string> request_headers = 4;
+
+  // Request cookies required when fetching the stream.
   string request_cookies = 5;
+
+  // The stream transport or format type.
   string stream_type = 6;
+
+  // Indicates whether the stream is live.
   bool is_live = 7;
+
+  // Indicates whether DRM protection is enabled.
   bool drm_protected = 8;
+
+  // The DRM scheme identifier when DRM is enabled.
   string drm_scheme = 9;
+
+  // The available audio tracks for the stream.
   repeated MediaTrack audio_tracks = 10;
+
+  // The available subtitle tracks for the stream.
   repeated MediaTrack subtitle_tracks = 11;
+
+  // The default audio track identifier.
   string default_audio_track_id = 12;
+
+  // The default subtitle track identifier.
   string default_subtitle_track_id = 13;
 }
 
+// Describes an audio or subtitle track exposed by a stream.
 message MediaTrack {
+  // The track identifier.
   string id = 1;
+
+  // The display label for the track.
   string label = 2;
+
+  // The language code or label for the track.
   string language = 3;
+
+  // The codec used by the track.
   string codec = 4;
+
+  // Indicates whether the track is selected by default.
   bool is_default = 5;
 }

@@ -11,6 +11,10 @@ public sealed class PluginBatchMetadataLoader<TMetadata>
     private readonly PluginBatchMetadataLoaderOptions _options;
     private readonly ConcurrentDictionary<string, List<TMetadata>> _resultsByKey;
 
+    /// <summary>
+    /// Creates a batch metadata loader with the specified batching and delay options.
+    /// </summary>
+    /// <param name="options">The loader options to apply, or <see langword="null"/> to use the default options.</param>
     public PluginBatchMetadataLoader(PluginBatchMetadataLoaderOptions? options = null)
     {
         _options = options ?? PluginBatchMetadataLoaderOptions.Default;
@@ -24,6 +28,7 @@ public sealed class PluginBatchMetadataLoader<TMetadata>
     /// <param name="batchFetchAsync">Async function to fetch multiple items at once; returns dict of key → metadata list</param>
     /// <param name="singleFetchAsync">Async function to fetch a single item; returns list of metadata or empty list</param>
     /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A dictionary of successfully loaded metadata keyed by item identifier.</returns>
     public async Task<IReadOnlyDictionary<string, List<TMetadata>>> LoadAsync(
         IEnumerable<string> keys,
         Func<IReadOnlyList<string>, CancellationToken, Task<IReadOnlyDictionary<string, List<TMetadata>>>> batchFetchAsync,
@@ -121,6 +126,10 @@ public sealed class PluginBatchMetadataLoader<TMetadata>
     /// Synchronous wrapper around LoadAsync using GetAwaiter().GetResult().
     /// Use sparingly; prefer async version.
     /// </summary>
+    /// <param name="keys">Collection of item keys to load metadata for.</param>
+    /// <param name="batchFetch">Function that fetches metadata for a batch of keys.</param>
+    /// <param name="singleFetch">Function that fetches metadata for a single key.</param>
+    /// <returns>A dictionary of successfully loaded metadata keyed by item identifier.</returns>
     public IReadOnlyDictionary<string, List<TMetadata>> Load(
         IEnumerable<string> keys,
         Func<IReadOnlyList<string>, IReadOnlyDictionary<string, List<TMetadata>>> batchFetch,
@@ -138,6 +147,7 @@ public sealed class PluginBatchMetadataLoader<TMetadata>
     /// <summary>
     /// Gets the number of successfully cached results.
     /// </summary>
+    /// <returns>The number of cached result entries.</returns>
     public int GetCacheSize() => _resultsByKey.Count;
 
     /// <summary>

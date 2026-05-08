@@ -28,6 +28,17 @@ namespace EMMA.PluginHost.Library;
 /// </summary>
 public static class PluginHostExports
 {
+    /// <summary>
+    /// Represents a media summary enriched for host-library consumers.
+    /// </summary>
+    /// <param name="Id">The media identifier.</param>
+    /// <param name="SourceId">The provider-specific source identifier.</param>
+    /// <param name="Source">The source name.</param>
+    /// <param name="Title">The display title.</param>
+    /// <param name="MediaType">The media type.</param>
+    /// <param name="ThumbnailUrl">The optional thumbnail URL.</param>
+    /// <param name="Description">The optional description.</param>
+    /// <param name="Metadata">Optional metadata entries.</param>
     public sealed record EnrichedMediaSummaryResponse(
         string Id,
         string SourceId,
@@ -74,9 +85,11 @@ public static class PluginHostExports
     // ==================== Managed API (callable from C#) ====================
 
     /// <summary>
-    /// Initialize the plugin host with the specified directories.
-    /// Returns 0 on success, non-zero on failure.
+    /// Initializes the embedded plugin host using the supplied manifest and sandbox directories.
     /// </summary>
+    /// <param name="manifestsDir">The directory that contains plugin manifest files.</param>
+    /// <param name="sandboxDir">The directory used for plugin sandbox state and extracted assets.</param>
+    /// <returns><c>0</c> when initialization succeeds; otherwise <c>-1</c>.</returns>
     public static int InitializeManaged(string manifestsDir, string sandboxDir)
     {
         ClearLastError();
@@ -377,7 +390,7 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Shutdown the plugin host and release resources.
+    /// Shuts down the embedded plugin host and releases cached runtime resources.
     /// </summary>
     public static void ShutdownManaged()
     {
@@ -407,9 +420,9 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// List all available plugins as JSON.
-    /// Returns null on error, check GetLastErrorManaged().
+    /// Lists all discovered plugins as a JSON payload.
     /// </summary>
+    /// <returns>A JSON array of plugin summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListPluginsJsonManaged()
     {
         ClearLastError();
@@ -442,9 +455,9 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Reload plugin manifests and refresh runtime/handshake state without recreating the host.
-    /// Returns 0 on success, non-zero on failure.
+    /// Reloads plugin manifests and refreshes handshake state without recreating the host.
     /// </summary>
+    /// <returns><c>0</c> when the rescan succeeds; otherwise <c>-1</c>.</returns>
     public static int RescanManaged()
     {
         ClearLastError();
@@ -486,6 +499,10 @@ public static class PluginHostExports
         return null;
     }
 
+    /// <summary>
+    /// Lists configured plugin repositories as JSON.
+    /// </summary>
+    /// <returns>A JSON array of repository records, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListPluginRepositoriesJsonManaged()
     {
         ClearLastError();
@@ -509,6 +526,14 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Adds a plugin repository to the local repository store.
+    /// </summary>
+    /// <param name="catalogUrl">The repository catalog URL.</param>
+    /// <param name="repositoryId">An optional explicit repository identifier.</param>
+    /// <param name="name">An optional display name for the repository.</param>
+    /// <param name="sourceRepositoryUrl">An optional source code repository URL.</param>
+    /// <returns><c>1</c> when the repository is added; otherwise <c>0</c>.</returns>
     public static int AddPluginRepositoryManaged(
         string catalogUrl,
         string? repositoryId,
@@ -540,6 +565,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Removes a configured plugin repository.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier to remove.</param>
+    /// <returns><c>1</c> when the repository is removed; otherwise <c>0</c>.</returns>
     public static int RemovePluginRepositoryManaged(string repositoryId)
     {
         ClearLastError();
@@ -567,6 +597,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists the plugins published by a specific repository as JSON.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier to inspect.</param>
+    /// <param name="refreshCatalog">When set, refreshes the repository catalog before listing plugins.</param>
+    /// <returns>A JSON payload describing the repository plugins, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListRepositoryPluginsJsonManaged(string repositoryId, bool refreshCatalog)
     {
         ClearLastError();
@@ -588,6 +624,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists plugins across all configured repositories as JSON.
+    /// </summary>
+    /// <param name="refreshCatalog">When set, refreshes repository catalogs before listing plugins.</param>
+    /// <returns>A JSON array of repository plugin views, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListAllRepositoryPluginsJsonManaged(bool refreshCatalog)
     {
         ClearLastError();
@@ -611,6 +652,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Installs a plugin release from a configured repository.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier to install from.</param>
+    /// <param name="pluginId">The plugin identifier to install.</param>
+    /// <param name="version">An optional version to install; when omitted, the latest applicable release is used.</param>
+    /// <param name="refreshCatalog">When set, refreshes the repository catalog before installation.</param>
+    /// <param name="rescanAfterInstall">When set, rescans plugin manifests after installation completes.</param>
+    /// <returns>A JSON installation result payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? InstallFromRepositoryJsonManaged(
         string repositoryId,
         string pluginId,
@@ -644,6 +694,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Enqueues a media download job and returns the created job as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin that can resolve the media asset.</param>
+    /// <param name="mediaId">The media identifier to download.</param>
+    /// <param name="mediaType">The media type associated with the download.</param>
+    /// <param name="chapterId">An optional chapter identifier for paged media downloads.</param>
+    /// <param name="streamId">An optional stream identifier for video downloads.</param>
+    /// <returns>A JSON download job payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? EnqueueDownloadJsonManaged(
         string pluginId,
         string mediaId,
@@ -681,6 +740,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists download jobs as JSON.
+    /// </summary>
+    /// <param name="limit">The maximum number of jobs to return.</param>
+    /// <returns>A JSON array of download jobs, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListDownloadsJsonManaged(int limit = 200)
     {
         ClearLastError();
@@ -707,6 +771,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Gets a single download job as JSON.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns>A JSON download job payload, or <see langword="null"/> when the job is missing or the operation fails.</returns>
     public static string? GetDownloadJsonManaged(string jobId)
     {
         ClearLastError();
@@ -738,21 +807,41 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Pauses a download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
     public static int PauseDownloadManaged(string jobId)
     {
         return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.PauseAsync(id, CancellationToken.None));
     }
 
+    /// <summary>
+    /// Resumes a paused download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
     public static int ResumeDownloadManaged(string jobId)
     {
         return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.ResumeAsync(id, CancellationToken.None));
     }
 
+    /// <summary>
+    /// Cancels a download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
     public static int CancelDownloadManaged(string jobId)
     {
         return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.CancelAsync(id, CancellationToken.None));
     }
 
+    /// <summary>
+    /// Deletes a download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is deleted; otherwise <c>0</c>.</returns>
     public static int DeleteDownloadManaged(string jobId)
     {
         ClearLastError();
@@ -792,14 +881,21 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Search for media using the specified plugin.
-    /// Returns JSON array of MediaSummary, or null on error.
+    /// Searches a plugin and returns the results as JSON.
     /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? SearchJsonManaged(string pluginId, string query)
     {
         return SearchJsonManaged(pluginId, query, null);
     }
 
+    /// <summary>
+    /// Resolves a plugin and verifies that it is available for use.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier to resolve.</param>
+    /// <returns><c>1</c> when the plugin resolves successfully; otherwise <c>0</c>.</returns>
     public static int OpenPluginManaged(string pluginId)
     {
         ClearLastError();
@@ -815,6 +911,13 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Searches a plugin and returns the results as JSON using an optional correlation identifier.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <param name="correlationId">An optional correlation identifier forwarded to the plugin runtime.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? SearchJsonManaged(string pluginId, string query, string? correlationId)
     {
         ClearLastError();
@@ -895,6 +998,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Runs the WASM benchmark path for a plugin.
+    /// </summary>
+    /// <param name="pluginId">The WASM plugin identifier to benchmark.</param>
+    /// <param name="iterations">The requested benchmark iteration count.</param>
+    /// <returns>A JSON benchmark payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? BenchmarkJsonManaged(string pluginId, int iterations)
     {
         ClearLastError();
@@ -937,10 +1046,12 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Enrich a selected media item with extra metadata for the active plugin.
-    /// For WASM plugins this calls the on-demand enrichment path; for other plugins
-    /// it returns the original media summary unchanged.
+    /// Enriches a selected media item with additional metadata for the active plugin.
     /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaJson">The selected media summary serialized as JSON.</param>
+    /// <param name="correlationId">An optional correlation identifier for the enrichment request.</param>
+    /// <returns>An enriched media summary as JSON, or <see langword="null"/> when the operation fails.</returns>
     public static string? EnrichMediaJsonManaged(string pluginId, string mediaJson, string? correlationId = null)
     {
         ClearLastError();
@@ -1025,6 +1136,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Runs the WASM network benchmark path for a plugin.
+    /// </summary>
+    /// <param name="pluginId">The WASM plugin identifier to benchmark.</param>
+    /// <param name="query">The query payload used by the benchmark.</param>
+    /// <returns>A JSON benchmark payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? BenchmarkNetworkJsonManaged(string pluginId, string query)
     {
         ClearLastError();
@@ -1070,14 +1187,23 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Search for media using the specified plugin and return typed results.
-    /// Returns null on error, check GetLastErrorManaged().
+    /// Searches a plugin and returns typed media results.
     /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <returns>The matching media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static IReadOnlyList<MediaSummary>? SearchMediaManaged(string pluginId, string query)
     {
         return SearchMediaManaged(pluginId, query, null);
     }
 
+    /// <summary>
+    /// Searches a plugin and returns typed media results using an optional correlation identifier.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <param name="correlationId">An optional correlation identifier forwarded to the plugin runtime.</param>
+    /// <returns>The matching media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static IReadOnlyList<MediaSummary>? SearchMediaManaged(string pluginId, string query, string? correlationId)
     {
         ClearLastError();
@@ -1266,6 +1392,10 @@ public static class PluginHostExports
         return true;
     }
 
+    /// <summary>
+    /// Returns and clears the last captured search timing payload.
+    /// </summary>
+    /// <returns>The last timing payload, or <see langword="null"/> when no timing is cached.</returns>
     public static string? TakeLastSearchTimingManaged()
     {
         lock (_searchTimingLock)
@@ -1276,6 +1406,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Loads chapters for a media item and returns them as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier to resolve chapters for.</param>
+    /// <returns>A JSON array of chapters, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetChaptersJsonManaged(string pluginId, string mediaId)
     {
         ClearLastError();
@@ -1416,6 +1552,14 @@ public static class PluginHostExports
         return chapters;
     }
 
+    /// <summary>
+    /// Loads a single page for a chapter and returns it as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the chapter.</param>
+    /// <param name="chapterId">The chapter identifier that owns the page.</param>
+    /// <param name="pageIndex">The zero-based page index to load.</param>
+    /// <returns>A JSON page payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetPageJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
         ClearLastError();
@@ -1449,6 +1593,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Loads a range of pages for a chapter and returns them as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the chapter.</param>
+    /// <param name="chapterId">The chapter identifier to page through.</param>
+    /// <param name="startIndex">The zero-based page index to start from.</param>
+    /// <param name="count">The maximum number of pages to load.</param>
+    /// <returns>A JSON page batch payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetPagesJsonManaged(string pluginId, string mediaId, string chapterId, int startIndex, int count)
     {
         ClearLastError();
@@ -1483,6 +1636,14 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Resolves the asset payload for a single paged-media page and returns it as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the chapter.</param>
+    /// <param name="chapterId">The chapter identifier that owns the page.</param>
+    /// <param name="pageIndex">The zero-based page index to resolve.</param>
+    /// <returns>A JSON page asset payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetPageAssetJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
         ClearLastError();
@@ -1504,6 +1665,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Loads video streams for a media item and returns them as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier to resolve streams for.</param>
+    /// <returns>A JSON stream payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetVideoStreamsJsonManaged(string pluginId, string mediaId)
     {
         ClearLastError();
@@ -3933,6 +4100,14 @@ public static class PluginHostExports
         return string.IsNullOrWhiteSpace(sanitized) ? "unknown" : sanitized;
     }
 
+    /// <summary>
+    /// Loads a single video segment and returns it as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the stream.</param>
+    /// <param name="streamId">The stream identifier that owns the segment.</param>
+    /// <param name="sequence">The segment sequence number to load.</param>
+    /// <returns>A JSON segment payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetVideoSegmentJsonManaged(string pluginId, string mediaId, string streamId, int sequence)
     {
         ClearLastError();
@@ -3955,8 +4130,9 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Get the last error message, or null if no error.
+    /// Gets the last host error message.
     /// </summary>
+    /// <returns>The last error message, or <see langword="null"/> when no error is stored.</returns>
     public static string? GetLastErrorManaged()
     {
         lock (_errorLock)
@@ -3965,6 +4141,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists cached catalog media items as JSON.
+    /// </summary>
+    /// <param name="limit">The maximum number of catalog items to return.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListCatalogMediaJsonManaged(int limit = 500)
     {
         ClearLastError();
@@ -3997,6 +4178,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists media items stored in a library as JSON.
+    /// </summary>
+    /// <param name="userId">The library identifier or display name to read from.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListLibraryMediaJsonManaged(string userId = "Library")
     {
         ClearLastError();
@@ -4082,6 +4268,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Refreshes library media metadata and chapter discovery state.
+    /// </summary>
+    /// <param name="libraryName">The library display name to refresh.</param>
+    /// <returns>A JSON refresh summary payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? RefreshLibraryMediaJsonManaged(string libraryName = "Library")
     {
         ClearLastError();
@@ -4228,6 +4419,10 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists available libraries as JSON.
+    /// </summary>
+    /// <returns>A JSON array of library names, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListLibrariesJsonManaged()
     {
         ClearLastError();
@@ -4257,6 +4452,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Creates a new library.
+    /// </summary>
+    /// <param name="libraryName">The display name for the new library.</param>
+    /// <returns><c>1</c> when the library is created; otherwise <c>0</c>.</returns>
     public static int CreateLibraryManaged(string libraryName)
     {
         ClearLastError();
@@ -4283,6 +4483,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Deletes an existing library.
+    /// </summary>
+    /// <param name="libraryName">The display name of the library to delete.</param>
+    /// <returns><c>1</c> when the library is deleted; otherwise <c>0</c>.</returns>
     public static int DeleteLibraryManaged(string libraryName)
     {
         ClearLastError();
@@ -4313,6 +4518,10 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Recreates the embedded host database and default library state.
+    /// </summary>
+    /// <returns><c>1</c> when the database is reset; otherwise <c>0</c>.</returns>
     public static int ResetDatabaseManaged()
     {
         ClearLastError();
@@ -4354,6 +4563,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Checks whether a media item exists in one library or any library.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to look up.</param>
+    /// <param name="userId">The target library identifier, or <c>*</c> to search every library.</param>
+    /// <returns><see langword="true"/> when the media item exists in the requested scope; otherwise <see langword="false"/>.</returns>
     public static bool IsMediaInLibraryManaged(string mediaId, string userId = "*")
     {
         ClearLastError();
@@ -4403,6 +4618,17 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Adds a media item to a library and upserts its catalog metadata.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to add.</param>
+    /// <param name="sourceId">The source or plugin identifier that owns the media item.</param>
+    /// <param name="title">The media title to persist.</param>
+    /// <param name="mediaType">The media type to persist.</param>
+    /// <param name="userId">The target library identifier or display name.</param>
+    /// <param name="description">An optional description string or JSON metadata payload.</param>
+    /// <param name="thumbnailUrl">An optional thumbnail URL to persist.</param>
+    /// <returns><c>1</c> when the media item is added; otherwise <c>0</c>.</returns>
     public static int AddMediaToLibraryManaged(
         string mediaId,
         string sourceId,
@@ -4514,6 +4740,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Removes a media item from a library.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to remove.</param>
+    /// <param name="userId">The target library identifier or display name.</param>
+    /// <returns><c>1</c> when the media item is removed; otherwise <c>0</c>.</returns>
     public static int RemoveMediaFromLibraryManaged(string mediaId, string userId = "Library")
     {
         ClearLastError();
@@ -4543,6 +4775,14 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Gets persisted reading or playback progress as JSON.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to read progress for.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="mediaType">The media type that determines which progress store is queried.</param>
+    /// <param name="userId">The user or library scope to read progress from.</param>
+    /// <returns>A JSON progress payload, <c>"null"</c> when no progress exists, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetMediaProgressJsonManaged(
         string mediaId,
         string pluginId,
@@ -4622,6 +4862,16 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Persists paged-media progress for a user.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to update.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="chapterId">The active chapter identifier.</param>
+    /// <param name="pageIndex">The zero-based page index reached by the user.</param>
+    /// <param name="completed">Whether the chapter or item is considered completed.</param>
+    /// <param name="userId">The user or library scope to store progress under.</param>
+    /// <returns><c>1</c> when progress is stored; otherwise <c>0</c>.</returns>
     public static int SetPagedProgressManaged(
         string mediaId,
         string pluginId,
@@ -4672,6 +4922,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Persists video playback progress for a user.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to update.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="positionSeconds">The playback position in seconds.</param>
+    /// <param name="completed">Whether playback is considered completed.</param>
+    /// <param name="userId">The user or library scope to store progress under.</param>
+    /// <returns><c>1</c> when progress is stored; otherwise <c>0</c>.</returns>
     public static int SetVideoProgressManaged(
         string mediaId,
         string pluginId,
@@ -4714,6 +4973,13 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists read chapter identifiers for a media item as JSON.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to inspect.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON array of chapter identifiers, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetReadChapterIdsJsonManaged(
         string mediaId,
         string pluginId,
@@ -4759,6 +5025,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists history entries as JSON.
+    /// </summary>
+    /// <param name="limit">The maximum number of history entries to return.</param>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON array of history entries, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetHistoryJsonManaged(
         int limit = 200,
         string userId = DefaultProgressUserId)
@@ -4801,6 +5073,13 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Deletes history entries for a media item and plugin combination.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to clear history for.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="userId">The user or library scope to clear history from.</param>
+    /// <returns><c>1</c> when history is deleted; otherwise <c>0</c>.</returns>
     public static int DeleteHistoryForMediaManaged(
         string mediaId,
         string pluginId,
@@ -4841,6 +5120,12 @@ public static class PluginHostExports
 
     // ==================== FFI Boundary (UnmanagedCallersOnly) ====================
 
+    /// <summary>
+    /// Initializes the embedded plugin host from unmanaged code.
+    /// </summary>
+    /// <param name="manifestsDirUtf8">A UTF-8 pointer to the manifest directory path.</param>
+    /// <param name="sandboxDirUtf8">A UTF-8 pointer to the sandbox directory path.</param>
+    /// <returns><c>0</c> when initialization succeeds; otherwise <c>-1</c>.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_initialize")]
     public static int Initialize(IntPtr manifestsDirUtf8, IntPtr sandboxDirUtf8)
     {
@@ -4849,12 +5134,19 @@ public static class PluginHostExports
         return InitializeManaged(manifestsDir, sandboxDir);
     }
 
+    /// <summary>
+    /// Shuts down the embedded plugin host from unmanaged code.
+    /// </summary>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_shutdown")]
     public static void Shutdown()
     {
         ShutdownManaged();
     }
 
+    /// <summary>
+    /// Lists discovered plugins for unmanaged callers.
+    /// </summary>
+    /// <returns>A UTF-8 string pointer containing plugin JSON, or <see cref="IntPtr.Zero"/> on failure.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_list_plugins_json")]
     public static IntPtr ListPluginsJson()
     {
@@ -4862,6 +5154,12 @@ public static class PluginHostExports
         return json != null ? AllocUtf8(json) : IntPtr.Zero;
     }
 
+    /// <summary>
+    /// Executes a plugin search for unmanaged callers.
+    /// </summary>
+    /// <param name="pluginIdUtf8">A UTF-8 pointer to the plugin identifier.</param>
+    /// <param name="queryUtf8">A UTF-8 pointer to the search query.</param>
+    /// <returns>A UTF-8 string pointer containing search JSON, or <see cref="IntPtr.Zero"/> on failure.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_search_json")]
     public static IntPtr SearchJson(IntPtr pluginIdUtf8, IntPtr queryUtf8)
     {
@@ -4871,6 +5169,10 @@ public static class PluginHostExports
         return json != null ? AllocUtf8(json) : IntPtr.Zero;
     }
 
+    /// <summary>
+    /// Gets the last host error for unmanaged callers.
+    /// </summary>
+    /// <returns>A UTF-8 string pointer containing the last error, or <see cref="IntPtr.Zero"/> when no error is available.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_last_error")]
     public static IntPtr LastError()
     {
@@ -4878,6 +5180,10 @@ public static class PluginHostExports
         return error != null ? AllocUtf8(error) : IntPtr.Zero;
     }
 
+    /// <summary>
+    /// Frees a UTF-8 string allocated by the unmanaged host boundary.
+    /// </summary>
+    /// <param name="value">The pointer previously returned by a host export.</param>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_string_free")]
     public static void StringFree(IntPtr value)
     {

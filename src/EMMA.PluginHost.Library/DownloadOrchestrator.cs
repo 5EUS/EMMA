@@ -5,6 +5,9 @@ using Microsoft.Extensions.Logging;
 
 namespace EMMA.PluginHost.Library;
 
+/// <summary>
+/// Coordinates queued download jobs and executes them in the background.
+/// </summary>
 public sealed class DownloadOrchestrator : IDisposable
 {
     private readonly IDownloadPort _downloads;
@@ -17,6 +20,12 @@ public sealed class DownloadOrchestrator : IDisposable
 
     private bool _disposed;
 
+    /// <summary>
+    /// Creates a download orchestrator that queues, executes, and tracks download jobs.
+    /// </summary>
+    /// <param name="downloads">The download persistence port used to store job state.</param>
+    /// <param name="executor">Executes a single download job and reports progress updates.</param>
+    /// <param name="logger">The logger used for background processing diagnostics.</param>
     public DownloadOrchestrator(
         IDownloadPort downloads,
         Func<DownloadJobRecord, IProgress<DownloadExecutionProgress>, CancellationToken, Task<DownloadExecutionResult>> executor,
@@ -28,6 +37,12 @@ public sealed class DownloadOrchestrator : IDisposable
         _worker = Task.Run(ProcessLoopAsync);
     }
 
+    /// <summary>
+    /// Creates and queues a new download job for background execution.
+    /// </summary>
+    /// <param name="request">The download request to enqueue.</param>
+    /// <param name="cancellationToken">Cancels the enqueue operation.</param>
+    /// <returns>The persisted download job record.</returns>
     public async Task<DownloadJobRecord> EnqueueAsync(DownloadEnqueueRequest request, CancellationToken cancellationToken)
     {
         var created = await _downloads.CreateJobAsync(request, cancellationToken);
@@ -35,16 +50,34 @@ public sealed class DownloadOrchestrator : IDisposable
         return created;
     }
 
+    /// <summary>
+    /// Lists recent download jobs.
+    /// </summary>
+    /// <param name="limit">The maximum number of jobs to return.</param>
+    /// <param name="cancellationToken">Cancels the list operation.</param>
+    /// <returns>The requested download job records.</returns>
     public Task<IReadOnlyList<DownloadJobRecord>> ListAsync(int limit, CancellationToken cancellationToken)
     {
         return _downloads.ListJobsAsync(limit, cancellationToken);
     }
 
+    /// <summary>
+    /// Retrieves a single download job by identifier.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <param name="cancellationToken">Cancels the lookup operation.</param>
+    /// <returns>The matching download job, or <see langword="null"/> when no job exists.</returns>
     public Task<DownloadJobRecord?> GetAsync(string jobId, CancellationToken cancellationToken)
     {
         return _downloads.GetJobAsync(jobId, cancellationToken);
     }
 
+    /// <summary>
+    /// Pauses a queued or running download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <param name="cancellationToken">Cancels the state update.</param>
+    /// <returns><see langword="true"/> when the job state was updated; otherwise <see langword="false"/>.</returns>
     public async Task<bool> PauseAsync(string jobId, CancellationToken cancellationToken)
     {
         CancelRunningJob(jobId);
@@ -58,6 +91,12 @@ public sealed class DownloadOrchestrator : IDisposable
             cancellationToken);
     }
 
+            /// <summary>
+            /// Re-queues a paused download job.
+            /// </summary>
+            /// <param name="jobId">The download job identifier.</param>
+            /// <param name="cancellationToken">Cancels the state update.</param>
+            /// <returns><see langword="true"/> when the job state was updated; otherwise <see langword="false"/>.</returns>
     public async Task<bool> ResumeAsync(string jobId, CancellationToken cancellationToken)
     {
         var updated = await _downloads.UpdateStateAsync(
@@ -77,6 +116,12 @@ public sealed class DownloadOrchestrator : IDisposable
         return updated;
     }
 
+    /// <summary>
+    /// Cancels a queued or running download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <param name="cancellationToken">Cancels the state update.</param>
+    /// <returns><see langword="true"/> when the job state was updated; otherwise <see langword="false"/>.</returns>
     public async Task<bool> CancelAsync(string jobId, CancellationToken cancellationToken)
     {
         CancelRunningJob(jobId);
@@ -91,6 +136,12 @@ public sealed class DownloadOrchestrator : IDisposable
             cancellationToken);
     }
 
+    /// <summary>
+    /// Deletes a download job and stops any active execution for it.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <param name="cancellationToken">Cancels the delete operation.</param>
+    /// <returns><see langword="true"/> when the job was deleted; otherwise <see langword="false"/>.</returns>
     public async Task<bool> DeleteAsync(string jobId, CancellationToken cancellationToken)
     {
         CancelRunningJob(jobId);
@@ -258,6 +309,9 @@ public sealed class DownloadOrchestrator : IDisposable
         }
     }
 
+    /// <summary>
+    /// Stops background processing and releases orchestrator resources.
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)
@@ -288,8 +342,22 @@ public sealed class DownloadOrchestrator : IDisposable
     }
 }
 
+/// <summary>
+/// Represents incremental progress reported by a download execution.
+/// </summary>
+/// <param name="Completed">The completed work-unit count.</param>
+/// <param name="Total">The total work-unit count.</param>
+/// <param name="BytesDownloaded">The total downloaded bytes.</param>
 public sealed record DownloadExecutionProgress(int Completed, int Total, long BytesDownloaded);
 
+/// <summary>
+/// Represents the final outcome of a download execution.
+/// </summary>
+/// <param name="Success">Indicates whether the execution succeeded.</param>
+/// <param name="Completed">The completed work-unit count.</param>
+/// <param name="Total">The total work-unit count.</param>
+/// <param name="BytesDownloaded">The total downloaded bytes.</param>
+/// <param name="ErrorMessage">The optional failure message.</param>
 public sealed record DownloadExecutionResult(
     bool Success,
     int Completed,

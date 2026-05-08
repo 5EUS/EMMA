@@ -6,54 +6,104 @@ option csharp_namespace = "EMMA.Contracts.Plugins";
 
 import "request_context.proto";
 
+// Exposes chapter and page retrieval for paged media plugins.
 service PageProvider {
+  // Returns the chapters for a media item.
   rpc GetChapters (ChaptersRequest) returns (ChaptersResponse);
+
+  // Returns a single page for a chapter.
   rpc GetPage (PageRequest) returns (PageResponse);
+
+  // Returns a range of pages for a chapter.
   rpc GetPages (PagesRequest) returns (PagesResponse);
 }
 
+// Requests chapters for a paged media item.
 message ChaptersRequest {
+  // The media identifier to resolve chapters for.
   string media_id = 1;
+
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Returns the chapters for a paged media item.
 message ChaptersResponse {
+  // The chapters returned by the plugin.
   repeated MediaChapter chapters = 1;
 }
 
+// Requests a single page for a chapter.
 message PageRequest {
+  // The media identifier that owns the chapter.
   string media_id = 1;
+
+  // The chapter identifier that owns the page.
   string chapter_id = 2;
+
+  // The zero-based page index to load.
   int32 index = 3;
+
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Returns a single page payload.
 message PageResponse {
+  // The page returned by the plugin.
   MediaPage page = 1;
 }
 
+// Requests a range of pages for a chapter.
 message PagesRequest {
+  // The media identifier that owns the chapter.
   string media_id = 1;
+
+  // The chapter identifier to page through.
   string chapter_id = 2;
+
+  // The zero-based page index to start from.
   int32 start_index = 3;
+
+  // The maximum number of pages to return.
   int32 count = 4;
+
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Returns a batch of pages for a chapter.
 message PagesResponse {
+  // The pages returned by the plugin.
   repeated MediaPage pages = 1;
+
+  // Indicates whether the end of the chapter was reached.
   bool reached_end = 2;
 }
 
+// Describes a chapter in paged media.
 message MediaChapter {
+  // The plugin-specific chapter identifier.
   string id = 1;
+
+  // The displayed chapter number.
   int32 number = 2;
+
+  // The chapter title.
   string title = 3;
+
+  // The uploader or scanlation groups associated with the chapter.
   repeated string uploader_groups = 4;
 }
 
+// Describes a single page in paged media.
 message MediaPage {
+  // The plugin-specific page identifier.
   string id = 1;
+
+  // The zero-based page index.
   int32 index = 2;
+
+  // The URI that can be used to retrieve the page content.
   string content_uri = 3;
 }

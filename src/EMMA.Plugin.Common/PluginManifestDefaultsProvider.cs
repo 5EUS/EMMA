@@ -2,14 +2,31 @@ using System.Text.Json;
 
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Represents default runtime limits and permissions loaded from a plugin manifest.
+/// </summary>
+/// <param name="CpuBudgetMs">The default CPU budget in milliseconds.</param>
+/// <param name="MemoryMb">The default memory budget in megabytes.</param>
+/// <param name="Domains">The default allowed network domains.</param>
+/// <param name="Paths">The default allowed filesystem paths.</param>
 public readonly record struct PluginManifestDefaults(
     int CpuBudgetMs,
     int MemoryMb,
     string[] Domains,
     string[] Paths);
 
+/// <summary>
+/// Loads manifest-derived defaults for plugin runtime configuration.
+/// </summary>
 public static class PluginManifestDefaultsProvider
 {
+    /// <summary>
+    /// Loads manifest default values from the first matching plugin manifest file, or falls back to the supplied defaults.
+    /// </summary>
+    /// <param name="pluginManifestFileName">The manifest file name to search for.</param>
+    /// <param name="fallback">The fallback values to return when no manifest can be read.</param>
+    /// <param name="pluginProjectFolderName">An optional project folder name used to probe a nested <c>src</c> path.</param>
+    /// <returns>The manifest defaults loaded from disk, or the fallback values when loading fails.</returns>
     public static PluginManifestDefaults Load(
         string pluginManifestFileName,
         PluginManifestDefaults fallback,

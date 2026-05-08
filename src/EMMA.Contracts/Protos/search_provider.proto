@@ -6,48 +6,98 @@ option csharp_namespace = "EMMA.Contracts.Plugins";
 
 import "request_context.proto";
 
+// Exposes plugin search capabilities for media discovery.
 service SearchProvider {
+  // Searches the plugin source for media that matches the request.
   rpc Search (SearchRequest) returns (SearchResponse);
 }
 
+// Requests a media search from a plugin.
 message SearchRequest {
+  // The free-text query to execute.
   string query = 1;
+
+  // Structured filters applied alongside the query.
   repeated SearchFilter filters = 2;
+
+  // Restricts results to the requested media types.
   repeated string media_types = 3;
+
+  // Appends structured query additions understood by the plugin.
   repeated SearchQueryAddition query_additions = 4;
+
+  // Requests a plugin-specific sort order.
   string sort = 5;
+
+  // Requests a specific result page when pagination is supported.
   int32 page = 6;
+
+  // Requests the maximum number of results per page.
   int32 page_size = 7;
+
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Represents a structured search filter.
 message SearchFilter {
+  // The filter identifier understood by the plugin.
   string id = 1;
+
+  // The requested values for the filter.
   repeated string values = 2;
+
+  // The comparison or matching operation for the filter.
   string operation = 3;
 }
 
+// Represents a structured search query addition.
 message SearchQueryAddition {
+  // The addition identifier understood by the plugin.
   string id = 1;
+
+  // The addition value to apply.
   string value = 2;
+
+  // The addition type or category.
   string type = 3;
 }
 
+// Returns the results of a plugin search.
 message SearchResponse {
+  // The media summaries returned by the search.
   repeated MediaSummary results = 1;
 }
 
+// Describes a searchable media item returned by a plugin.
 message MediaSummary {
+  // The plugin-specific media identifier.
   string id = 1;
+
+  // The source or plugin identifier that owns the media item.
   string source = 2;
+
+  // The display title for the media item.
   string title = 3;
+
+  // The media type represented as plugin text.
   string media_type = 4;
+
+  // The preferred thumbnail URL for the media item.
   string thumbnail_url = 5;
+
+  // A short description or synopsis for the media item.
   string description = 6;
+
+  // Additional metadata fields associated with the media item.
   repeated KeyValue metadata = 7;
 }
 
+// Represents a string key/value metadata pair.
 message KeyValue {
+  // The metadata key.
   string key = 1;
+
+  // The metadata value.
   string value = 2;
 }

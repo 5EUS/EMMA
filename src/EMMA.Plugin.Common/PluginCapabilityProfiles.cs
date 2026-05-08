@@ -1,14 +1,36 @@
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Describes the default capability set exposed by a plugin transport profile.
+/// </summary>
 public enum PluginCapabilityProfile
 {
+    /// <summary>
+    /// Supports paged media operations only.
+    /// </summary>
     PagedOnly,
+
+    /// <summary>
+    /// Supports paged and video media operations.
+    /// </summary>
     PagedAndVideo,
+
+    /// <summary>
+    /// Supports paged, video, and audio media operations.
+    /// </summary>
     PagedVideoAudio,
 }
 
+/// <summary>
+/// Creates standard capability declarations for common plugin media profiles.
+/// </summary>
 public static class PluginCapabilityProfiles
 {
+    /// <summary>
+    /// Creates the default capability declaration set for the requested plugin profile.
+    /// </summary>
+    /// <param name="profile">The capability profile that determines which media types and operations are exposed.</param>
+    /// <returns>The capability items advertised for the selected profile.</returns>
     public static CapabilityItem[] Create(PluginCapabilityProfile profile)
     {
         return profile switch

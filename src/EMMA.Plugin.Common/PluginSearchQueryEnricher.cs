@@ -9,12 +9,23 @@ namespace EMMA.Plugin.Common;
 /// </summary>
 public abstract class PluginSearchQueryEnricher
 {
+    /// <summary>
+    /// Gets the filter identifiers that can be resolved by the enricher.
+    /// </summary>
     protected abstract string[] ResolvableFilterIds { get; }
+
+    /// <summary>
+    /// Gets the cache lifetime used for resolved filter data.
+    /// </summary>
     protected abstract TimeSpan FilterCacheTtl { get; }
 
     /// <summary>
     /// Async resolution entry point. Resolves filter values using the provided fetch function.
     /// </summary>
+    /// <param name="query">The parsed search query to resolve.</param>
+    /// <param name="fetchAbsoluteUrlAsync">The callback that fetches payloads from absolute URLs.</param>
+    /// <param name="cancellationToken">The cancellation token for the resolution flow.</param>
+    /// <returns>The resolved search query.</returns>
     public async Task<PluginSearchQuery> ResolveAsync(
         PluginSearchQuery query,
         Func<string, CancellationToken, Task<string?>> fetchAbsoluteUrlAsync,
@@ -60,6 +71,9 @@ public abstract class PluginSearchQueryEnricher
     /// <summary>
     /// Sync resolution entry point. Wraps ResolveAsync with synchronous adapter.
     /// </summary>
+    /// <param name="query">The parsed search query to resolve.</param>
+    /// <param name="fetchAbsoluteUrl">The callback that fetches payloads from absolute URLs.</param>
+    /// <returns>The resolved search query.</returns>
     public PluginSearchQuery Resolve(
         PluginSearchQuery query,
         Func<string, string?> fetchAbsoluteUrl)

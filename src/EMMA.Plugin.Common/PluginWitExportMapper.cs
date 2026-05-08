@@ -24,6 +24,8 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// <summary>
     /// Map a list of domain items to WIT export types.
     /// </summary>
+    /// <param name="domainItems">The domain items to map.</param>
+    /// <returns>The mapped WIT export values.</returns>
     [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
     [RequiresDynamicCode("Uses dynamic binding and is not AOT-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for AOT-compatible plugin code.")]
     public List<object> MapListToWit(IReadOnlyList<dynamic> domainItems)
@@ -45,6 +47,8 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// <summary>
     /// Map a list of WIT export types to domain items.
     /// </summary>
+    /// <param name="witItems">The WIT export values to map.</param>
+    /// <returns>The mapped domain values.</returns>
     public List<object> MapListFromWit(IReadOnlyList<TExportSet> witItems)
     {
         if (witItems == null || witItems.Count == 0)
@@ -64,6 +68,8 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// <summary>
     /// Map a nullable domain item to WIT export type.
     /// </summary>
+    /// <param name="domainItem">The optional domain item to map.</param>
+    /// <returns>The mapped WIT export value when present; otherwise, <see langword="null"/>.</returns>
     [RequiresUnreferencedCode("Uses dynamic binding and is not trim-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for trimming-compatible plugin code.")]
     [RequiresDynamicCode("Uses dynamic binding and is not AOT-safe. Prefer PluginWitExportMapper<TDomain, TWitExport> for AOT-compatible plugin code.")]
     public object? MapNullableToWit(dynamic? domainItem)
@@ -74,6 +80,8 @@ public abstract class PluginWitExportMapper<TExportSet>
     /// <summary>
     /// Map a nullable WIT export type to domain item.
     /// </summary>
+    /// <param name="witItem">The optional WIT export value to map.</param>
+    /// <returns>The mapped domain value when present; otherwise, <see langword="null"/>.</returns>
     public object? MapNullableFromWit(TExportSet? witItem)
     {
         return witItem == null ? null : MapFromWit(witItem);
@@ -148,6 +156,8 @@ public abstract class PluginWitExportMapper<TDomain, TWitExport>
     /// <summary>
     /// Map list of domain items to WIT export types.
     /// </summary>
+    /// <param name="domainItems">The domain items to map.</param>
+    /// <returns>The mapped WIT export values.</returns>
     public List<TWitExport> MapListToWit(IReadOnlyList<TDomain> domainItems)
     {
         if (domainItems == null || domainItems.Count == 0)
@@ -167,6 +177,8 @@ public abstract class PluginWitExportMapper<TDomain, TWitExport>
     /// <summary>
     /// Map list of WIT export types to domain items.
     /// </summary>
+    /// <param name="witItems">The WIT export values to map.</param>
+    /// <returns>The mapped domain values.</returns>
     public List<TDomain> MapListFromWit(IReadOnlyList<TWitExport> witItems)
     {
         if (witItems == null || witItems.Count == 0)
@@ -186,6 +198,8 @@ public abstract class PluginWitExportMapper<TDomain, TWitExport>
     /// <summary>
     /// Map nullable domain item to WIT export type.
     /// </summary>
+    /// <param name="domainItem">The optional domain item to map.</param>
+    /// <returns>The mapped WIT export value when present; otherwise, <see langword="null"/>.</returns>
     public TWitExport? MapNullableToWit(TDomain? domainItem)
     {
         return domainItem == null ? null : MapToWit(domainItem);
@@ -194,6 +208,8 @@ public abstract class PluginWitExportMapper<TDomain, TWitExport>
     /// <summary>
     /// Map nullable WIT export type to domain item.
     /// </summary>
+    /// <param name="witItem">The optional WIT export value to map.</param>
+    /// <returns>The mapped domain value when present; otherwise, <see langword="null"/>.</returns>
     public TDomain? MapNullableFromWit(TWitExport? witItem)
     {
         return witItem == null ? null : MapFromWit(witItem);
