@@ -7,6 +7,9 @@ namespace EMMA.PluginHost.Services;
 /// <summary>
 /// Periodically stops managed plugin processes that have been idle past the configured timeout.
 /// </summary>
+/// <param name="processManager">The plugin process manager.</param>
+/// <param name="options">The plugin host options.</param>
+/// <param name="logger">The logger used for cleanup diagnostics.</param>
 public sealed class PluginIdleCleanupHostedService(
     PluginProcessManager processManager,
     IOptions<PluginHostOptions> options,
@@ -16,6 +19,11 @@ public sealed class PluginIdleCleanupHostedService(
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginIdleCleanupHostedService> _logger = logger;
 
+    /// <summary>
+    /// Runs the periodic idle cleanup loop.
+    /// </summary>
+    /// <param name="stoppingToken">The cancellation token that stops the background service.</param>
+    /// <returns>A task that completes when the service stops.</returns>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var sweepSeconds = Math.Max(1, _options.PluginIdleSweepSeconds);

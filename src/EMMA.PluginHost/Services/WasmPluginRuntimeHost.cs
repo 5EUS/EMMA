@@ -10,25 +10,85 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Provides high-level operations for invoking WASM-based plugins.
+/// </summary>
 public interface IWasmPluginRuntimeHost
 {
+    /// <summary>
+    /// Determines whether the supplied manifest resolves to a WASM plugin.
+    /// </summary>
     bool IsWasmPlugin(PluginManifest manifest);
+
+    /// <summary>
+    /// Performs an optional warm-up invocation for a WASM plugin.
+    /// </summary>
     Task WarmupAsync(PluginManifest manifest, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Performs handshake for a WASM plugin.
+    /// </summary>
     Task<PluginHandshakeStatus> HandshakeAsync(PluginManifest manifest, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs the benchmark operation for a WASM plugin.
+    /// </summary>
     Task<string> BenchmarkAsync(PluginRecord record, int iterations, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Runs the network benchmark operation for a WASM plugin.
+    /// </summary>
     Task<string> BenchmarkNetworkAsync(PluginRecord record, string query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes a search operation and returns the raw JSON payload.
+    /// </summary>
     Task<string> SearchJsonAsync(PluginRecord record, string query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes a search operation and returns mapped media summaries.
+    /// </summary>
     Task<IReadOnlyList<MediaSummary>> SearchAsync(PluginRecord record, string query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets the available video streams for a media item.
+    /// </summary>
     Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets a single video segment for a stream.
+    /// </summary>
     Task<WasmVideoSegmentResult?> GetVideoSegmentAsync(PluginRecord record, MediaId mediaId, string streamId, int sequence, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets chapters for a media item.
+    /// </summary>
     Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets a single page for a chapter.
+    /// </summary>
     Task<MediaPage> GetPageAsync(PluginRecord record, MediaId mediaId, string chapterId, int pageIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets a batch of pages for a chapter.
+    /// </summary>
     Task<MediaPagesResult> GetPagesAsync(PluginRecord record, MediaId mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Enriches existing search results with additional metadata.
+    /// </summary>
     Task<IReadOnlyList<MediaSummary>> EnrichSearchMetadataAsync(PluginRecord record, IEnumerable<string> mediaIds, IReadOnlyList<MediaSummary>? baseItems = null, CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Invokes a low-level operation on a resolved WASM component.
+/// </summary>
 public interface IWasmComponentInvoker
 {
+    /// <summary>
+    /// Invokes a WASM component operation.
+    /// </summary>
     Task<string> InvokeAsync(
         string componentPath,
         string operation,
@@ -37,10 +97,23 @@ public interface IWasmComponentInvoker
         CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Represents the invocation envelope passed to the native WASM component bridge.
+/// </summary>
+/// <param name="Args">The operation arguments.</param>
+/// <param name="PermittedDomains">The permitted network domains.</param>
 public sealed record WasmComponentInvokeEnvelope(
     [property: JsonPropertyName("args")] IReadOnlyList<string> Args,
     [property: JsonPropertyName("permittedDomains")] IReadOnlyList<string>? PermittedDomains);
 
+/// <summary>
+/// Implements WASM plugin operations on top of the entrypoint resolver and component invoker.
+/// </summary>
+/// <param name="entrypointResolver">The plugin entrypoint resolver.</param>
+/// <param name="invoker">The low-level WASM component invoker.</param>
+/// <param name="options">The plugin host options.</param>
+/// <param name="metrics">The plugin host metrics collector.</param>
+/// <param name="logger">The logger used for WASM runtime diagnostics.</param>
 public sealed class WasmPluginRuntimeHost(
     IPluginEntrypointResolver entrypointResolver,
     IWasmComponentInvoker invoker,
@@ -77,12 +150,22 @@ public sealed class WasmPluginRuntimeHost(
 
     private readonly record struct SearchCacheEntry(IReadOnlyList<MediaSummary> Results, DateTimeOffset CachedAtUtc);
 
+    /// <summary>
+    /// Determines whether the supplied manifest resolves to a WASM plugin.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <returns><see langword="true"/> when the manifest resolves to a WASM component; otherwise, <see langword="false"/>.</returns>
     public bool IsWasmPlugin(PluginManifest manifest)
     {
         _ = options;
         return _entrypointResolver.TryResolveWasmComponent(manifest, out _);
     }
 
+    /// <summary>
+    /// Performs an optional warm-up invocation for a WASM plugin.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     public async Task WarmupAsync(PluginManifest manifest, CancellationToken cancellationToken)
     {
         if (!IsWasmPlugin(manifest))
@@ -123,6 +206,12 @@ public sealed class WasmPluginRuntimeHost(
         }
     }
 
+        /// <summary>
+        /// Performs handshake for a WASM plugin.
+        /// </summary>
+        /// <param name="manifest">The plugin manifest.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        /// <returns>The handshake status.</returns>
     public async Task<PluginHandshakeStatus> HandshakeAsync(PluginManifest manifest, CancellationToken cancellationToken)
     {
         if (!_entrypointResolver.TryResolveWasmComponent(manifest, out var componentPath))
@@ -204,6 +293,9 @@ public sealed class WasmPluginRuntimeHost(
         return [.. normalized];
     }
 
+    /// <summary>
+    /// Executes a search operation and returns mapped media summaries.
+    /// </summary>
     public async Task<IReadOnlyList<MediaSummary>> SearchAsync(
         PluginRecord record,
         string query,
@@ -311,6 +403,9 @@ public sealed class WasmPluginRuntimeHost(
         return MediaType.Paged;
     }
 
+    /// <summary>
+    /// Executes a search operation and returns the raw JSON payload.
+    /// </summary>
     public async Task<string> SearchJsonAsync(
         PluginRecord record,
         string query,
@@ -374,6 +469,9 @@ public sealed class WasmPluginRuntimeHost(
         return searchJson;
     }
 
+    /// <summary>
+    /// Runs the benchmark operation for a WASM plugin.
+    /// </summary>
     public async Task<string> BenchmarkAsync(
         PluginRecord record,
         int iterations,
@@ -392,6 +490,9 @@ public sealed class WasmPluginRuntimeHost(
             cancellationToken: cancellationToken);
     }
 
+    /// <summary>
+    /// Runs the network benchmark operation for a WASM plugin.
+    /// </summary>
     public async Task<string> BenchmarkNetworkAsync(
         PluginRecord record,
         string query,
@@ -412,6 +513,9 @@ public sealed class WasmPluginRuntimeHost(
             cancellationToken: cancellationToken);
     }
 
+    /// <summary>
+    /// Gets chapters for a media item.
+    /// </summary>
     public async Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(
         PluginRecord record,
         MediaId mediaId,
@@ -443,6 +547,9 @@ public sealed class WasmPluginRuntimeHost(
                 ?? []))];
     }
 
+    /// <summary>
+    /// Enriches existing search results with additional metadata.
+    /// </summary>
     public async Task<IReadOnlyList<MediaSummary>> EnrichSearchMetadataAsync(
         PluginRecord record,
         IEnumerable<string> mediaIds,
@@ -533,6 +640,9 @@ public sealed class WasmPluginRuntimeHost(
             metadata);
     }
 
+    /// <summary>
+    /// Gets the available video streams for a media item.
+    /// </summary>
     public async Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(
         PluginRecord record,
         MediaId mediaId,
@@ -567,6 +677,9 @@ public sealed class WasmPluginRuntimeHost(
         return streams;
     }
 
+    /// <summary>
+    /// Gets a single video segment for a stream.
+    /// </summary>
     public async Task<WasmVideoSegmentResult?> GetVideoSegmentAsync(
         PluginRecord record,
         MediaId mediaId,
@@ -612,6 +725,9 @@ public sealed class WasmPluginRuntimeHost(
             bytes);
     }
 
+    /// <summary>
+    /// Gets a single page for a chapter.
+    /// </summary>
     public async Task<MediaPage> GetPageAsync(
         PluginRecord record,
         MediaId mediaId,
@@ -656,6 +772,9 @@ public sealed class WasmPluginRuntimeHost(
         return new MediaPage(page.Id, page.Index, contentUri);
     }
 
+    /// <summary>
+    /// Gets a batch of pages for a chapter, falling back to single-page requests when needed.
+    /// </summary>
     public async Task<MediaPagesResult> GetPagesAsync(
         PluginRecord record,
         MediaId mediaId,

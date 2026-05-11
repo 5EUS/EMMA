@@ -14,8 +14,15 @@ public sealed record PluginHandshakeStatus(
     IReadOnlyList<string> Domains,
     IReadOnlyList<string> Paths);
 
+/// <summary>
+/// Provides default handshake states for newly discovered plugins.
+/// </summary>
 public static class PluginHandshakeDefaults
 {
+    /// <summary>
+    /// Creates a handshake status that indicates no handshake has been attempted yet.
+    /// </summary>
+    /// <returns>A default handshake status.</returns>
     public static PluginHandshakeStatus NotChecked() => new(
         false,
         "Handshake not started.",
@@ -55,6 +62,12 @@ public sealed class PluginRegistry
         }
     }
 
+    /// <summary>
+    /// Adds or updates a plugin record using the supplied manifest, handshake, and runtime state.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="status">The latest handshake status.</param>
+    /// <param name="runtime">The optional runtime status to store.</param>
     public void Upsert(PluginManifest manifest, PluginHandshakeStatus status, PluginRuntimeStatus? runtime)
     {
         lock (_lock)
@@ -70,6 +83,11 @@ public sealed class PluginRegistry
         }
     }
 
+    /// <summary>
+    /// Updates the tracked runtime status for the supplied plugin manifest.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="runtime">The runtime status.</param>
     public void UpdateRuntime(PluginManifest manifest, PluginRuntimeStatus runtime)
     {
         lock (_lock)
@@ -84,6 +102,11 @@ public sealed class PluginRegistry
         }
     }
 
+    /// <summary>
+    /// Gets the tracked runtime status for the supplied plugin manifest.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <returns>The current runtime status.</returns>
     public PluginRuntimeStatus GetRuntime(PluginManifest manifest)
     {
         lock (_lock)

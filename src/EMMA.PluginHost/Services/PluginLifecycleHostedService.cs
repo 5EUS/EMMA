@@ -10,11 +10,21 @@ public sealed class PluginLifecycleHostedService(PluginProcessManager processMan
 {
     private readonly PluginProcessManager _processManager = processManager;
 
+    /// <summary>
+    /// Performs no work on startup.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A completed task.</returns>
     public Task StartAsync(CancellationToken cancellationToken)
     {
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Stops all managed plugin processes during host shutdown.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when all managed processes have stopped.</returns>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         await _processManager.StopAllAsync(cancellationToken);

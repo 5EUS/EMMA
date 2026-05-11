@@ -12,6 +12,11 @@ public sealed class PluginHandshakeHostedService(
     private CancellationTokenSource? _handshakeCts;
     private Task? _handshakeTask;
 
+    /// <summary>
+    /// Starts the background plugin handshake task.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A completed task once startup has been scheduled.</returns>
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -36,6 +41,11 @@ public sealed class PluginHandshakeHostedService(
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Stops the background plugin handshake task.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when the handshake task has stopped.</returns>
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _handshakeCts?.Cancel();

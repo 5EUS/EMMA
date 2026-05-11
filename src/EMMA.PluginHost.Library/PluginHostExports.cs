@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -21,6 +22,12 @@ using Grpc.Net.Client;
 using EMMA.Domain;
 
 namespace EMMA.PluginHost.Library;
+
+/// <summary>
+/// Request payload forwarded to ASP.NET plugin search enrichment endpoints.
+/// </summary>
+/// <param name="Items">The search items to enrich.</param>
+public sealed record PluginDevEnrichSearchItemsRequest(IReadOnlyList<SearchItem> Items);
 
 /// <summary>
 /// Native FFI exports for embedding the PluginHost in-process.
@@ -399,6 +406,19 @@ public static class PluginHostExports
             if (!_initialized)
             {
                 return;
+            }
+
+            try
+            {
+                _serviceProvider?
+                    .GetService<PluginProcessManager>()?
+                    .StopAllAsync(CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (Exception ex)
+            {
+                SetLastError(ex);
             }
 
             _serviceProvider?.Dispose();
@@ -1114,6 +1134,34 @@ public static class PluginHostExports
                         selected.ThumbnailUrl,
                         selected.Description,
                         selected.Metadata),
+                    PluginHostExportsJsonContext.Default.EnrichedMediaSummaryResponse);
+            }
+
+            if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+                return null;
+            }
+
+            if (address is null)
+            {
+                SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+                return null;
+            }
+
+            var enrichedMedia = EnrichGrpcPluginSearchMedia(record.Manifest.Id, address, media);
+            if (enrichedMedia is not null)
+            {
+                return JsonSerializer.Serialize(
+                    new EnrichedMediaSummaryResponse(
+                        enrichedMedia.Id.Value,
+                        enrichedMedia.SourceId,
+                        enrichedMedia.SourceId,
+                        enrichedMedia.Title,
+                        enrichedMedia.MediaType.ToString().ToLowerInvariant(),
+                        enrichedMedia.ThumbnailUrl,
+                        enrichedMedia.Description,
+                        enrichedMedia.Metadata),
                     PluginHostExportsJsonContext.Default.EnrichedMediaSummaryResponse);
             }
 
@@ -5677,6 +5725,73 @@ public static class PluginHostExports
             thumbnailUrl,
             description,
             metadata);
+    }
+
+    private static MediaSummary? EnrichGrpcPluginSearchMedia(string pluginId, Uri address, MediaSummary media)
+    {
+        var correlationId = Guid.NewGuid().ToString("n");
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+        var headers = BuildGrpcHeaders(pluginId, correlationId);
+
+        var request = new PluginContracts.EnrichSearchItemsRequest
+        {
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        };
+
+        request.Items.Add(MapPluginSearchContract(media));
+        var response = client.EnrichSearchItemsAsync(request, headers: headers, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        var enriched = response.Results.FirstOrDefault();
+        return enriched is null ? media : MapPluginSearchSummary(enriched);
+    }
+
+    private static PluginContracts.MediaSummary MapPluginSearchContract(MediaSummary media)
+    {
+        var result = new PluginContracts.MediaSummary
+        {
+            Id = media.Id.Value,
+            Source = media.SourceId,
+            Title = media.Title,
+            MediaType = ToMediaTypeString(media.MediaType),
+            ThumbnailUrl = media.ThumbnailUrl ?? string.Empty,
+            Description = media.Description ?? string.Empty
+        };
+
+        if (media.Metadata is { Count: > 0 })
+        {
+            result.Metadata.AddRange(media.Metadata.Select(static entry => new PluginContracts.KeyValue
+            {
+                Key = entry.Key,
+                Value = entry.Value
+            }));
+        }
+
+        return result;
+    }
+
+    private static Uri BuildPluginHostUri(Uri baseUri, string path)
+    {
+        var combinedPath = $"{baseUri.AbsolutePath.TrimEnd('/')}/{path.TrimStart('/')}";
+        if (!combinedPath.StartsWith('/'))
+        {
+            combinedPath = "/" + combinedPath;
+        }
+
+        var builder = new UriBuilder(baseUri)
+        {
+            Path = combinedPath,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+
+        return builder.Uri;
     }
 
     private static MediaType ParseMediaType(string? value)

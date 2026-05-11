@@ -4,11 +4,23 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Plugins;
 
+/// <summary>
+/// Normalizes and constrains plugin-declared filesystem paths to remain within the configured sandbox root.
+/// </summary>
+/// <param name="options">The plugin host options.</param>
+/// <param name="logger">The logger used for rejected path diagnostics.</param>
 public sealed class PluginPermissionSanitizer(IOptions<PluginHostOptions> options, ILogger<PluginPermissionSanitizer> logger)
 {
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginPermissionSanitizer> _logger = logger;
 
+    /// <summary>
+    /// Sanitizes a set of plugin paths so that only unique paths rooted under the plugin sandbox remain.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <param name="paths">The requested paths.</param>
+    /// <param name="source">A label describing where the paths were declared.</param>
+    /// <returns>The sanitized paths, or the original collection when no changes were required.</returns>
     public IReadOnlyList<string>? SanitizePaths(string pluginId, IReadOnlyList<string>? paths, string source)
     {
         if (paths is null || paths.Count == 0)

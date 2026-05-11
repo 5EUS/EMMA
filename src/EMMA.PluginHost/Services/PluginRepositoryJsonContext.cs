@@ -2,6 +2,9 @@ using System.Text.Json.Serialization;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Source-generated JSON serialization context for plugin repository contracts.
+/// </summary>
 [JsonSourceGenerationOptions(
     PropertyNameCaseInsensitive = true,
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,

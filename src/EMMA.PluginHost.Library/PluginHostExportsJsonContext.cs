@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EMMA.Domain;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Services;
 
@@ -19,6 +20,10 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(MediaSummary))]
 [JsonSerializable(typeof(IReadOnlyList<MediaSummary>))]
 [JsonSerializable(typeof(List<MediaSummary>))]
+[JsonSerializable(typeof(SearchItem))]
+[JsonSerializable(typeof(IReadOnlyList<SearchItem>))]
+[JsonSerializable(typeof(List<SearchItem>))]
+[JsonSerializable(typeof(PluginDevEnrichSearchItemsRequest))]
 [JsonSerializable(typeof(PluginHostExports.EnrichedMediaSummaryResponse))]
 [JsonSerializable(typeof(MediaChapter))]
 [JsonSerializable(typeof(IReadOnlyList<MediaChapter>))]

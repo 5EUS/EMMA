@@ -3,17 +3,46 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Plugins;
 
+/// <summary>
+/// Resolves installed plugin directories and executable or WASM entrypoints.
+/// </summary>
 public interface IPluginEntrypointResolver
 {
+    /// <summary>
+    /// Gets the sandbox root directory for the specified plugin identifier.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <returns>The absolute plugin root path.</returns>
     string GetPluginRoot(string pluginId);
+
+    /// <summary>
+    /// Resolves the default executable entrypoint for the supplied plugin manifest.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <returns>The resolved executable path.</returns>
     string ResolveEntrypoint(PluginManifest manifest);
+
+    /// <summary>
+    /// Attempts to resolve a WASM component binary for the supplied plugin manifest.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="componentPath">When successful, receives the resolved component path.</param>
+    /// <returns><see langword="true"/> when a component was found; otherwise, <see langword="false"/>.</returns>
     bool TryResolveWasmComponent(PluginManifest manifest, out string componentPath);
 }
 
+/// <summary>
+/// Locates process and WASM plugin entrypoints within an installed plugin directory.
+/// </summary>
 public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options) : IPluginEntrypointResolver
 {
     private readonly PluginHostOptions _options = options.Value;
 
+    /// <summary>
+    /// Gets the sandbox root directory for the specified plugin identifier.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <returns>The absolute plugin root path.</returns>
     public string GetPluginRoot(string pluginId)
     {
         if (string.IsNullOrWhiteSpace(pluginId))
@@ -24,6 +53,11 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         return Path.GetFullPath(Path.Combine(_options.SandboxRootDirectory, pluginId));
     }
 
+    /// <summary>
+    /// Resolves the default executable entrypoint for the supplied plugin manifest.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <returns>The resolved executable path.</returns>
     public string ResolveEntrypoint(PluginManifest manifest)
     {
         if (string.IsNullOrWhiteSpace(manifest.Protocol))
@@ -35,6 +69,12 @@ public sealed class PluginEntrypointResolver(IOptions<PluginHostOptions> options
         return ResolveDefaultEntrypoint(pluginRoot, manifest);
     }
 
+    /// <summary>
+    /// Attempts to resolve a WASM component binary for the supplied plugin manifest.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="componentPath">When successful, receives the resolved component path.</param>
+    /// <returns><see langword="true"/> when a component was found; otherwise, <see langword="false"/>.</returns>
     public bool TryResolveWasmComponent(PluginManifest manifest, out string componentPath)
     {
         componentPath = string.Empty;

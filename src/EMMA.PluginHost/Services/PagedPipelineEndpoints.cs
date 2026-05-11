@@ -1,11 +1,18 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Text;
+using System.Text.Json;
 using EMMA.Application.Pipelines;
 using EMMA.Application.Ports;
+using PluginContracts = EMMA.Contracts.Plugins;
 using EMMA.Domain;
 using EMMA.Infrastructure.InMemory;
 using EMMA.Infrastructure.Policy;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
+using Grpc.Core;
+using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Services;
@@ -165,6 +172,67 @@ public static class PagedPipelineEndpoints
             catch (Exception ex)
             {
                 return PipelineErrorContract.ToResult(ex, "paged.chapters");
+            }
+        });
+
+        app.MapPost("/pipeline/paged/search/enrich", async (
+            string? pluginId,
+            HttpRequest request,
+            PluginResolutionService pluginResolution,
+            IWasmPluginRuntimeHost wasmRuntimeHost,
+            PluginProcessManager processManager,
+            CancellationToken cancellationToken) =>
+        {
+            var (Record, Address, IsWasm, Error) = await ResolvePluginAsync(pluginId, pluginResolution, wasmRuntimeHost, cancellationToken);
+            if (Error is not null)
+            {
+                return Error;
+            }
+
+            var record = Record!;
+            using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
+
+            try
+            {
+                using var document = await JsonDocument.ParseAsync(request.Body, cancellationToken: cancellationToken);
+                var media = ParseEnrichMediaRequest(document.RootElement);
+
+                MediaSummary resolved;
+                if (IsWasm)
+                {
+                    var enriched = await wasmRuntimeHost.EnrichSearchMetadataAsync(
+                        record,
+                        [media.Id.Value],
+                        [media],
+                        cancellationToken);
+                    resolved = enriched.FirstOrDefault() ?? media;
+                }
+                else
+                {
+                    resolved = await EnrichGrpcPluginSearchMediaAsync(
+                            record.Manifest.Id,
+                            Address!,
+                            processManager,
+                            media,
+                            cancellationToken)
+                        ?? media;
+                }
+
+                return Results.Ok(new
+                {
+                    Id = resolved.Id.ToString(),
+                    SourceId = resolved.SourceId,
+                    Source = resolved.SourceId,
+                    resolved.Title,
+                    MediaType = resolved.MediaType.ToString().ToLowerInvariant(),
+                    resolved.ThumbnailUrl,
+                    resolved.Description,
+                    Metadata = resolved.Metadata
+                });
+            }
+            catch (Exception ex)
+            {
+                return PipelineErrorContract.ToResult(ex, "paged.search-enrich");
             }
         });
 
@@ -373,6 +441,231 @@ public static class PagedPipelineEndpoints
         });
 
         return app;
+    }
+
+    private static MediaSummary ParseEnrichMediaRequest(JsonElement root)
+    {
+        var mediaId = ReadJsonString(root, "id") ?? ReadJsonString(root, "mediaId");
+        if (string.IsNullOrWhiteSpace(mediaId))
+        {
+            throw new InvalidOperationException("Invalid enrich request: media id is required.");
+        }
+
+        var sourceId = ReadJsonString(root, "sourceId") ?? ReadJsonString(root, "source") ?? string.Empty;
+        var title = ReadJsonString(root, "title") ?? string.Empty;
+        var mediaType = ReadJsonString(root, "mediaType");
+        var thumbnailUrl = ReadJsonString(root, "thumbnailUrl") ?? ReadJsonString(root, "thumbnail_url");
+        var description = ReadJsonString(root, "description");
+        var metadata = ReadJsonMetadata(root, "metadata") ?? ReadJsonMetadata(root, "attributes");
+
+        return new MediaSummary(
+            MediaId.Create(mediaId),
+            sourceId,
+            title,
+            ParseMediaType(mediaType),
+            thumbnailUrl,
+            description,
+            metadata);
+    }
+
+    private static async Task<MediaSummary?> EnrichGrpcPluginSearchMediaAsync(
+        string pluginId,
+        Uri address,
+        PluginProcessManager processManager,
+        MediaSummary media,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+        using var httpClient = PluginGrpcHelpers.CreateHttpClient(address);
+        using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
+        {
+            HttpClient = httpClient
+        });
+        var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+        var headers = PluginGrpcHelpers.CreateHeaders(correlationId);
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+
+        var token = processManager.GetHostAuthToken(pluginId);
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            headers.Add("x-emma-plugin-host-auth", token);
+        }
+
+        var request = new PluginContracts.EnrichSearchItemsRequest
+        {
+            Context = PluginGrpcHelpers.CreateRequestContext(correlationId, deadlineUtc)
+        };
+        request.Items.Add(MapPluginSearchSummaryContract(media));
+
+        var response = await client.EnrichSearchItemsAsync(request, headers: headers, cancellationToken: cancellationToken);
+        var enriched = response.Results.FirstOrDefault();
+        return enriched is null ? media : MapPluginSearchSummary(enriched);
+    }
+
+    private static MediaSummary MapPluginSearchSummary(PluginContracts.MediaSummary item)
+    {
+        IReadOnlyDictionary<string, string>? metadata = null;
+        if (item.Metadata?.Count > 0)
+        {
+            var mapped = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in item.Metadata)
+            {
+                var key = entry.Key?.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                mapped[key] = entry.Value?.Trim() ?? string.Empty;
+            }
+
+            if (mapped.Count > 0)
+            {
+                metadata = mapped;
+            }
+        }
+
+        return new MediaSummary(
+            MediaId.Create(item.Id ?? string.Empty),
+            item.Source ?? string.Empty,
+            item.Title ?? string.Empty,
+            ParseMediaType(item.MediaType),
+            string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+            string.IsNullOrWhiteSpace(item.Description) ? null : item.Description,
+            metadata);
+    }
+
+    private static PluginContracts.MediaSummary MapPluginSearchSummaryContract(MediaSummary media)
+    {
+        var result = new PluginContracts.MediaSummary
+        {
+            Id = media.Id.Value,
+            Source = media.SourceId,
+            Title = media.Title,
+            MediaType = media.MediaType.ToString().ToLowerInvariant(),
+            ThumbnailUrl = media.ThumbnailUrl ?? string.Empty,
+            Description = media.Description ?? string.Empty
+        };
+
+        if (media.Metadata is { Count: > 0 })
+        {
+            result.Metadata.AddRange(media.Metadata.Select(static entry => new PluginContracts.KeyValue
+            {
+                Key = entry.Key,
+                Value = entry.Value
+            }));
+        }
+
+        return result;
+    }
+
+    private static string? ReadJsonString(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString(),
+            JsonValueKind.Number => property.ToString(),
+            JsonValueKind.True => bool.TrueString,
+            JsonValueKind.False => bool.FalseString,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyDictionary<string, string>? ReadJsonMetadata(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var property))
+        {
+            return null;
+        }
+
+        var metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (property.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var entry in property.EnumerateObject())
+            {
+                var key = entry.Name.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                metadata[key] = entry.Value.ValueKind switch
+                {
+                    JsonValueKind.String => entry.Value.GetString() ?? string.Empty,
+                    JsonValueKind.Number => entry.Value.ToString(),
+                    JsonValueKind.True => bool.TrueString,
+                    JsonValueKind.False => bool.FalseString,
+                    JsonValueKind.Null => string.Empty,
+                    _ => entry.Value.ToString()
+                };
+            }
+        }
+        else if (property.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in property.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var key = ReadJsonString(item, "key") ?? ReadJsonString(item, "name") ?? ReadJsonString(item, "label");
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                metadata[key.Trim()] = ReadJsonString(item, "value")
+                    ?? ReadJsonString(item, "text")
+                    ?? ReadJsonString(item, "data")
+                    ?? string.Empty;
+            }
+        }
+
+        return metadata.Count == 0 ? null : metadata;
+    }
+
+    private static bool TryGetJsonProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        if (element.TryGetProperty(propertyName, out value))
+        {
+            return true;
+        }
+
+        foreach (var candidate in element.EnumerateObject())
+        {
+            if (string.Equals(candidate.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = candidate.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static MediaType ParseMediaType(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim();
+        if (string.Equals(normalized, "video", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Video;
+        }
+
+        if (string.Equals(normalized, "audio", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "music", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(normalized, "podcast", StringComparison.OrdinalIgnoreCase))
+        {
+            return MediaType.Audio;
+        }
+
+        return MediaType.Paged;
     }
 
     private static PagedMediaPipeline CreatePipeline(

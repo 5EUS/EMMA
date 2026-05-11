@@ -14,6 +14,12 @@ namespace EMMA.PluginHost.Plugins;
 /// Minimal process supervisor for plugin startup and shutdown.
 /// TODO: Deprecate once a dedicated supervisor service is implemented.
 /// </summary>
+/// <param name="options">The plugin host options.</param>
+/// <param name="sandboxManager">The sandbox manager.</param>
+/// <param name="entrypointResolver">The plugin entrypoint resolver.</param>
+/// <param name="signatureOptions">The plugin signature options.</param>
+/// <param name="signatureVerifier">The plugin signature verifier.</param>
+/// <param name="logger">The logger used for process diagnostics.</param>
 public sealed class PluginProcessManager(
     IOptions<PluginHostOptions> options,
     IPluginSandboxManager sandboxManager,
@@ -107,6 +113,13 @@ public sealed class PluginProcessManager(
     private readonly Dictionary<string, SemaphoreSlim> _startupGuards = new(StringComparer.OrdinalIgnoreCase);
     private readonly Lock _lock = new();
 
+    /// <summary>
+    /// Ensures that a process-backed plugin runtime is started and ready.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="current">The current runtime status.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The updated runtime status.</returns>
     public async Task<PluginRuntimeStatus> EnsureStartedAsync(
         PluginManifest manifest,
         PluginRuntimeStatus current,
@@ -393,6 +406,12 @@ public sealed class PluginProcessManager(
         return Version.TryParse(normalized, out version!);
     }
 
+    /// <summary>
+    /// Stops the managed process for a plugin, if one exists.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when the process has stopped.</returns>
     public async Task StopAsync(string pluginId, CancellationToken cancellationToken)
     {
         ProcessHandle? handle = null;
@@ -413,6 +432,11 @@ public sealed class PluginProcessManager(
         await StopHandleAsync(pluginId, handle, cancellationToken);
     }
 
+    /// <summary>
+    /// Stops all managed plugin processes.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when all managed processes have stopped.</returns>
     public async Task StopAllAsync(CancellationToken cancellationToken)
     {
         List<string> pluginIds;
@@ -427,6 +451,11 @@ public sealed class PluginProcessManager(
         }
     }
 
+    /// <summary>
+    /// Acquires a usage lease that marks the plugin process as in use until disposed.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <returns>A disposable lease handle.</returns>
     public IDisposable AcquireUsageLease(string pluginId)
     {
         if (string.IsNullOrWhiteSpace(pluginId))
@@ -447,6 +476,11 @@ public sealed class PluginProcessManager(
         }
     }
 
+    /// <summary>
+    /// Stops processes that have been idle past the configured threshold.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The identifiers of the stopped plugins.</returns>
     public async Task<IReadOnlyList<string>> StopIdleProcessesAsync(CancellationToken cancellationToken)
     {
         var idleFor = TimeSpan.FromSeconds(Math.Max(1, _options.PluginIdleTimeoutSeconds));
@@ -491,6 +525,11 @@ public sealed class PluginProcessManager(
         return stopped;
     }
 
+    /// <summary>
+    /// Records a timeout transition and computes the next retry or quarantine state.
+    /// </summary>
+    /// <param name="current">The current runtime status.</param>
+    /// <returns>The updated runtime status.</returns>
     public PluginRuntimeStatus RecordTimeout(PluginRuntimeStatus current)
     {
         var retryCount = current.RetryCount + 1;
@@ -503,6 +542,11 @@ public sealed class PluginProcessManager(
         return current.WithRetry(retryCount, nextRetryAt, "rpc-timeout", "Plugin RPC timed out.");
     }
 
+    /// <summary>
+    /// Determines whether the managed process for a plugin is currently running.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <returns><see langword="true"/> when the plugin process is running; otherwise, <see langword="false"/>.</returns>
     public bool IsProcessRunning(string pluginId)
     {
         if (string.IsNullOrWhiteSpace(pluginId))
@@ -624,6 +668,11 @@ public sealed class PluginProcessManager(
         }
     }
 
+    /// <summary>
+    /// Gets the generated host authentication token for a managed plugin process.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <returns>The host authentication token, or <see langword="null"/> when none is tracked.</returns>
     public string? GetHostAuthToken(string pluginId)
     {
         if (string.IsNullOrWhiteSpace(pluginId))
@@ -639,6 +688,12 @@ public sealed class PluginProcessManager(
         }
     }
 
+    /// <summary>
+    /// Gets the captured process logs for a plugin.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <param name="take">The optional number of trailing log lines to return.</param>
+    /// <returns>The captured log lines.</returns>
     public IReadOnlyList<string> GetLogs(string pluginId, int? take)
     {
         lock (_lock)

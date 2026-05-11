@@ -152,6 +152,83 @@ public sealed class PluginDefaultSearchProviderService<TRuntime>(
                     $"Search request failed: {ex.GetType().Name}: {ex.Message}"));
         }
     }
+
+    /// <summary>
+    /// Handles a gRPC search-enrichment request by delegating to the runtime when supported.
+    /// </summary>
+    /// <param name="request">The incoming enrichment request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing enriched search items.</returns>
+    public override async Task<EnrichSearchItemsResponse> EnrichSearchItems(EnrichSearchItemsRequest request, ServerCallContext context)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var correlationId = PluginRequestContext.GetCorrelationId(context, request.Context?.CorrelationId);
+
+        try
+        {
+            var response = new EnrichSearchItemsResponse();
+            var items = request.Items.Select(MapContractSearchItem).ToArray();
+
+            IReadOnlyList<SearchItem> enriched = items;
+            if (_runtime is IPluginSearchMetadataRuntime metadataRuntime)
+            {
+                enriched = await metadataRuntime.EnrichSearchItemsAsync(items, context.CancellationToken);
+            }
+
+            response.Results.AddRange(enriched.Select(MapRuntimeSearchItem));
+            _metrics.RecordRpc("search", "EnrichSearchItems", EmmaTelemetry.Outcomes.Ok, stopwatch.Elapsed.TotalMilliseconds);
+            return response;
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            _metrics.RecordRpc("search", "EnrichSearchItems", EmmaTelemetry.Outcomes.Cancelled, stopwatch.Elapsed.TotalMilliseconds);
+            throw new RpcException(new Status(StatusCode.Cancelled, "Search enrichment request was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            _metrics.RecordRpc("search", "EnrichSearchItems", EmmaTelemetry.Outcomes.Error, stopwatch.Elapsed.TotalMilliseconds);
+            _logger.LogError(ex, "Search enrichment request {CorrelationId} failed.", correlationId);
+            throw new RpcException(
+                new Status(
+                    StatusCode.Internal,
+                    $"Search enrichment failed: {ex.GetType().Name}: {ex.Message}"));
+        }
+    }
+
+    private static SearchItem MapContractSearchItem(MediaSummary item)
+    {
+        var metadata = item.Metadata.Count == 0
+            ? null
+            : item.Metadata.Select(static entry => new MetadataItem(entry.Key, entry.Value)).ToArray();
+
+        return new SearchItem(
+            item.Id,
+            item.Source,
+            item.Title,
+            item.MediaType,
+            string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+            string.IsNullOrWhiteSpace(item.Description) ? null : item.Description,
+            metadata);
+    }
+
+    private static MediaSummary MapRuntimeSearchItem(SearchItem item)
+    {
+        var metadata = item.metadata?.Count > 0
+            ? item.metadata.Select(static entry => new KeyValue { Key = entry.key, Value = entry.value }).ToArray()
+            : [];
+
+        var summary = new MediaSummary
+        {
+            Id = item.id,
+            Source = item.source,
+            Title = item.title,
+            MediaType = item.mediaType,
+            ThumbnailUrl = item.thumbnailUrl ?? string.Empty,
+            Description = item.description ?? string.Empty
+        };
+        summary.Metadata.AddRange(metadata);
+        return summary;
+    }
 }
 
 /// <summary>

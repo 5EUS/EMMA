@@ -10,6 +10,9 @@ import "request_context.proto";
 service SearchProvider {
   // Searches the plugin source for media that matches the request.
   rpc Search (SearchRequest) returns (SearchResponse);
+
+  // Enriches previously discovered search items with additional metadata.
+  rpc EnrichSearchItems (EnrichSearchItemsRequest) returns (EnrichSearchItemsResponse);
 }
 
 // Requests a media search from a plugin.
@@ -66,6 +69,21 @@ message SearchQueryAddition {
 // Returns the results of a plugin search.
 message SearchResponse {
   // The media summaries returned by the search.
+  repeated MediaSummary results = 1;
+}
+
+// Requests metadata enrichment for previously returned search items.
+message EnrichSearchItemsRequest {
+  // The search items to enrich.
+  repeated MediaSummary items = 1;
+
+  // Carries correlation and deadline metadata for the request.
+  RequestContext context = 100;
+}
+
+// Returns enriched search items.
+message EnrichSearchItemsResponse {
+  // The enriched media summaries.
   repeated MediaSummary results = 1;
 }
 

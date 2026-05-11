@@ -150,8 +150,13 @@ public static partial class NativeExports
                 return IntPtr.Zero;
             }
 
-            EnsurePluginHostInitialized();
-            var enrichedJson = PluginHostExports.EnrichMediaJsonManaged(activePluginId, mediaJson);
+            var enrichedJson = TryGetRemotePluginHostBaseUri(out var remoteBaseUri)
+                ? HttpSendJson(
+                    remoteBaseUri,
+                    $"/pipeline/paged/search/enrich?pluginId={Uri.EscapeDataString(activePluginId)}",
+                    HttpMethod.Post,
+                    mediaJson)
+                : EnrichViaEmbeddedPluginHost(activePluginId, mediaJson);
             if (enrichedJson is null)
             {
                 var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host enrichment returned null.";
@@ -177,6 +182,12 @@ public static partial class NativeExports
                 $"handle={handle}, pluginId={pluginIdForLog}, responseBytes={responseBytesForLog}, success={success}",
                 forceInfo: true);
         }
+    }
+
+    private static string? EnrichViaEmbeddedPluginHost(string pluginId, string mediaJson)
+    {
+        EnsurePluginHostInitialized();
+        return PluginHostExports.EnrichMediaJsonManaged(pluginId, mediaJson);
     }
 
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_chapters_json")]

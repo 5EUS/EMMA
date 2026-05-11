@@ -7,6 +7,11 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Fetches repository catalogs and artifacts over HTTP using the configured repository policy.
+/// </summary>
+/// <param name="options">The plugin host options.</param>
+/// <param name="logger">The logger used for HTTP diagnostics.</param>
 public sealed class PluginRepositoryCatalogClient(
     IOptions<PluginHostOptions> options,
     ILogger<PluginRepositoryCatalogClient> logger)
@@ -14,6 +19,12 @@ public sealed class PluginRepositoryCatalogClient(
     private readonly PluginHostOptions _options = options.Value;
     private readonly ILogger<PluginRepositoryCatalogClient> _logger = logger;
 
+    /// <summary>
+    /// Fetches and parses the catalog for a configured repository.
+    /// </summary>
+    /// <param name="repository">The repository to fetch.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The catalog fetch result.</returns>
     public async Task<PluginRepositoryCatalogFetchResult> FetchCatalogAsync(
         PluginRepositoryRecord repository,
         CancellationToken cancellationToken)
@@ -80,6 +91,14 @@ public sealed class PluginRepositoryCatalogClient(
             RetrievedAtUtc: DateTimeOffset.UtcNow);
     }
 
+    /// <summary>
+    /// Downloads a repository release artifact to a temporary file and returns its computed digest.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="assetUrl">The artifact URL.</param>
+    /// <param name="destinationDirectory">The destination directory for the temporary file.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The downloaded file path, SHA-256 digest, and content length.</returns>
     public async Task<(string FilePath, string Sha256Hex, long ContentLength)> DownloadArtifactAsync(
         string repositoryId,
         string assetUrl,
@@ -145,6 +164,13 @@ public sealed class PluginRepositoryCatalogClient(
         return (tempFilePath, sha256Hex, totalRead);
     }
 
+    /// <summary>
+    /// Downloads a text resource subject to a maximum size limit.
+    /// </summary>
+    /// <param name="url">The remote URL.</param>
+    /// <param name="maxBytes">The maximum allowed response size in bytes.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The downloaded text content.</returns>
     public async Task<string> DownloadTextAsync(
         string url,
         int maxBytes,
