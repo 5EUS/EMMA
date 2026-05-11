@@ -241,6 +241,7 @@ public class MyCommands
     {
         if (IsAllScope(scope))
         {
+            var failed = false;
             await ExecuteAcrossProfilesAsync(async profile =>
             {
                 var session = PluginDevSessionHolder.RequireCurrent();
@@ -252,9 +253,22 @@ public class MyCommands
                 }
 
                 Console.WriteLine($"[{profile.Name}] Running build plan '{plan.Name}'...");
-                var output = await _application.BuildAsync(CancellationToken.None);
-                Console.WriteLine(output);
+                try
+                {
+                    var output = await _application.BuildAsync(CancellationToken.None);
+                    Console.WriteLine(output);
+                }
+                catch (PluginDevBuildException ex)
+                {
+                    failed = true;
+                    WriteBuildFailure(ex, profile.Name);
+                }
             });
+
+            if (failed)
+            {
+                Environment.ExitCode = 1;
+            }
 
             return;
         }
@@ -268,8 +282,16 @@ public class MyCommands
         }
 
         Console.WriteLine($"Running build plan '{plan.Name}'...");
-        var output = await _application.BuildAsync(CancellationToken.None);
-        Console.WriteLine(output);
+        try
+        {
+            var output = await _application.BuildAsync(CancellationToken.None);
+            Console.WriteLine(output);
+        }
+        catch (PluginDevBuildException ex)
+        {
+            Environment.ExitCode = 1;
+            WriteBuildFailure(ex);
+        }
     }
 
     [Command("pack")]
@@ -296,6 +318,7 @@ public class MyCommands
     {
         if (IsAllScope(scope))
         {
+            var failed = false;
             await ExecuteAcrossProfilesAsync(async profile =>
             {
                 var session = PluginDevSessionHolder.RequireCurrent();
@@ -307,12 +330,26 @@ public class MyCommands
                 }
 
                 Console.WriteLine($"[{profile.Name}] Running build plan '{plan.Name}'...");
-                var output = await _application.BuildAsync(CancellationToken.None);
-                Console.WriteLine(output);
+                try
+                {
+                    var output = await _application.BuildAsync(CancellationToken.None);
+                    Console.WriteLine(output);
+                }
+                catch (PluginDevBuildException ex)
+                {
+                    failed = true;
+                    WriteBuildFailure(ex, profile.Name);
+                    return;
+                }
 
                 var packResult = _application.Pack();
                 WritePackResult(profile.Name, packResult);
             });
+
+            if (failed)
+            {
+                Environment.ExitCode = 1;
+            }
 
             return;
         }
@@ -326,8 +363,17 @@ public class MyCommands
         }
 
         Console.WriteLine($"Running build plan '{activePlan.Name}'...");
-        var buildOutput = await _application.BuildAsync(CancellationToken.None);
-        Console.WriteLine(buildOutput);
+        try
+        {
+            var buildOutput = await _application.BuildAsync(CancellationToken.None);
+            Console.WriteLine(buildOutput);
+        }
+        catch (PluginDevBuildException ex)
+        {
+            Environment.ExitCode = 1;
+            WriteBuildFailure(ex);
+            return;
+        }
 
         var result = _application.Pack();
         WritePackResult(null, result);
@@ -510,7 +556,7 @@ public class MyCommands
     public Task Help()
     {
         Console.WriteLine("Available commands:");
-        Console.WriteLine("  build [all]                                    Run the normalized build plan for the active profile or every profile");
+        Console.WriteLine("  build [all]                                    Run the normalized build plan (on macOS, WASM profiles auto-resolve to Docker when available)");
         Console.WriteLine("  build-pack [all]                               Build then package the active profile or every profile");
         Console.WriteLine("  doctor                                         Show discovery and pre-launch diagnostics");
         Console.WriteLine("  pack [all]                                     Package the active profile or every profile");
@@ -559,6 +605,14 @@ public class MyCommands
         }
 
         throw new InvalidOperationException($"Unknown scope '{scope}'. Use 'all' or omit the argument.");
+    }
+
+    private static void WriteBuildFailure(PluginDevBuildException ex, string? profileName = null)
+    {
+        var prefix = string.IsNullOrWhiteSpace(profileName) ? string.Empty : $"[{profileName}] ";
+        var details = string.IsNullOrWhiteSpace(ex.UserFacingOutput) ? ex.Message : ex.UserFacingOutput;
+        Console.Error.WriteLine($"{prefix}Build failed using plan '{ex.PlanName}' (exit code {ex.ExitCode}).");
+        Console.Error.WriteLine(details);
     }
 
     private static void WritePackResult(string? profileName, PluginDevPackResult result)

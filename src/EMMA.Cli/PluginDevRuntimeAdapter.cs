@@ -1206,13 +1206,92 @@ public sealed class PluginDevBuildService
 {
     public PluginDevBuildPlan? GetBuildPlan(PluginDevSession session)
     {
-        return session.Profile.RuntimeTarget switch
+        var plan = session.Profile.RuntimeTarget switch
         {
             PluginRuntimeTarget.Wasm => CreateWasmBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Wasm), session.Profile.WasiSdkPath),
             PluginRuntimeTarget.Linux => CreateNativeBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Linux), PluginRuntimeTarget.Linux),
             PluginRuntimeTarget.Windows => CreateNativeBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Windows), PluginRuntimeTarget.Windows),
             _ => null
         };
+
+        if (plan is null)
+        {
+            return null;
+        }
+
+        if (OperatingSystem.IsMacOS() && session.Profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
+        {
+            return CreateMacWasmDockerBuildPlan(session, plan) ?? plan;
+        }
+
+        return plan;
+    }
+
+    private static PluginDevBuildPlan? CreateMacWasmDockerBuildPlan(PluginDevSession session, PluginDevBuildPlan fallbackPlan)
+    {
+        var rootDirectory = session.Discovery.RootDirectory;
+        var scriptPath = Path.Combine(rootDirectory, "scripts", "build-pack-plugin-docker.sh");
+        if (!File.Exists(scriptPath))
+        {
+            return null;
+        }
+
+        var manifestPath = session.Discovery.ManifestPath;
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        var command = BuildMacDockerBuildCommand(session, scriptPath, manifestPath);
+        return new PluginDevBuildPlan(
+            "wasm-build-docker",
+            rootDirectory,
+            "bash",
+            ["-lc", command],
+            fallbackPlan.ArtifactPath,
+            "Normalized WASM Docker build plan selected automatically on macOS.");
+    }
+
+    private static string BuildMacDockerBuildCommand(PluginDevSession session, string scriptPath, string manifestPath)
+    {
+        var envAssignments = new List<string>();
+
+        var dockerImage = Environment.GetEnvironmentVariable("EMMA_DOCKER_IMAGE");
+        if (!string.IsNullOrWhiteSpace(dockerImage))
+        {
+            envAssignments.Add($"DOCKER_IMAGE={PluginDevProcessRunner.QuoteForShell(dockerImage)}");
+        }
+
+        var dockerPlatform = Environment.GetEnvironmentVariable("EMMA_DOCKER_PLATFORM");
+        if (!string.IsNullOrWhiteSpace(dockerPlatform))
+        {
+            envAssignments.Add($"DOCKER_PLATFORM={PluginDevProcessRunner.QuoteForShell(dockerPlatform)}");
+        }
+
+        var dockerTargets = Environment.GetEnvironmentVariable("EMMA_DOCKER_TARGETS");
+        if (string.IsNullOrWhiteSpace(dockerTargets))
+        {
+            dockerTargets = "wasm";
+        }
+
+        envAssignments.Add($"TARGETS={PluginDevProcessRunner.QuoteForShell(dockerTargets)}");
+
+        var wasiSdkHostPath = Environment.GetEnvironmentVariable("EMMA_WASI_SDK_HOST_PATH");
+        if (string.IsNullOrWhiteSpace(wasiSdkHostPath))
+        {
+            wasiSdkHostPath = session.Profile.WasiSdkPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(wasiSdkHostPath))
+        {
+            envAssignments.Add($"WASI_SDK_HOST_PATH={PluginDevProcessRunner.QuoteForShell(wasiSdkHostPath)}");
+        }
+
+        var envPrefix = envAssignments.Count == 0
+            ? string.Empty
+            : string.Join(" ", envAssignments) + " ";
+
+        return $"{envPrefix}{PluginDevProcessRunner.QuoteForShell(scriptPath)} {PluginDevProcessRunner.QuoteForShell(manifestPath)}";
     }
 
     private static PluginDevBuildPlan? CreateWasmBuildPlan(string rootDirectory, string? projectPath, string? wasiSdkPath)
