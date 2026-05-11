@@ -692,23 +692,24 @@ public sealed class WasmPluginRuntimeHost(
 
     private static WasmQueryArgs ToWasmQueryArgs(PluginSearchQuery query)
     {
-        var filters = query.Filters.Count == 0
-            ? null
-            : query.Filters.Select(static filter => new WasmSearchFilterArg(
+        var mediaTypes = query.MediaTypes?.Where(static mediaType => !string.IsNullOrWhiteSpace(mediaType)).ToArray();
+        var filters = query.Filters?.Count > 0
+            ? query.Filters.Select(static filter => new WasmSearchFilterArg(
                 filter.Id,
                 filter.Values,
-                filter.Operation)).ToArray();
+                filter.Operation)).ToArray()
+            : null;
 
-        var additions = query.QueryAdditions.Count == 0
-            ? null
-            : query.QueryAdditions.Select(static addition => new WasmSearchQueryAdditionArg(
+        var additions = query.QueryAdditions?.Count > 0
+            ? query.QueryAdditions.Select(static addition => new WasmSearchQueryAdditionArg(
                 addition.Id,
                 addition.Value,
-                addition.Type)).ToArray();
+                addition.Type)).ToArray()
+            : null;
 
         return new WasmQueryArgs(
             query.Query,
-            query.MediaTypes.Count == 0 ? null : query.MediaTypes,
+            mediaTypes is { Length: > 0 } ? mediaTypes : null,
             filters,
             additions,
             query.Sort,

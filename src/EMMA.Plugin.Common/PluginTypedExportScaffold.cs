@@ -23,6 +23,22 @@ public static class PluginTypedExportScaffold
     }
 
     /// <summary>
+    /// Maps an optional list of input items into a new output list by using the supplied mapper.
+    /// </summary>
+    /// <param name="items">The optional input items to map.</param>
+    /// <param name="mapper">The mapper that converts each input item.</param>
+    /// <returns>A new list containing the mapped items, or an empty list when <paramref name="items"/> is null or empty.</returns>
+    public static List<TOut> MapOptionalList<TIn, TOut>(IReadOnlyList<TIn>? items, Func<TIn, TOut> mapper)
+    {
+        if (items is null || items.Count == 0)
+        {
+            return [];
+        }
+
+        return MapList(items, mapper);
+    }
+
+    /// <summary>
     /// Maps a nullable reference value when it is present.
     /// </summary>
     /// <param name="item">The optional item to map.</param>
@@ -33,6 +49,70 @@ public static class PluginTypedExportScaffold
         where TOut : class
     {
         return item is null ? null : mapper(item);
+    }
+
+    /// <summary>
+    /// Resolves a search payload, invokes the search callback, and maps the returned items to a typed export surface.
+    /// </summary>
+    public static List<TWire> ResolveSearchResults<TDomain, TWire>(
+        string query,
+        string? payloadJson,
+        Func<PluginSearchQuery, string?, string> payloadResolver,
+        Func<string, string, IReadOnlyList<TDomain>> search,
+        Func<TDomain, TWire> mapper)
+    {
+        var parsedQuery = PluginSearchQuery.Parse(query, fallbackQuery: query);
+        var resolvedPayload = payloadResolver(parsedQuery, payloadJson);
+        return MapList(search(query, resolvedPayload), mapper);
+    }
+
+    /// <summary>
+    /// Resolves a chapter payload, invokes the chapter callback, and maps the returned items to a typed export surface.
+    /// </summary>
+    public static List<TWire> ResolveChapterResults<TDomain, TWire>(
+        string mediaId,
+        string? payloadJson,
+        Func<string, string?, string> payloadResolver,
+        Func<string, string, IReadOnlyList<TDomain>> chapters,
+        Func<TDomain, TWire> mapper)
+    {
+        var resolvedPayload = payloadResolver(mediaId, payloadJson);
+        return MapList(chapters(mediaId, resolvedPayload), mapper);
+    }
+
+    /// <summary>
+    /// Resolves a page payload, invokes the page callback, and maps the returned item to a typed export surface.
+    /// </summary>
+    public static TWire? ResolvePageResult<TDomain, TWire>(
+        string mediaId,
+        string chapterId,
+        uint pageIndex,
+        string? payloadJson,
+        Func<string, string?, string> payloadResolver,
+        Func<string, string, uint, string, TDomain?> page,
+        Func<TDomain, TWire> mapper)
+        where TDomain : class
+        where TWire : class
+    {
+        var resolvedPayload = payloadResolver(chapterId, payloadJson);
+        return MapNullable(page(mediaId, chapterId, pageIndex, resolvedPayload), mapper);
+    }
+
+    /// <summary>
+    /// Resolves a page-range payload, invokes the pages callback, and maps the returned items to a typed export surface.
+    /// </summary>
+    public static List<TWire> ResolvePageResults<TDomain, TWire>(
+        string mediaId,
+        string chapterId,
+        uint startIndex,
+        uint count,
+        string? payloadJson,
+        Func<string, string?, string> payloadResolver,
+        Func<string, string, uint, uint, string, IReadOnlyList<TDomain>> pages,
+        Func<TDomain, TWire> mapper)
+    {
+        var resolvedPayload = payloadResolver(chapterId, payloadJson);
+        return MapList(pages(mediaId, chapterId, startIndex, count, resolvedPayload), mapper);
     }
 
     /// <summary>
@@ -77,5 +157,47 @@ public static class PluginTypedExportScaffold
         }
 
         return new PluginOperationErrorInfo(PluginOperationErrorKind.Failed, fallbackMessage);
+    }
+
+    /// <summary>
+    /// Maps a serialized operation error into a caller-defined exception or error payload.
+    /// </summary>
+    public static TError MapOperationError<TError>(
+        string? error,
+        Func<string, TError> unsupportedFactory,
+        Func<string, TError> invalidArgumentsFactory,
+        Func<string, TError> failedFactory)
+    {
+        var parsed = ResolveOperationError(error);
+
+        return parsed.Kind switch
+        {
+            PluginOperationErrorKind.UnsupportedOperation => unsupportedFactory(parsed.Message),
+            PluginOperationErrorKind.InvalidArguments => invalidArgumentsFactory(parsed.Message),
+            _ => failedFactory(parsed.Message)
+        };
+    }
+
+    /// <summary>
+    /// Converts a generic operation result into a typed response, throwing a caller-defined error when the operation failed.
+    /// </summary>
+    public static TResponse ToOperationResponseOrThrow<TResponse, TError>(
+        OperationResult result,
+        Func<string, string, TResponse> responseFactory,
+        Func<string, TError> unsupportedFactory,
+        Func<string, TError> invalidArgumentsFactory,
+        Func<string, TError> failedFactory)
+        where TError : Exception
+    {
+        if (result.isError)
+        {
+            throw MapOperationError(
+                result.error,
+                unsupportedFactory,
+                invalidArgumentsFactory,
+                failedFactory);
+        }
+
+        return responseFactory(result.contentType, result.payloadJson);
     }
 }

@@ -26,4 +26,9 @@ public sealed class PluginWasmExportsAttribute(
     /// Gets additional serializable types that are part of the export surface.
     /// </summary>
     public IReadOnlyList<Type> AdditionalSerializableTypes { get; } = additionalSerializableTypes;
+
+    /// <summary>
+    /// Gets or sets the namespace that should receive the generated standard WIT export bridge.
+    /// </summary>
+    public string? ExportBridgeNamespace { get; init; }
 }

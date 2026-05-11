@@ -1,5 +1,6 @@
 using System.Net;
 using EMMA.Contracts.Plugins;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
@@ -269,6 +270,14 @@ public sealed class PluginHandshakeTests
         }
 
         public Task<IReadOnlyList<EMMA.Domain.MediaSummary>> SearchAsync(PluginRecord record, string query, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+            PluginRecord record,
+            SearchSuggestionRequest request,
+            CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
         }

@@ -63,9 +63,7 @@ public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
         var operations = new List<ResolvedOperation>();
         foreach (var operation in StandardOperations)
         {
-            var method = hostType.GetMembers(operation.HostMethodName)
-                .OfType<IMethodSymbol>()
-                .FirstOrDefault(candidate => candidate.Parameters.Length == operation.ParameterCount);
+            var method = FindOperationMethod(hostType, operation.HostMethodName, operation.ParameterCount);
 
             if (method is null)
             {
@@ -86,7 +84,39 @@ public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
                 .ToImmutableArray();
         }
 
-        return new ExportModel(programType, hostType, jsonContextType, operations.ToImmutableArray(), extraSerializableTypes);
+        string? exportBridgeNamespace = null;
+        foreach (var namedArgument in attribute.NamedArguments)
+        {
+            if (namedArgument.Key == "ExportBridgeNamespace"
+                && namedArgument.Value.Value is string namespaceValue
+                && !string.IsNullOrWhiteSpace(namespaceValue))
+            {
+                exportBridgeNamespace = namespaceValue;
+                break;
+            }
+        }
+
+        return new ExportModel(programType, hostType, jsonContextType, operations.ToImmutableArray(), extraSerializableTypes, exportBridgeNamespace);
+    }
+
+    private static IMethodSymbol? FindOperationMethod(INamedTypeSymbol hostType, string methodName, int parameterCount)
+    {
+        for (var current = hostType; current is not null; current = current.BaseType)
+        {
+            var method = current.GetMembers(methodName)
+                .OfType<IMethodSymbol>()
+                .FirstOrDefault(candidate =>
+                    !candidate.IsStatic
+                    && candidate.MethodKind == MethodKind.Ordinary
+                    && candidate.Parameters.Length == parameterCount);
+
+            if (method is not null)
+            {
+                return method;
+            }
+        }
+
+        return null;
     }
 
     private static void Emit(SourceProductionContext context, ExportModel model)
@@ -94,6 +124,13 @@ public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
         context.AddSource(
             $"{model.ProgramType.Name}.PluginWasmExports.g.cs",
             BuildProgramSource(model));
+
+        if (!string.IsNullOrWhiteSpace(model.ExportBridgeNamespace))
+        {
+            context.AddSource(
+                $"{model.ProgramType.Name}.PluginImpl.g.cs",
+                BuildTypedExportBridgeSource(model));
+        }
     }
 
     private static string BuildProgramSource(ExportModel model)
@@ -208,6 +245,119 @@ public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
         return type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
     }
 
+    private static string BuildTypedExportBridgeSource(ExportModel model)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("#if PLUGIN_TRANSPORT_WASM");
+        builder.AppendLine("using global::EMMA.Plugin.Common;");
+        builder.AppendLine("using global::LibraryWorld;");
+        builder.AppendLine("using global::LibraryWorld.wit.imports.emma.plugin;");
+        builder.AppendLine();
+        builder.Append("namespace ").Append(model.ExportBridgeNamespace).AppendLine(";");
+        builder.AppendLine();
+        builder.AppendLine("public static partial class PluginImpl");
+        builder.AppendLine("{");
+        builder.AppendLine("    public static IPlugin.HandshakeResponse Handshake()");
+        builder.AppendLine("    {");
+        builder.Append("        var handshake = ")
+            .Append(GetTypeName(model.ProgramType))
+            .AppendLine(".handshake();");
+        builder.AppendLine("        return new IPlugin.HandshakeResponse(handshake.version, handshake.message);");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("    public static List<IPlugin.Capability> Capabilities()");
+        builder.AppendLine("    {");
+        builder.Append("        var capabilities = ")
+            .Append(GetTypeName(model.ProgramType))
+            .AppendLine(".capabilities();");
+        builder.AppendLine("        return PluginTypedExportScaffold.MapList(");
+        builder.AppendLine("            capabilities,");
+        builder.AppendLine("            capability => new IPlugin.Capability(");
+        builder.AppendLine("                capability.name,");
+        builder.AppendLine("                [.. capability.mediaTypes],");
+        builder.AppendLine("                [.. capability.operations]));");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("    public static List<IPlugin.MediaSearchItem> Search(string query, string payloadJson)");
+        builder.AppendLine("    {");
+        builder.AppendLine("        return PluginTypedExportScaffold.ResolveSearchResults(");
+        builder.AppendLine("            query,");
+        builder.AppendLine("            payloadJson,");
+        builder.AppendLine("            ResolveSearchPayload,");
+        builder.Append("            ").Append(GetTypeName(model.ProgramType)).AppendLine(".search,");
+        builder.AppendLine("            static item => new IPlugin.MediaSearchItem(");
+        builder.AppendLine("                item.id,");
+        builder.AppendLine("                item.source,");
+        builder.AppendLine("                item.title,");
+        builder.AppendLine("                item.mediaType,");
+        builder.AppendLine("                item.thumbnailUrl,");
+        builder.AppendLine("                item.description,");
+        builder.AppendLine("                PluginTypedExportScaffold.MapOptionalList(");
+        builder.AppendLine("                    item.metadata,");
+        builder.AppendLine("                    static metadataItem => new IPlugin.KeyValue(metadataItem.key, metadataItem.value))));");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("    public static List<IPlugin.ChapterItem> Chapters(string mediaId, string payloadJson)");
+        builder.AppendLine("    {");
+        builder.AppendLine("        return PluginTypedExportScaffold.ResolveChapterResults(");
+        builder.AppendLine("            mediaId,");
+        builder.AppendLine("            payloadJson,");
+        builder.AppendLine("            ResolveChaptersPayload,");
+        builder.Append("            ").Append(GetTypeName(model.ProgramType)).AppendLine(".chapters,");
+        builder.AppendLine("            static item => new IPlugin.ChapterItem(");
+        builder.AppendLine("                item.id,");
+        builder.AppendLine("                checked((uint)item.number),");
+        builder.AppendLine("                item.title,");
+        builder.AppendLine("                [.. item.uploaderGroups ?? []]));");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("    public static IPlugin.PageItem? Page(string mediaId, string chapterId, uint pageIndex, string payloadJson)");
+        builder.AppendLine("    {");
+        builder.AppendLine("        return PluginTypedExportScaffold.ResolvePageResult(");
+        builder.AppendLine("            mediaId,");
+        builder.AppendLine("            chapterId,");
+        builder.AppendLine("            pageIndex,");
+        builder.AppendLine("            payloadJson,");
+        builder.AppendLine("            ResolvePagePayload,");
+        builder.Append("            ").Append(GetTypeName(model.ProgramType)).AppendLine(".page,");
+        builder.AppendLine("            static value => new IPlugin.PageItem(value.id, checked((uint)value.index), value.contentUri));");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("    public static List<IPlugin.PageItem> Pages(string mediaId, string chapterId, uint startIndex, uint count, string payloadJson)");
+        builder.AppendLine("    {");
+        builder.AppendLine("        return PluginTypedExportScaffold.ResolvePageResults(");
+        builder.AppendLine("            mediaId,");
+        builder.AppendLine("            chapterId,");
+        builder.AppendLine("            startIndex,");
+        builder.AppendLine("            count,");
+        builder.AppendLine("            payloadJson,");
+        builder.AppendLine("            ResolvePagesPayload,");
+        builder.Append("            ").Append(GetTypeName(model.ProgramType)).AppendLine(".pages,");
+        builder.AppendLine("            static page => new IPlugin.PageItem(page.id, checked((uint)page.index), page.contentUri));");
+        builder.AppendLine("    }");
+        builder.AppendLine();
+        builder.AppendLine("    public static IPlugin.MediaOperationResponse Invoke(IPlugin.MediaOperationRequest request)");
+        builder.AppendLine("    {");
+        builder.AppendLine("        var payload = ResolveInvokePayload(request);");
+        builder.Append("        var result = ").Append(GetTypeName(model.ProgramType)).AppendLine(".invoke(new OperationRequest(");
+        builder.AppendLine("            request.operation,");
+        builder.AppendLine("            request.mediaId,");
+        builder.AppendLine("            request.mediaType,");
+        builder.AppendLine("            request.argsJson,");
+        builder.AppendLine("            payload));");
+        builder.AppendLine();
+        builder.AppendLine("        return PluginTypedExportScaffold.ToOperationResponseOrThrow(");
+        builder.AppendLine("            result,");
+        builder.AppendLine("            static (contentType, payloadJson) => new IPlugin.MediaOperationResponse(contentType, payloadJson),");
+        builder.AppendLine("            static message => new WitException<IPlugin.OperationError>(IPlugin.OperationError.UnsupportedOperation(message), 0),");
+        builder.AppendLine("            static message => new WitException<IPlugin.OperationError>(IPlugin.OperationError.InvalidArguments(message), 0),");
+        builder.AppendLine("            static message => new WitException<IPlugin.OperationError>(IPlugin.OperationError.Failed(message), 0));");
+        builder.AppendLine("    }");
+        builder.AppendLine("}");
+        builder.AppendLine("#endif");
+        return builder.ToString();
+    }
+
     private sealed class ExportModel
     {
         public ExportModel(
@@ -215,13 +365,15 @@ public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
             INamedTypeSymbol hostType,
             INamedTypeSymbol jsonContextType,
             ImmutableArray<ResolvedOperation> operations,
-            ImmutableArray<ITypeSymbol> extraSerializableTypes)
+            ImmutableArray<ITypeSymbol> extraSerializableTypes,
+            string? exportBridgeNamespace)
         {
             ProgramType = programType;
             HostType = hostType;
             JsonContextType = jsonContextType;
             Operations = operations;
             ExtraSerializableTypes = extraSerializableTypes;
+            ExportBridgeNamespace = exportBridgeNamespace;
         }
 
         public INamedTypeSymbol ProgramType { get; }
@@ -233,6 +385,8 @@ public sealed class PluginWasmExportsGenerator : IIncrementalGenerator
         public ImmutableArray<ResolvedOperation> Operations { get; }
 
         public ImmutableArray<ITypeSymbol> ExtraSerializableTypes { get; }
+
+        public string? ExportBridgeNamespace { get; }
     }
 
     private sealed class OperationSpec

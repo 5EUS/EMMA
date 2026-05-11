@@ -46,4 +46,29 @@ public static class PluginWasmInvokeScaffold
     {
         return new OperationResult(false, null, "application/json", payloadJson);
     }
+
+    /// <summary>
+    /// Serializes a typed payload into a successful JSON operation result.
+    /// </summary>
+    /// <param name="payload">The typed payload to serialize.</param>
+    /// <param name="typeInfo">The JSON type metadata used to serialize the payload.</param>
+    /// <returns>An operation result with <c>application/json</c> content.</returns>
+    public static OperationResult BuildJsonResult<T>(T payload, JsonTypeInfo<T> typeInfo)
+    {
+        return BuildJsonResult(JsonSerializer.Serialize(payload, typeInfo));
+    }
+
+    /// <summary>
+    /// Serializes an optional typed payload into a successful JSON operation result.
+    /// </summary>
+    /// <param name="payload">The optional payload to serialize.</param>
+    /// <param name="typeInfo">The JSON type metadata used to serialize the payload.</param>
+    /// <returns>A JSON null result when <paramref name="payload"/> is null; otherwise a serialized JSON operation result.</returns>
+    public static OperationResult BuildNullableJsonResult<T>(T? payload, JsonTypeInfo<T> typeInfo)
+        where T : class
+    {
+        return payload is null
+            ? BuildJsonResult("null")
+            : BuildJsonResult(payload, typeInfo);
+    }
 }

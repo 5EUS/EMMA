@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using EMMA.PluginHost.Library;
 
@@ -10,18 +12,31 @@ public sealed class EmbeddedAspNetEnrichIntegrationTests
     {
         using var signedPluginsScope = new EnvironmentVariableScope("EMMA_REQUIRE_SIGNED_PLUGINS", "false");
         using var signedPluginsCompatScope = new EnvironmentVariableScope("PluginSignature__RequireSignedPlugins", "false");
+        var tempRoot = Path.Combine(Path.GetTempPath(), "emma-embedded-aspnet-enrich", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        var manifestsDir = Path.Combine(tempRoot, "manifests");
+        var pluginsDir = Path.Combine(tempRoot, "plugins");
+        Directory.CreateDirectory(manifestsDir);
+        Directory.CreateDirectory(pluginsDir);
 
-        var emmaUiRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "com.example.emmaui",
-            "emmaui");
-        var manifestsDir = Path.Combine(emmaUiRoot, "manifests");
-        var pluginsDir = Path.Combine(emmaUiRoot, "plugins");
-        var pluginExecutable = Path.Combine(pluginsDir, "emma.plugin.test", "EMMA.TestPlugin");
+        var entrypointPath = ResolveNativeTestPluginEntrypoint();
+        CopyEntrypointToSandbox(entrypointPath, pluginsDir, "emma.plugin.test");
 
-        Assert.True(Directory.Exists(manifestsDir), $"Expected manifests directory at '{manifestsDir}'.");
-        Assert.True(Directory.Exists(pluginsDir), $"Expected plugins directory at '{pluginsDir}'.");
-        Assert.True(File.Exists(pluginExecutable), $"Expected native ASP.NET plugin entrypoint at '{pluginExecutable}'.");
+        var port = GetFreePort();
+        var manifestPath = Path.Combine(manifestsDir, "emma.plugin.test.json");
+        File.WriteAllText(
+            manifestPath,
+            $$"""
+            {
+              "id": "emma.plugin.test",
+              "name": "EMMA Test Plugin",
+              "version": "1.0.0",
+              "protocol": "grpc",
+              "endpoint": "http://127.0.0.1:{{port}}"
+            }
+            """);
+
+        using var pluginPortScope = new EnvironmentVariableScope("EMMA_TEST_PLUGIN_PORT", port.ToString());
 
         PluginHostExports.ShutdownManaged();
 
@@ -63,6 +78,112 @@ public sealed class EmbeddedAspNetEnrichIntegrationTests
         finally
         {
             PluginHostExports.ShutdownManaged();
+            TryDelete(tempRoot);
+        }
+    }
+
+    private static int GetFreePort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    private static string ResolveNativeTestPluginEntrypoint()
+    {
+        var solutionRoot = ResolveSolutionRoot();
+        var siblingRepoRoot = Path.GetFullPath(Path.Combine(solutionRoot, "..", "emma-test-plugin"));
+        var candidates = new List<string>
+        {
+            Path.Combine(siblingRepoRoot, "artifacts", "build-linux-x64", "publish", "EMMA.TestPlugin"),
+            Path.Combine(siblingRepoRoot, "bin", "Debug", "net10.0", "EMMA.TestPlugin")
+        };
+
+        if (OperatingSystem.IsWindows())
+        {
+            candidates.Insert(0, Path.Combine(siblingRepoRoot, "artifacts", "build-win-x64", "publish", "EMMA.TestPlugin.exe"));
+            candidates.Add(Path.Combine(siblingRepoRoot, "bin", "Debug", "net10.0", "EMMA.TestPlugin.exe"));
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new FileNotFoundException("Native EMMA test plugin entrypoint not found.", siblingRepoRoot);
+    }
+
+    private static string ResolveSolutionRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var solutionPath = Path.Combine(dir.FullName, "EMMA.sln");
+            if (File.Exists(solutionPath))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Unable to locate EMMA solution root.");
+    }
+
+    private static void CopyEntrypointToSandbox(string entrypointPath, string sandboxRoot, string pluginId)
+    {
+        var pluginRoot = Path.Combine(sandboxRoot, pluginId);
+        Directory.CreateDirectory(pluginRoot);
+        var sourceDir = Path.GetDirectoryName(entrypointPath) ?? throw new DirectoryNotFoundException(entrypointPath);
+        foreach (var file in Directory.EnumerateFiles(sourceDir))
+        {
+            var target = Path.Combine(pluginRoot, Path.GetFileName(file));
+            File.Copy(file, target, true);
+        }
+
+        var destination = Path.Combine(pluginRoot, Path.GetFileName(entrypointPath));
+        if (!File.Exists(destination))
+        {
+            File.Copy(entrypointPath, destination, true);
+        }
+
+        TryMakeExecutable(destination);
+    }
+
+    private static void TryMakeExecutable(string path)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            var mode = File.GetUnixFileMode(path);
+            mode |= UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute;
+            File.SetUnixFileMode(path, mode);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, true);
+            }
+        }
+        catch
+        {
         }
     }
 

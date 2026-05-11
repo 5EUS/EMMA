@@ -833,9 +833,16 @@ public sealed class PluginProcessManager(
 
     private bool HasLocalPluginPayload(PluginManifest manifest)
     {
-        var pluginRoot = _entrypointResolver.GetPluginRoot(manifest.Id);
-        return Directory.Exists(pluginRoot)
-            && Directory.EnumerateFileSystemEntries(pluginRoot, "*", SearchOption.TopDirectoryOnly).Any();
+        try
+        {
+            var pluginRoot = _entrypointResolver.GetPluginRoot(manifest.Id);
+            return Directory.Exists(pluginRoot)
+                && Directory.EnumerateFileSystemEntries(pluginRoot, "*", SearchOption.TopDirectoryOnly).Any();
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private static void ApplyPluginPort(PluginManifest manifest, ProcessStartInfo startInfo)
