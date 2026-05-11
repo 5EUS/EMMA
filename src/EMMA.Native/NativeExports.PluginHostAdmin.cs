@@ -718,6 +718,12 @@ public static partial class NativeExports
         return RuntimeChangeDownloadState(handle, jobIdUtf8, PluginHostExports.ResumeDownloadManaged, "resume");
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_retry_download")]
+    public static int RuntimeRetryDownload(int handle, IntPtr jobIdUtf8)
+    {
+        return RuntimeChangeDownloadState(handle, jobIdUtf8, PluginHostExports.RetryDownloadManaged, "retry");
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_cancel_download")]
     public static int RuntimeCancelDownload(int handle, IntPtr jobIdUtf8)
     {
@@ -881,6 +887,43 @@ public static partial class NativeExports
                 LogInfo("plugin-host", $"Plugin host mode configured: mode={updated.Mode}, baseUrl={updated.BaseUrl ?? "<none>"}");
             }
 
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_set_max_concurrent_downloads")]
+    public static int RuntimeSetMaxConcurrentDownloads(int handle, int maxConcurrentDownloads)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            if (TryGetRemotePluginHostBaseUri(out _))
+            {
+                SetLastError("Download concurrency can only be configured for the embedded local plugin host.");
+                return 0;
+            }
+
+            if (!PluginHostExports.SetMaxConcurrentDownloadsManaged(maxConcurrentDownloads))
+            {
+                SetLastError(PluginHostExports.GetLastErrorManaged() ?? "Failed to configure download concurrency.");
+                return 0;
+            }
+
+            LogInfo(
+                "plugin-host",
+                $"Configured embedded download concurrency to {PluginHostExports.GetMaxConcurrentDownloadsManaged()}.");
             return 1;
         }
         catch (Exception ex)

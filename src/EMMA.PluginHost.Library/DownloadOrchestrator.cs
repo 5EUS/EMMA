@@ -12,6 +12,7 @@ public sealed class DownloadOrchestrator : IDisposable
 {
     private readonly IDownloadPort _downloads;
     private readonly Func<DownloadJobRecord, IProgress<DownloadExecutionProgress>, CancellationToken, Task<DownloadExecutionResult>> _executor;
+    private readonly DownloadExecutionOptions _options;
     private readonly ILogger<DownloadOrchestrator> _logger;
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningJobs = new(StringComparer.Ordinal);
@@ -19,20 +20,24 @@ public sealed class DownloadOrchestrator : IDisposable
     private readonly Task _worker;
 
     private bool _disposed;
+    private int _activeJobCount;
 
     /// <summary>
     /// Creates a download orchestrator that queues, executes, and tracks download jobs.
     /// </summary>
     /// <param name="downloads">The download persistence port used to store job state.</param>
     /// <param name="executor">Executes a single download job and reports progress updates.</param>
+    /// <param name="options">Controls concurrent background download execution.</param>
     /// <param name="logger">The logger used for background processing diagnostics.</param>
     public DownloadOrchestrator(
         IDownloadPort downloads,
         Func<DownloadJobRecord, IProgress<DownloadExecutionProgress>, CancellationToken, Task<DownloadExecutionResult>> executor,
+        DownloadExecutionOptions options,
         ILogger<DownloadOrchestrator> logger)
     {
         _downloads = downloads;
         _executor = executor;
+        _options = options;
         _logger = logger;
         _worker = Task.Run(ProcessLoopAsync);
     }
@@ -117,6 +122,45 @@ public sealed class DownloadOrchestrator : IDisposable
     }
 
     /// <summary>
+    /// Re-queues a failed download job and clears stale progress and error state.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <param name="cancellationToken">Cancels the retry operation.</param>
+    /// <returns><see langword="true"/> when the job was updated; otherwise <see langword="false"/>.</returns>
+    public async Task<bool> RetryAsync(string jobId, CancellationToken cancellationToken)
+    {
+        var job = await _downloads.GetJobAsync(jobId, cancellationToken);
+        if (job is null || job.State != DownloadJobState.Failed)
+        {
+            return false;
+        }
+
+        await _downloads.UpdateProgressAsync(
+            jobId,
+            completed: 0,
+            total: 0,
+            bytesDownloaded: 0,
+            updatedAtUtc: DateTimeOffset.UtcNow,
+            cancellationToken);
+
+        var updated = await _downloads.UpdateStateAsync(
+            jobId,
+            DownloadJobState.Queued,
+            null,
+            DateTimeOffset.UtcNow,
+            startedAtUtc: null,
+            completedAtUtc: null,
+            cancellationToken);
+
+        if (updated)
+        {
+            _wakeSignal.Release();
+        }
+
+        return updated;
+    }
+
+    /// <summary>
     /// Cancels a queued or running download job.
     /// </summary>
     /// <param name="jobId">The download job identifier.</param>
@@ -148,15 +192,38 @@ public sealed class DownloadOrchestrator : IDisposable
         return await _downloads.DeleteJobAsync(jobId, cancellationToken);
     }
 
+    /// <summary>
+    /// Wakes the background worker so it can react to an updated download capacity limit.
+    /// </summary>
+    public void NotifyCapacityChanged()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        TryReleaseWakeSignal();
+    }
+
     private async Task ProcessLoopAsync()
     {
         while (!_shutdown.IsCancellationRequested)
         {
             try
             {
+                var availableSlots = Math.Max(
+                    0,
+                    _options.MaxConcurrentDownloads - Volatile.Read(ref _activeJobCount));
+
+                if (availableSlots == 0)
+                {
+                    await _wakeSignal.WaitAsync(TimeSpan.FromSeconds(5), _shutdown.Token);
+                    continue;
+                }
+
                 var pending = await _downloads.ListJobsByStateAsync(
                     [DownloadJobState.Queued],
-                    limit: 1,
+                    limit: availableSlots,
                     _shutdown.Token);
 
                 if (pending.Count == 0)
@@ -165,7 +232,39 @@ public sealed class DownloadOrchestrator : IDisposable
                     continue;
                 }
 
-                await ProcessSingleAsync(pending[0], _shutdown.Token);
+                foreach (var queuedJob in pending)
+                {
+                    Interlocked.Increment(ref _activeJobCount);
+                    _ = Task.Run(
+                        async () =>
+                        {
+                            try
+                            {
+                                await ProcessSingleAsync(queuedJob, _shutdown.Token);
+                            }
+                            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+                            {
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Download job '{JobId}' faulted.", queuedJob.Id);
+                            }
+                            finally
+                            {
+                                Interlocked.Decrement(ref _activeJobCount);
+                                if (!_shutdown.IsCancellationRequested)
+                                {
+                                    TryReleaseWakeSignal();
+                                }
+                            }
+                        },
+                        CancellationToken.None);
+                }
+
+                if (Volatile.Read(ref _activeJobCount) < _options.MaxConcurrentDownloads)
+                {
+                    TryReleaseWakeSignal();
+                }
             }
             catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
             {
@@ -291,6 +390,17 @@ public sealed class DownloadOrchestrator : IDisposable
             catch
             {
             }
+        }
+    }
+
+    private void TryReleaseWakeSignal()
+    {
+        try
+        {
+            _wakeSignal.Release();
+        }
+        catch (SemaphoreFullException)
+        {
         }
     }
 

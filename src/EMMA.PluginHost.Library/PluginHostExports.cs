@@ -71,6 +71,8 @@ public static class PluginHostExports
     private const string DevModeEnvVar = "EMMA_PLUGIN_DEV_MODE";
     private const string PluginHostConsoleLogsEnvVar = "EMMA_PLUGINHOST_CONSOLE_LOGS";
     private const string PluginHostLogLevelEnvVar = "EMMA_PLUGINHOST_LOG_LEVEL";
+    private const string DownloadMaxConcurrentEnvVar = "EMMA_DOWNLOAD_MAX_CONCURRENT";
+    private const string DownloadMaxConcurrentConfigEnvVar = "Download__MaxConcurrent";
     private const string HostAuthHeader = "x-emma-plugin-host-auth";
     private static ServiceProvider? _serviceProvider;
     private static PluginRegistry? _registry;
@@ -78,6 +80,10 @@ public static class PluginHostExports
     private static PluginResolutionService? _pluginResolution;
     private static IWasmPluginRuntimeHost? _wasmRuntime;
     private static DownloadOrchestrator? _downloadOrchestrator;
+    private static readonly DownloadExecutionOptions _downloadExecutionOptions = new()
+    {
+        MaxConcurrentDownloads = ResolveMaxConcurrentDownloads()
+    };
     private static bool _initialized = false;
     private static readonly Lock _initLock = new();
     private static readonly Lock _errorLock = new();
@@ -239,6 +245,7 @@ public static class PluginHostExports
                 _downloadOrchestrator = new DownloadOrchestrator(
                     downloadPort,
                     ExecuteDownloadJobAsync,
+                    _downloadExecutionOptions,
                     downloadLogger);
 
                 // Load plugins via handshake service
@@ -381,6 +388,20 @@ public static class PluginHostExports
         }
 
         return LogLevel.Warning;
+    }
+
+    private static int ResolveMaxConcurrentDownloads()
+    {
+        var value = Environment.GetEnvironmentVariable(DownloadMaxConcurrentEnvVar)
+            ?? Environment.GetEnvironmentVariable(DownloadMaxConcurrentConfigEnvVar);
+
+        if (!string.IsNullOrWhiteSpace(value)
+            && int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return DownloadExecutionOptions.ClampMaxConcurrentDownloads(parsed);
+        }
+
+        return DownloadExecutionOptions.DefaultMaxConcurrentDownloads;
     }
 
     private static string ResolvePluginBuildType(PluginManifest manifest)
@@ -792,6 +813,37 @@ public static class PluginHostExports
     }
 
     /// <summary>
+    /// Gets the configured maximum number of concurrent downloads.
+    /// </summary>
+    /// <returns>The current maximum concurrent download count.</returns>
+    public static int GetMaxConcurrentDownloadsManaged()
+    {
+        return _downloadExecutionOptions.MaxConcurrentDownloads;
+    }
+
+    /// <summary>
+    /// Updates the configured maximum number of concurrent downloads.
+    /// </summary>
+    /// <param name="maxConcurrentDownloads">The requested maximum concurrent download count.</param>
+    /// <returns><see langword="true"/> when the update succeeds; otherwise <see langword="false"/>.</returns>
+    public static bool SetMaxConcurrentDownloadsManaged(int maxConcurrentDownloads)
+    {
+        ClearLastError();
+
+        try
+        {
+            _downloadExecutionOptions.MaxConcurrentDownloads = maxConcurrentDownloads;
+            _downloadOrchestrator?.NotifyCapacityChanged();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Gets a single download job as JSON.
     /// </summary>
     /// <param name="jobId">The download job identifier.</param>
@@ -845,6 +897,16 @@ public static class PluginHostExports
     public static int ResumeDownloadManaged(string jobId)
     {
         return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.ResumeAsync(id, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Retries a failed download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
+    public static int RetryDownloadManaged(string jobId)
+    {
+        return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.RetryAsync(id, CancellationToken.None));
     }
 
     /// <summary>
