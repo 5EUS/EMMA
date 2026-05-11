@@ -734,4 +734,115 @@ public static partial class NativeExports
             return 0;
         }
     }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_migration_orphaned_media_json")]
+    public static IntPtr RuntimeGetMigrationOrphanedMediaJson(int handle)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.GetMigrationOrphanedMediaJsonManaged();
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to list orphaned migration media.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_check_migration_json")]
+    public static IntPtr RuntimeCheckMigrationJson(
+        int handle,
+        IntPtr requestJsonUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var requestJson = PtrToString(requestJsonUtf8);
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Migration check payload is required.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.CheckMigrationJsonManaged(requestJson);
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to validate migration.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_execute_migration_json")]
+    public static IntPtr RuntimeExecuteMigrationJson(
+        int handle,
+        IntPtr requestJsonUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var requestJson = PtrToString(requestJsonUtf8);
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Migration execution payload is required.");
+                return IntPtr.Zero;
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ExecuteMigrationJsonManaged(requestJson);
+            if (json is null)
+            {
+                var error = PluginHostExports.GetLastErrorManaged() ?? "Failed to execute migration.";
+                SetLastError(error);
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
 }

@@ -5284,6 +5284,211 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists orphaned media items that no longer resolve to a healthy source plugin.
+    /// </summary>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON array of orphaned media items, or <see langword="null"/> when the operation fails.</returns>
+    public static string? GetMigrationOrphanedMediaJsonManaged(string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            var serviceProvider = _serviceProvider!;
+
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            var library = serviceProvider.GetRequiredService<ILibraryPort>();
+            var catalog = serviceProvider.GetRequiredService<IMediaCatalogPort>();
+            var history = serviceProvider.GetRequiredService<IHistoryPort>();
+            var progress = serviceProvider.GetRequiredService<IProgressPort>();
+
+            var libraryKeys = library.ListLibrariesAsync(CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            var historyEntries = history.GetHistoryAsync(normalizedUserId, 10000, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var availabilityCache = new Dictionary<string, MigrationPluginAvailability>(StringComparer.OrdinalIgnoreCase);
+            var accumulators = new Dictionary<string, MigrationOrphanAccumulator>(StringComparer.Ordinal);
+
+            foreach (var libraryKey in libraryKeys)
+            {
+                var entries = library.GetLibraryAsync(libraryKey, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                var displayLibrary = FromLibraryStorageKey(libraryKey);
+
+                foreach (var entry in entries)
+                {
+                    var metadata = catalog.GetMediaAsync(entry.MediaId, CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
+                    var sourceId = !string.IsNullOrWhiteSpace(metadata?.SourceId)
+                        ? metadata!.SourceId
+                        : entry.SourceId;
+
+                    var availability = ResolveMigrationPluginAvailability(sourceId, availabilityCache);
+                    if (!availability.IsOrphaned)
+                    {
+                        continue;
+                    }
+
+                    var accumulator = GetOrCreateMigrationAccumulator(
+                        accumulators,
+                        entry.MediaId.Value,
+                        sourceId,
+                        metadata,
+                        availability.Reason);
+                    accumulator.Libraries.Add(displayLibrary);
+                    accumulator.ApplyMetadata(metadata);
+                }
+            }
+
+            foreach (var entry in historyEntries)
+            {
+                var availability = ResolveMigrationPluginAvailability(entry.PluginId, availabilityCache);
+                if (!availability.IsOrphaned)
+                {
+                    continue;
+                }
+
+                var mediaId = entry.MediaId.Value;
+                var metadata = catalog.GetMediaAsync(entry.MediaId, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                var accumulator = GetOrCreateMigrationAccumulator(
+                    accumulators,
+                    mediaId,
+                    entry.PluginId,
+                    metadata,
+                    availability.Reason);
+                accumulator.ApplyMetadata(metadata);
+                accumulator.ConsiderHistory(entry);
+            }
+
+            var results = accumulators.Values
+                .Select(accumulator => BuildMigrationOrphanResponse(accumulator, progress, normalizedUserId))
+                .OrderByDescending(static item => item.LatestHistory?.LastViewedAtUtc ?? item.Progress?.LastViewedAtUtc ?? string.Empty, StringComparer.Ordinal)
+                .ThenBy(static item => item.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            IReadOnlyList<MigrationOrphanedItemResponse> payload = results;
+            return JsonSerializer.Serialize(
+                payload,
+                PluginHostExportsJsonContext.Default.IReadOnlyListMigrationOrphanedItemResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Checks whether an orphaned media item can migrate to a target plugin.
+    /// </summary>
+    /// <param name="requestJson">The serialized migration check request.</param>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON migration check payload, or <see langword="null"/> when the operation fails.</returns>
+    public static string? CheckMigrationJsonManaged(
+        string requestJson,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Migration check payload is required.");
+                return null;
+            }
+
+            var request = JsonSerializer.Deserialize(
+                requestJson,
+                PluginHostExportsJsonContext.Default.MigrationCheckRequest);
+            if (request is null)
+            {
+                SetLastError("Invalid migration check payload.");
+                return null;
+            }
+
+            var response = BuildMigrationCheckResponse(
+                request.MediaId,
+                request.OrphanedPluginId,
+                request.Title,
+                request.MediaType,
+                request.TargetPluginId,
+                request.QueryOverride,
+                request.TargetMediaId,
+                string.IsNullOrWhiteSpace(userId) ? DefaultProgressUserId : userId);
+
+            return JsonSerializer.Serialize(
+                response,
+                PluginHostExportsJsonContext.Default.MigrationCheckResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Executes a migration from an orphaned media item to a target plugin.
+    /// </summary>
+    /// <param name="requestJson">The serialized migration execution request.</param>
+    /// <param name="userId">The user or library scope to mutate.</param>
+    /// <returns>A JSON execution payload, or <see langword="null"/> when the operation fails.</returns>
+    public static string? ExecuteMigrationJsonManaged(
+        string requestJson,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Migration execution payload is required.");
+                return null;
+            }
+
+            var request = JsonSerializer.Deserialize(
+                requestJson,
+                PluginHostExportsJsonContext.Default.MigrationExecutionRequest);
+            if (request is null)
+            {
+                SetLastError("Invalid migration execution payload.");
+                return null;
+            }
+
+            var response = ExecuteMigrationInternal(
+                request,
+                string.IsNullOrWhiteSpace(userId) ? DefaultProgressUserId : userId);
+
+            return JsonSerializer.Serialize(
+                response,
+                PluginHostExportsJsonContext.Default.MigrationExecutionResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
     // ==================== FFI Boundary (UnmanagedCallersOnly) ====================
 
     /// <summary>
@@ -6188,6 +6393,807 @@ public static class PluginHostExports
 
         return Encoding.UTF8.GetString(stream.ToArray());
     }
+
+    private static MigrationCheckResponse BuildMigrationCheckResponse(
+        string mediaId,
+        string orphanedPluginId,
+        string title,
+        string mediaType,
+        string targetPluginId,
+        string? queryOverride,
+        string? targetMediaId,
+        string userId)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId))
+        {
+            throw new InvalidOperationException("Media ID is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(targetPluginId))
+        {
+            throw new InvalidOperationException("Target plugin ID is required.");
+        }
+
+        if (!TryResolvePlugin(targetPluginId, out _, out _))
+        {
+            throw new InvalidOperationException(GetLastErrorManaged() ?? "Target plugin could not be opened.");
+        }
+
+        var sourceState = LoadMigrationSourceState(mediaId, orphanedPluginId, mediaType, userId);
+        var matchQuery = string.IsNullOrWhiteSpace(queryOverride)
+            ? (!string.IsNullOrWhiteSpace(title) ? title : mediaId)
+            : queryOverride.Trim();
+
+        var searchResults = SearchMediaManaged(targetPluginId, matchQuery) ?? [];
+        var matches = searchResults
+            .Where(result => IsMigrationMatchCandidate(result, title, mediaType, targetMediaId))
+            .Select(result => new
+            {
+                Media = result,
+                Score = ScoreMigrationMatch(result, title, mediaType, targetMediaId)
+            })
+            .OrderByDescending(static item => item.Score)
+            .ThenBy(static item => item.Media.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        var payloadMatches = matches
+            .Select(item => new MigrationMatchResponse(
+                item.Media.Id.Value,
+                item.Media.Title,
+                ToMediaTypeString(item.Media.MediaType),
+                item.Media.ThumbnailUrl,
+                item.Score,
+                string.Equals(NormalizeMigrationText(item.Media.Title), NormalizeMigrationText(title), StringComparison.Ordinal)))
+            .ToList();
+
+        var selected = matches
+            .Select(static item => item.Media)
+            .FirstOrDefault(media => !string.IsNullOrWhiteSpace(targetMediaId)
+                ? string.Equals(media.Id.Value, targetMediaId, StringComparison.Ordinal)
+                : true);
+
+        var blockers = new List<string>();
+        var warnings = new List<string>();
+
+        if (selected is null)
+        {
+            blockers.Add("No sufficiently similar media item was found in the selected target plugin.");
+            return new MigrationCheckResponse(
+                false,
+                null,
+                null,
+                null,
+                null,
+                sourceState.Libraries.Count > 0,
+                false,
+                false,
+                sourceState.Libraries,
+                warnings,
+                blockers,
+                payloadMatches);
+        }
+
+        var canMigrateLibrary = sourceState.Libraries.Count > 0;
+        var canMigrateHistory = false;
+        var canMigrateProgress = false;
+
+        if (sourceState.HistoryEntries.Count == 0)
+        {
+            warnings.Add("No persisted history entries were found for this orphaned media item.");
+        }
+
+        if (IsVideoLikeMediaType(mediaType))
+        {
+            canMigrateHistory = sourceState.HistoryEntries.Count > 0;
+            canMigrateProgress = sourceState.Progress is not null || sourceState.HistoryEntries.Count > 0;
+        }
+        else
+        {
+            var targetChapters = GetChaptersManagedInternal(targetPluginId, selected.Id.Value, forceRefresh: false) ?? [];
+            var targetChapterIds = targetChapters
+                .Select(static chapter => chapter.ChapterId)
+                .Where(static chapterId => !string.IsNullOrWhiteSpace(chapterId))
+                .ToHashSet(StringComparer.Ordinal);
+
+            var sourceChapterIds = sourceState.HistoryEntries
+                .Where(static entry => entry.EntryId.StartsWith("paged::", StringComparison.Ordinal))
+                .Select(static entry => entry.ExternalId)
+                .Where(static externalId => !string.IsNullOrWhiteSpace(externalId))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var mappedHistoryCount = sourceChapterIds.Count(chapterId => targetChapterIds.Contains(chapterId));
+            canMigrateHistory = mappedHistoryCount > 0;
+            if (sourceChapterIds.Count > 0 && mappedHistoryCount < sourceChapterIds.Count)
+            {
+                warnings.Add($"Only {mappedHistoryCount} of {sourceChapterIds.Count} chapter history entries matched exact chapter IDs in the target plugin.");
+            }
+
+            if (sourceState.Progress is null)
+            {
+                warnings.Add("No persisted paged progress was found for this orphaned media item.");
+            }
+            else if (!string.IsNullOrWhiteSpace(sourceState.Progress.ChapterId)
+                     && targetChapterIds.Contains(sourceState.Progress.ChapterId))
+            {
+                canMigrateProgress = true;
+            }
+            else if (!string.IsNullOrWhiteSpace(sourceState.Progress.ChapterId))
+            {
+                blockers.Add("Current paged progress chapter ID does not exist in the target plugin.");
+            }
+        }
+
+        return new MigrationCheckResponse(
+            true,
+            selected.Id.Value,
+            selected.Title,
+            ToMediaTypeString(selected.MediaType),
+            selected.ThumbnailUrl,
+            canMigrateLibrary,
+            canMigrateProgress,
+            canMigrateHistory,
+            sourceState.Libraries,
+            warnings,
+            blockers,
+            payloadMatches);
+    }
+
+    private static MigrationExecutionResponse ExecuteMigrationInternal(
+        MigrationExecutionRequest request,
+        string userId)
+    {
+        var check = BuildMigrationCheckResponse(
+            request.MediaId,
+            request.OrphanedPluginId,
+            request.Title,
+            request.MediaType,
+            request.TargetPluginId,
+            request.QueryOverride,
+            request.TargetMediaId,
+            userId);
+
+        if (!check.HasMatch || string.IsNullOrWhiteSpace(check.SelectedTargetMediaId))
+        {
+            return new MigrationExecutionResponse(
+                false,
+                null,
+                0,
+                0,
+                0,
+                false,
+                check.Warnings,
+                check.Blockers.Count > 0 ? check.Blockers : ["No target media match was selected."]);
+        }
+
+        var matchQuery = string.IsNullOrWhiteSpace(request.QueryOverride)
+            ? (!string.IsNullOrWhiteSpace(request.Title) ? request.Title : request.MediaId)
+            : request.QueryOverride.Trim();
+        var targetMedia = (SearchMediaManaged(request.TargetPluginId, matchQuery) ?? [])
+            .FirstOrDefault(media => string.Equals(media.Id.Value, check.SelectedTargetMediaId, StringComparison.Ordinal));
+        if (targetMedia is null)
+        {
+            return new MigrationExecutionResponse(
+                false,
+                check.SelectedTargetMediaId,
+                0,
+                0,
+                0,
+                false,
+                check.Warnings,
+                ["Target media could not be resolved before migration was executed."]);
+        }
+
+        var sourceState = LoadMigrationSourceState(request.MediaId, request.OrphanedPluginId, request.MediaType, userId);
+        var warnings = new List<string>(check.Warnings);
+        var errors = new List<string>();
+        var librariesAdded = 0;
+        var historyEntriesMigrated = 0;
+        var historyEntriesSkipped = 0;
+
+        foreach (var libraryName in sourceState.Libraries)
+        {
+            var added = AddMediaToLibraryManaged(
+                targetMedia.Id.Value,
+                request.TargetPluginId,
+                targetMedia.Title,
+                ToMediaTypeString(targetMedia.MediaType),
+                libraryName,
+                BuildMigrationDescriptionPayload(targetMedia.Description, targetMedia.Metadata),
+                targetMedia.ThumbnailUrl);
+            if (added == 0)
+            {
+                errors.Add($"Failed to add target media to library '{libraryName}': {GetLastErrorManaged() ?? "unknown error"}");
+            }
+            else
+            {
+                librariesAdded++;
+            }
+        }
+
+        var history = _serviceProvider!.GetRequiredService<IHistoryPort>();
+        IReadOnlyDictionary<string, string> pagedChapterMap = new Dictionary<string, string>();
+        if (!IsVideoLikeMediaType(request.MediaType))
+        {
+            var targetChapters = GetChaptersManagedInternal(request.TargetPluginId, targetMedia.Id.Value, forceRefresh: false) ?? [];
+            pagedChapterMap = targetChapters
+                .Where(static chapter => !string.IsNullOrWhiteSpace(chapter.ChapterId))
+                .ToDictionary(static chapter => chapter.ChapterId, static chapter => chapter.ChapterId, StringComparer.Ordinal);
+        }
+
+        foreach (var entry in sourceState.HistoryEntries)
+        {
+            string targetExternalId;
+            string targetEntryId;
+
+            if (IsVideoLikeMediaType(request.MediaType))
+            {
+                targetExternalId = targetMedia.Id.Value;
+                targetEntryId = BuildMigrationHistoryEntryId(
+                    isVideoLike: true,
+                    userId: userId,
+                    pluginId: request.TargetPluginId,
+                    mediaId: targetMedia.Id.Value,
+                    externalId: targetExternalId);
+            }
+            else
+            {
+                if (!pagedChapterMap.TryGetValue(entry.ExternalId, out targetExternalId!))
+                {
+                    historyEntriesSkipped++;
+                    continue;
+                }
+
+                targetEntryId = BuildMigrationHistoryEntryId(
+                    isVideoLike: false,
+                    userId: userId,
+                    pluginId: request.TargetPluginId,
+                    mediaId: targetMedia.Id.Value,
+                    externalId: targetExternalId);
+            }
+
+            history.UpsertAsync(
+                    new MediaHistoryEntry(
+                        targetEntryId,
+                        MediaId.Create(targetMedia.Id.Value),
+                        request.TargetPluginId,
+                        targetExternalId,
+                        userId,
+                        entry.Position,
+                        entry.Completed,
+                        entry.LastViewedAtUtc),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            historyEntriesMigrated++;
+        }
+
+        var canRemoveSource = request.RemoveOrphanedEntriesAfterSuccess
+            && errors.Count == 0
+            && historyEntriesSkipped == 0;
+        var sourceEntriesRemoved = false;
+
+        if (request.RemoveOrphanedEntriesAfterSuccess && !canRemoveSource)
+        {
+            warnings.Add("Source cleanup was skipped because the migration completed only partially.");
+        }
+
+        if (canRemoveSource)
+        {
+            foreach (var libraryName in sourceState.Libraries)
+            {
+                RemoveMediaFromLibraryManaged(request.MediaId, libraryName);
+            }
+
+            DeleteHistoryForMediaManaged(request.MediaId, request.OrphanedPluginId, userId);
+            sourceEntriesRemoved = true;
+        }
+
+        return new MigrationExecutionResponse(
+            errors.Count == 0,
+            targetMedia.Id.Value,
+            librariesAdded,
+            historyEntriesMigrated,
+            historyEntriesSkipped,
+            sourceEntriesRemoved,
+            warnings,
+            errors);
+    }
+
+    private static MigrationSourceState LoadMigrationSourceState(
+        string mediaId,
+        string orphanedPluginId,
+        string mediaType,
+        string userId)
+    {
+        var serviceProvider = _serviceProvider!;
+        var library = serviceProvider.GetRequiredService<ILibraryPort>();
+        var history = serviceProvider.GetRequiredService<IHistoryPort>();
+        var progress = serviceProvider.GetRequiredService<IProgressPort>();
+
+        var libraries = library.ListLibrariesAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
+            .Select(FromLibraryStorageKey)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Where(name => library.GetLibraryAsync(ToLibraryStorageKey(name), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult()
+                .Any(entry => string.Equals(entry.MediaId.Value, mediaId, StringComparison.Ordinal)
+                              && string.Equals(entry.SourceId, orphanedPluginId ?? string.Empty, StringComparison.Ordinal)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var historyEntries = history.GetHistoryAsync(userId, 10000, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
+            .Where(entry => string.Equals(entry.MediaId.Value, mediaId, StringComparison.Ordinal))
+            .Where(entry => string.Equals(entry.PluginId, orphanedPluginId ?? string.Empty, StringComparison.Ordinal))
+            .OrderByDescending(static entry => entry.LastViewedAtUtc)
+            .ToList();
+
+        var resolvedMediaType = NormalizeMigrationMediaType(mediaType, historyEntries.FirstOrDefault()?.EntryId);
+        MediaProgressResponse? progressPayload = null;
+        if (IsVideoLikeMediaType(resolvedMediaType))
+        {
+            var video = progress.GetVideoProgressAsync(
+                    MediaId.Create(mediaId),
+                    orphanedPluginId ?? string.Empty,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (video is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    ToVideoLikeMediaTypeString(resolvedMediaType),
+                    null,
+                    null,
+                    video.PositionSeconds,
+                    video.Completed,
+                    video.LastViewedAtUtc.ToString("O"));
+            }
+        }
+        else
+        {
+            var paged = progress.GetPagedProgressAsync(
+                    MediaId.Create(mediaId),
+                    orphanedPluginId ?? string.Empty,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (paged is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    "paged",
+                    paged.ChapterId,
+                    paged.PageIndex,
+                    null,
+                    paged.Completed,
+                    paged.LastViewedAtUtc.ToString("O"));
+            }
+        }
+
+        return new MigrationSourceState(libraries, historyEntries, progressPayload, resolvedMediaType);
+    }
+
+    private static MigrationOrphanedItemResponse BuildMigrationOrphanResponse(
+        MigrationOrphanAccumulator accumulator,
+        IProgressPort progress,
+        string userId)
+    {
+        var resolvedMediaType = NormalizeMigrationMediaType(accumulator.MediaType, accumulator.LatestHistory?.EntryId);
+        MediaProgressResponse? progressPayload = null;
+
+        if (IsVideoLikeMediaType(resolvedMediaType))
+        {
+            var video = progress.GetVideoProgressAsync(
+                    MediaId.Create(accumulator.MediaId),
+                    accumulator.OrphanedPluginId,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (video is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    ToVideoLikeMediaTypeString(resolvedMediaType),
+                    null,
+                    null,
+                    video.PositionSeconds,
+                    video.Completed,
+                    video.LastViewedAtUtc.ToString("O"));
+            }
+        }
+        else
+        {
+            var paged = progress.GetPagedProgressAsync(
+                    MediaId.Create(accumulator.MediaId),
+                    accumulator.OrphanedPluginId,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (paged is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    "paged",
+                    paged.ChapterId,
+                    paged.PageIndex,
+                    null,
+                    paged.Completed,
+                    paged.LastViewedAtUtc.ToString("O"));
+            }
+        }
+
+        return new MigrationOrphanedItemResponse(
+            accumulator.MediaId,
+            accumulator.OrphanedPluginId,
+            string.IsNullOrWhiteSpace(accumulator.Title) ? accumulator.MediaId : accumulator.Title,
+            resolvedMediaType,
+            accumulator.ThumbnailUrl,
+            accumulator.Description,
+            accumulator.Metadata.Count == 0 ? null : accumulator.Metadata,
+            accumulator.Libraries.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList(),
+            progressPayload,
+            accumulator.LatestHistory is null ? null : new HistoryEntryResponse(
+                accumulator.LatestHistory.EntryId,
+                accumulator.LatestHistory.MediaId.Value,
+                accumulator.LatestHistory.PluginId,
+                accumulator.LatestHistory.ExternalId,
+                accumulator.LatestHistory.UserId,
+                accumulator.LatestHistory.Position,
+                accumulator.LatestHistory.Completed,
+                accumulator.LatestHistory.LastViewedAtUtc.ToString("O")),
+            accumulator.OrphanReason);
+    }
+
+    private static MigrationOrphanAccumulator GetOrCreateMigrationAccumulator(
+        IDictionary<string, MigrationOrphanAccumulator> accumulators,
+        string mediaId,
+        string orphanedPluginId,
+        MediaMetadata? metadata,
+        string orphanReason)
+    {
+        var key = $"{orphanedPluginId}\u001f{mediaId}";
+        if (accumulators.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        var created = new MigrationOrphanAccumulator(
+            mediaId,
+            orphanedPluginId ?? string.Empty,
+            metadata?.Title ?? mediaId,
+            metadata is null ? null : ToMediaTypeString(metadata.MediaType),
+            metadata?.ThumbnailUrl,
+            metadata?.Synopsis,
+            ParseMetadataAttributes(metadata?.Attributes),
+            orphanReason);
+        accumulators[key] = created;
+        return created;
+    }
+
+    private static MigrationPluginAvailability ResolveMigrationPluginAvailability(
+        string pluginId,
+        IDictionary<string, MigrationPluginAvailability> cache)
+    {
+        var key = pluginId ?? string.Empty;
+        if (cache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        MigrationPluginAvailability resolved;
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            resolved = new MigrationPluginAvailability(true, "Missing source/plugin ID.");
+        }
+        else
+        {
+            ClearLastError();
+            var isHealthy = TryResolvePlugin(pluginId, out _, out _);
+            var error = GetLastErrorManaged();
+            ClearLastError();
+
+            resolved = isHealthy
+                ? new MigrationPluginAvailability(false, string.Empty)
+                : new MigrationPluginAvailability(
+                    true,
+                    string.IsNullOrWhiteSpace(error)
+                        ? $"Plugin '{pluginId}' is unavailable."
+                        : error);
+        }
+
+        cache[key] = resolved;
+        return resolved;
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseMetadataAttributes(string? attributes)
+    {
+        if (string.IsNullOrWhiteSpace(attributes))
+        {
+            return new Dictionary<string, string>();
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(attributes);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return new Dictionary<string, string>();
+            }
+
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (string.IsNullOrWhiteSpace(property.Name))
+                {
+                    continue;
+                }
+
+                var value = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString(),
+                    JsonValueKind.Array => string.Join(", ", property.Value.EnumerateArray().Select(static item => item.ToString())),
+                    _ => property.Value.ToString(),
+                };
+
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    result[property.Name] = value;
+                }
+            }
+
+            return result;
+        }
+        catch
+        {
+            return new Dictionary<string, string>();
+        }
+    }
+
+    private static string NormalizeMigrationMediaType(string? mediaType, string? entryId)
+    {
+        if (IsVideoLikeMediaType(mediaType))
+        {
+            return ToVideoLikeMediaTypeString(mediaType);
+        }
+
+        if (string.Equals(mediaType, "paged", StringComparison.OrdinalIgnoreCase))
+        {
+            return "paged";
+        }
+
+        if (!string.IsNullOrWhiteSpace(entryId) && entryId.StartsWith("video::", StringComparison.Ordinal))
+        {
+            return "video";
+        }
+
+        return "paged";
+    }
+
+    private static int ScoreMigrationMatch(
+        MediaSummary candidate,
+        string sourceTitle,
+        string sourceMediaType,
+        string? requestedTargetMediaId)
+    {
+        var score = 0;
+
+        if (!string.IsNullOrWhiteSpace(requestedTargetMediaId)
+            && string.Equals(candidate.Id.Value, requestedTargetMediaId, StringComparison.Ordinal))
+        {
+            score += 1000;
+        }
+
+        var normalizedSourceTitle = NormalizeMigrationText(sourceTitle);
+        var normalizedCandidateTitle = NormalizeMigrationText(candidate.Title);
+        if (!string.IsNullOrWhiteSpace(normalizedSourceTitle)
+            && string.Equals(normalizedSourceTitle, normalizedCandidateTitle, StringComparison.Ordinal))
+        {
+            score += 500;
+        }
+        else if (!string.IsNullOrWhiteSpace(normalizedSourceTitle)
+                 && !string.IsNullOrWhiteSpace(normalizedCandidateTitle)
+                 && (normalizedCandidateTitle.Contains(normalizedSourceTitle, StringComparison.Ordinal)
+                     || normalizedSourceTitle.Contains(normalizedCandidateTitle, StringComparison.Ordinal)))
+        {
+            score += 250;
+        }
+
+        var sourceTokens = normalizedSourceTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        var candidateTokens = normalizedCandidateTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        score += candidateTokens.Count(sourceTokens.Contains) * 25;
+
+        if (string.Equals(ToMediaTypeString(candidate.MediaType), NormalizeMigrationMediaType(sourceMediaType, null), StringComparison.OrdinalIgnoreCase))
+        {
+            score += 60;
+        }
+
+        return score;
+    }
+
+    private static bool IsMigrationMatchCandidate(
+        MediaSummary candidate,
+        string sourceTitle,
+        string sourceMediaType,
+        string? requestedTargetMediaId)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedTargetMediaId)
+            && string.Equals(candidate.Id.Value, requestedTargetMediaId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var normalizedSourceTitle = NormalizeMigrationText(sourceTitle);
+        var normalizedCandidateTitle = NormalizeMigrationText(candidate.Title);
+        if (string.IsNullOrWhiteSpace(normalizedSourceTitle)
+            || string.IsNullOrWhiteSpace(normalizedCandidateTitle))
+        {
+            return false;
+        }
+
+        if (string.Equals(normalizedSourceTitle, normalizedCandidateTitle, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (normalizedCandidateTitle.Contains(normalizedSourceTitle, StringComparison.Ordinal)
+            || normalizedSourceTitle.Contains(normalizedCandidateTitle, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var sourceTokens = normalizedSourceTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        var candidateTokens = normalizedCandidateTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        if (sourceTokens.Count == 0 || candidateTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var sharedTokenCount = sourceTokens.Intersect(candidateTokens, StringComparer.Ordinal).Count();
+        if (sharedTokenCount == 0)
+        {
+            return false;
+        }
+
+        var smallerTokenCount = Math.Min(sourceTokens.Count, candidateTokens.Count);
+        var largerTokenCount = Math.Max(sourceTokens.Count, candidateTokens.Count);
+        var sharedCoverage = (double)sharedTokenCount / smallerTokenCount;
+        var overlapRatio = (double)sharedTokenCount / largerTokenCount;
+        if (smallerTokenCount == 1)
+        {
+            return sharedCoverage >= 1d;
+        }
+
+        if (sharedTokenCount >= 2 && (sharedCoverage >= 0.6d || overlapRatio >= 0.5d))
+        {
+            return true;
+        }
+
+        var candidateMediaType = ToMediaTypeString(candidate.MediaType);
+        return string.Equals(candidateMediaType, NormalizeMigrationMediaType(sourceMediaType, null), StringComparison.OrdinalIgnoreCase)
+               && sharedCoverage >= 0.75d;
+    }
+
+    private static string NormalizeMigrationText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var chars = value.Trim().ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ')
+            .ToArray();
+        return string.Join(
+            ' ',
+            new string(chars)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    private static string BuildMigrationDescriptionPayload(
+        string? description,
+        IReadOnlyDictionary<string, string>? metadata)
+    {
+        var payload = new Dictionary<string, object?>();
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            payload["description"] = description;
+        }
+
+        if (metadata is not null)
+        {
+            foreach (var entry in metadata)
+            {
+                payload[entry.Key] = entry.Value;
+            }
+        }
+
+        return payload.Count == 0 ? string.Empty : SerializeMetadataAttributes(payload);
+    }
+
+    private static string BuildMigrationHistoryEntryId(
+        bool isVideoLike,
+        string userId,
+        string pluginId,
+        string mediaId,
+        string externalId)
+    {
+        return isVideoLike
+            ? $"video::{userId}::{pluginId}::{mediaId}"
+            : $"paged::{userId}::{pluginId}::{mediaId}::{externalId}";
+    }
+
+    private sealed record MigrationPluginAvailability(bool IsOrphaned, string Reason);
+
+    private sealed class MigrationOrphanAccumulator(
+        string mediaId,
+        string orphanedPluginId,
+        string title,
+        string? mediaType,
+        string? thumbnailUrl,
+        string? description,
+        IReadOnlyDictionary<string, string> metadata,
+        string orphanReason)
+    {
+        public string MediaId { get; } = mediaId;
+        public string OrphanedPluginId { get; } = orphanedPluginId;
+        public string Title { get; private set; } = title;
+        public string? MediaType { get; private set; } = mediaType;
+        public string? ThumbnailUrl { get; private set; } = thumbnailUrl;
+        public string? Description { get; private set; } = description;
+        public Dictionary<string, string> Metadata { get; } = new(metadata, StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> Libraries { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public MediaHistoryEntry? LatestHistory { get; private set; }
+        public string OrphanReason { get; } = orphanReason;
+
+        public void ApplyMetadata(MediaMetadata? metadata)
+        {
+            if (metadata is null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(Title) || string.Equals(Title, MediaId, StringComparison.Ordinal))
+            {
+                Title = metadata.Title;
+            }
+
+            MediaType ??= ToMediaTypeString(metadata.MediaType);
+            ThumbnailUrl ??= metadata.ThumbnailUrl;
+            Description ??= metadata.Synopsis;
+            foreach (var entry in ParseMetadataAttributes(metadata.Attributes))
+            {
+                Metadata[entry.Key] = entry.Value;
+            }
+        }
+
+        public void ConsiderHistory(MediaHistoryEntry entry)
+        {
+            if (LatestHistory is null || entry.LastViewedAtUtc > LatestHistory.LastViewedAtUtc)
+            {
+                LatestHistory = entry;
+            }
+        }
+    }
+
+    private sealed record MigrationSourceState(
+        IReadOnlyList<string> Libraries,
+        IReadOnlyList<MediaHistoryEntry> HistoryEntries,
+        MediaProgressResponse? Progress,
+        string MediaType);
 
     private static void WriteJsonValue(Utf8JsonWriter writer, string propertyName, object? value)
     {
