@@ -112,6 +112,59 @@ public static class PagedPipelineEndpoints
             }));
         });
 
+        app.MapPost("/pipeline/paged/search/suggestions", async (
+            string? pluginId,
+            HttpRequest request,
+            PluginResolutionService pluginResolution,
+            IWasmPluginRuntimeHost wasmRuntimeHost,
+            PluginProcessManager processManager,
+            CancellationToken cancellationToken) =>
+        {
+            var (Record, Address, IsWasm, Error) = await ResolvePluginAsync(pluginId, pluginResolution, wasmRuntimeHost, cancellationToken);
+            if (Error is not null)
+            {
+                return Error;
+            }
+
+            var record = Record!;
+            using var usageLease = processManager.AcquireUsageLease(record.Manifest.Id);
+
+            try
+            {
+                using var document = await JsonDocument.ParseAsync(request.Body, cancellationToken: cancellationToken);
+                var suggestionRequest = ParseSearchSuggestionsRequest(document.RootElement);
+
+                IReadOnlyList<SearchSuggestionItem> suggestions;
+                if (IsWasm)
+                {
+                    suggestions = await wasmRuntimeHost.GetSearchSuggestionsAsync(
+                        record,
+                        suggestionRequest,
+                        cancellationToken);
+                }
+                else
+                {
+                    suggestions = await GetGrpcPluginSearchSuggestionsAsync(
+                        record.Manifest.Id,
+                        Address!,
+                        processManager,
+                        suggestionRequest,
+                        cancellationToken);
+                }
+
+                return Results.Ok(suggestions.Select(static suggestion => new
+                {
+                    suggestion.Value,
+                    suggestion.Label,
+                    suggestion.Description
+                }));
+            }
+            catch (Exception ex)
+            {
+                return PipelineErrorContract.ToResult(ex, "paged.search-suggestions");
+            }
+        });
+
         app.MapGet("/pipeline/paged/chapters", async (
             string? mediaId,
             string? pluginId,
@@ -468,6 +521,27 @@ public static class PagedPipelineEndpoints
             metadata);
     }
 
+    private static SearchSuggestionRequest ParseSearchSuggestionsRequest(JsonElement root)
+    {
+        var controlId = ReadJsonString(root, "controlId");
+        if (string.IsNullOrWhiteSpace(controlId))
+        {
+            throw new InvalidOperationException("Invalid suggestions request: controlId is required.");
+        }
+
+        PluginSearchQuery? searchQuery = null;
+        if (TryGetObjectProperty(root, "searchQuery", out var searchQueryElement))
+        {
+            searchQuery = PluginSearchQuery.Parse(searchQueryElement.GetRawText());
+        }
+
+        return new SearchSuggestionRequest(
+            controlId,
+            ReadJsonString(root, "query") ?? string.Empty,
+            searchQuery,
+            ReadJsonInt32(root, "limit"));
+    }
+
     private static async Task<MediaSummary?> EnrichGrpcPluginSearchMediaAsync(
         string pluginId,
         Uri address,
@@ -500,6 +574,104 @@ public static class PagedPipelineEndpoints
         var response = await client.EnrichSearchItemsAsync(request, headers: headers, cancellationToken: cancellationToken);
         var enriched = response.Results.FirstOrDefault();
         return enriched is null ? media : MapPluginSearchSummary(enriched);
+    }
+
+    private static async Task<IReadOnlyList<SearchSuggestionItem>> GetGrpcPluginSearchSuggestionsAsync(
+        string pluginId,
+        Uri address,
+        PluginProcessManager processManager,
+        SearchSuggestionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var correlationId = PluginGrpcHelpers.CreateCorrelationId();
+        using var httpClient = PluginGrpcHelpers.CreateHttpClient(address);
+        using var channel = GrpcChannel.ForAddress(address, new GrpcChannelOptions
+        {
+            HttpClient = httpClient
+        });
+        var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+        var headers = PluginGrpcHelpers.CreateHeaders(correlationId);
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+
+        var token = processManager.GetHostAuthToken(pluginId);
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            headers.Add("x-emma-plugin-host-auth", token);
+        }
+
+        var grpcRequest = new PluginContracts.SearchSuggestionsRequest
+        {
+            ControlId = request.ControlId,
+            Query = request.Query,
+            Limit = request.Limit ?? 0,
+            Context = PluginGrpcHelpers.CreateRequestContext(correlationId, deadlineUtc)
+        };
+
+        if (request.SearchQuery is { } searchQuery)
+        {
+            grpcRequest.Search = BuildGrpcSearchRequest(searchQuery, correlationId, deadlineUtc);
+        }
+
+        var response = await client.SearchSuggestionsAsync(grpcRequest, headers: headers, cancellationToken: cancellationToken);
+        return [.. response.Suggestions.Select(static suggestion => new SearchSuggestionItem(
+            suggestion.Value ?? string.Empty,
+            suggestion.Label ?? string.Empty,
+            string.IsNullOrWhiteSpace(suggestion.Description) ? null : suggestion.Description))];
+    }
+
+    private static PluginContracts.SearchRequest BuildGrpcSearchRequest(
+        PluginSearchQuery query,
+        string correlationId,
+        DateTimeOffset deadlineUtc)
+    {
+        var request = new PluginContracts.SearchRequest
+        {
+            Query = query.Query ?? string.Empty,
+            Context = PluginGrpcHelpers.CreateRequestContext(correlationId, deadlineUtc)
+        };
+
+        if (query.MediaTypes.Count > 0)
+        {
+            request.MediaTypes.AddRange(query.MediaTypes);
+        }
+
+        foreach (var filter in query.Filters)
+        {
+            var grpcFilter = new PluginContracts.SearchFilter
+            {
+                Id = filter.Id,
+                Operation = filter.Operation ?? string.Empty
+            };
+            grpcFilter.Values.AddRange(filter.Values);
+            request.Filters.Add(grpcFilter);
+        }
+
+        foreach (var addition in query.QueryAdditions)
+        {
+            request.QueryAdditions.Add(new PluginContracts.SearchQueryAddition
+            {
+                Id = addition.Id,
+                Value = addition.Value,
+                Type = addition.Type ?? string.Empty
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Sort))
+        {
+            request.Sort = query.Sort;
+        }
+
+        if (query.Page is int page && page >= 0)
+        {
+            request.Page = page;
+        }
+
+        if (query.PageSize is int pageSize && pageSize > 0)
+        {
+            request.PageSize = pageSize;
+        }
+
+        return request;
     }
 
     private static MediaSummary MapPluginSearchSummary(PluginContracts.MediaSummary item)
@@ -576,6 +748,21 @@ public static class PagedPipelineEndpoints
         };
     }
 
+    private static int? ReadJsonInt32(JsonElement element, string propertyName)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number when property.TryGetInt32(out var number) => number,
+            JsonValueKind.String when int.TryParse(property.GetString(), out var number) => number,
+            _ => null
+        };
+    }
+
     private static IReadOnlyDictionary<string, string>? ReadJsonMetadata(JsonElement element, string propertyName)
     {
         if (!TryGetJsonProperty(element, propertyName, out var property))
@@ -628,6 +815,22 @@ public static class PagedPipelineEndpoints
         }
 
         return metadata.Count == 0 ? null : metadata;
+    }
+
+    private static bool TryGetObjectProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        if (!TryGetJsonProperty(element, propertyName, out value))
+        {
+            return false;
+        }
+
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
     }
 
     private static bool TryGetJsonProperty(JsonElement element, string propertyName, out JsonElement value)

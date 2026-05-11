@@ -68,6 +68,22 @@ public interface IPluginSearchMetadataRuntime
 }
 
 /// <summary>
+/// Defines lookup-backed search suggestion operations.
+/// </summary>
+public interface IPluginSearchSuggestionsRuntime
+{
+    /// <summary>
+    /// Resolves suggestions for a lookup-backed search control.
+    /// </summary>
+    /// <param name="request">The suggestion request.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The matching suggestions.</returns>
+    Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+        SearchSuggestionRequest request,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Defines the video runtime operations required by the default gRPC services.
 /// </summary>
 public interface IPluginVideoRuntime
@@ -195,6 +211,58 @@ public sealed class PluginDefaultSearchProviderService<TRuntime>(
         }
     }
 
+    /// <summary>
+    /// Handles a gRPC search-suggestions request by delegating to the runtime when supported.
+    /// </summary>
+    public override async Task<SearchSuggestionsResponse> SearchSuggestions(SearchSuggestionsRequest request, ServerCallContext context)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var correlationId = PluginRequestContext.GetCorrelationId(context, request.Context?.CorrelationId);
+
+        try
+        {
+            if (_runtime is not IPluginSearchSuggestionsRuntime suggestionsRuntime)
+            {
+                return new SearchSuggestionsResponse();
+            }
+
+            var suggestionRequest = new EMMA.Plugin.Common.SearchSuggestionRequest(
+                request.ControlId ?? string.Empty,
+                request.Query ?? string.Empty,
+                request.Search is null ? null : MapContractSearchQuery(request.Search),
+                request.Limit > 0 ? request.Limit : null);
+
+            var suggestions = await suggestionsRuntime.GetSearchSuggestionsAsync(
+                suggestionRequest,
+                context.CancellationToken);
+
+            var response = new SearchSuggestionsResponse();
+            response.Suggestions.AddRange(suggestions.Select(static suggestion => new SearchSuggestion
+            {
+                Value = suggestion.Value,
+                Label = suggestion.Label,
+                Description = suggestion.Description ?? string.Empty
+            }));
+
+            _metrics.RecordRpc("search", "SearchSuggestions", EmmaTelemetry.Outcomes.Ok, stopwatch.Elapsed.TotalMilliseconds);
+            return response;
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            _metrics.RecordRpc("search", "SearchSuggestions", EmmaTelemetry.Outcomes.Cancelled, stopwatch.Elapsed.TotalMilliseconds);
+            throw new RpcException(new Status(StatusCode.Cancelled, "Search suggestions request was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            _metrics.RecordRpc("search", "SearchSuggestions", EmmaTelemetry.Outcomes.Error, stopwatch.Elapsed.TotalMilliseconds);
+            _logger.LogError(ex, "Search suggestions request {CorrelationId} failed for control={ControlId}.", correlationId, request.ControlId);
+            throw new RpcException(
+                new Status(
+                    StatusCode.Internal,
+                    $"Search suggestions failed: {ex.GetType().Name}: {ex.Message}"));
+        }
+    }
+
     private static SearchItem MapContractSearchItem(MediaSummary item)
     {
         var metadata = item.Metadata.Count == 0
@@ -228,6 +296,32 @@ public sealed class PluginDefaultSearchProviderService<TRuntime>(
         };
         summary.Metadata.AddRange(metadata);
         return summary;
+    }
+
+    private static PluginSearchQuery MapContractSearchQuery(SearchRequest request)
+    {
+        var filters = request.Filters
+            .Select(static filter => new PluginSearchFilter(
+                filter.Id ?? string.Empty,
+                [.. filter.Values.Where(static value => !string.IsNullOrWhiteSpace(value))],
+                string.IsNullOrWhiteSpace(filter.Operation) ? null : filter.Operation))
+            .ToArray();
+
+        var additions = request.QueryAdditions
+            .Select(static addition => new PluginSearchQueryAddition(
+                addition.Id ?? string.Empty,
+                addition.Value ?? string.Empty,
+                string.IsNullOrWhiteSpace(addition.Type) ? null : addition.Type))
+            .ToArray();
+
+        return new PluginSearchQuery(
+            request.Query ?? string.Empty,
+            [.. request.MediaTypes.Where(static value => !string.IsNullOrWhiteSpace(value))],
+            filters,
+            additions,
+            string.IsNullOrWhiteSpace(request.Sort) ? null : request.Sort,
+            request.Page > 0 ? request.Page : (request.Page == 0 ? 0 : null),
+            request.PageSize > 0 ? request.PageSize : null);
     }
 }
 

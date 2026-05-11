@@ -51,6 +51,14 @@ public interface IWasmPluginRuntimeHost
     Task<IReadOnlyList<MediaSummary>> SearchAsync(PluginRecord record, string query, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Resolves suggestions for a lookup-backed search control.
+    /// </summary>
+    Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+        PluginRecord record,
+        SearchSuggestionRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Gets the available video streams for a media item.
     /// </summary>
     Task<IReadOnlyList<WasmVideoStreamItem>> GetVideoStreamsAsync(PluginRecord record, MediaId mediaId, CancellationToken cancellationToken);
@@ -124,6 +132,7 @@ public sealed class WasmPluginRuntimeHost(
     private const string HandshakeOperation = "handshake";
     private const string CapabilitiesOperation = "capabilities";
     private const string SearchOperation = "search";
+    private const string SearchSuggestionsOperation = "search-suggestions";
     private const string ChaptersOperation = "chapters";
     private const string PageOperation = "page";
     private const string PagesOperation = "pages";
@@ -385,6 +394,47 @@ public sealed class WasmPluginRuntimeHost(
         return mappedResults;
     }
 
+    /// <summary>
+    /// Resolves suggestions for a lookup-backed search control.
+    /// </summary>
+    public async Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+        PluginRecord record,
+        SearchSuggestionRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var componentPath = ResolveComponentPath(record.Manifest);
+        var searchArgs = request.SearchQuery is null
+            ? null
+            : ToWasmQueryArgs(request.SearchQuery);
+        var argsJson = SerializeJson(new WasmSearchSuggestionsArgs(
+            request.ControlId,
+            request.Query,
+            searchArgs,
+            request.Limit));
+
+        var suggestionsJson = await RunInvokeOperationAsync(
+            componentPath,
+            operation: SearchSuggestionsOperation,
+            mediaId: null,
+            mediaType: null,
+            argsJson: argsJson,
+            permittedDomains: record.Manifest.Permissions?.Domains,
+            cancellationToken: cancellationToken);
+
+        var suggestions = DeserializeJson<IReadOnlyList<WasmSearchSuggestionItem>>(suggestionsJson);
+        if (suggestions is null || suggestions.Count == 0)
+        {
+            return [];
+        }
+
+        return [.. suggestions.Select(static item => new SearchSuggestionItem(
+            item.Value,
+            item.Label,
+            item.Description))];
+    }
+
     private static MediaType ParseMediaType(string? value)
     {
         var normalized = (value ?? string.Empty).Trim();
@@ -638,6 +688,32 @@ public sealed class WasmPluginRuntimeHost(
             item.ThumbnailUrl,
             item.Description,
             metadata);
+    }
+
+    private static WasmQueryArgs ToWasmQueryArgs(PluginSearchQuery query)
+    {
+        var filters = query.Filters.Count == 0
+            ? null
+            : query.Filters.Select(static filter => new WasmSearchFilterArg(
+                filter.Id,
+                filter.Values,
+                filter.Operation)).ToArray();
+
+        var additions = query.QueryAdditions.Count == 0
+            ? null
+            : query.QueryAdditions.Select(static addition => new WasmSearchQueryAdditionArg(
+                addition.Id,
+                addition.Value,
+                addition.Type)).ToArray();
+
+        return new WasmQueryArgs(
+            query.Query,
+            query.MediaTypes.Count == 0 ? null : query.MediaTypes,
+            filters,
+            additions,
+            query.Sort,
+            query.Page,
+            query.PageSize);
     }
 
     /// <summary>

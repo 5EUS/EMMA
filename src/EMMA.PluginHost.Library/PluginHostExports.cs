@@ -1247,6 +1247,62 @@ public static class PluginHostExports
     }
 
     /// <summary>
+    /// Resolves suggestions for a lookup-backed search control.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the search control.</param>
+    /// <param name="requestJson">The serialized suggestion request.</param>
+    /// <param name="correlationId">An optional correlation identifier for the request.</param>
+    /// <returns>A JSON array of suggestions, or <see langword="null"/> when the operation fails.</returns>
+    public static string? SearchSuggestionsJsonManaged(string pluginId, string requestJson, string? correlationId = null)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (!TryResolvePlugin(pluginId, out var record, out var address))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Search suggestion payload is required.");
+                return null;
+            }
+
+            var request = JsonSerializer.Deserialize(
+                requestJson,
+                PluginHostExportsJsonContext.Default.SearchSuggestionRequest);
+            if (request is null)
+            {
+                SetLastError("Invalid search suggestion payload.");
+                return null;
+            }
+
+            var suggestions = _wasmRuntime!.IsWasmPlugin(record!.Manifest)
+                ? _wasmRuntime.GetSearchSuggestionsAsync(record, request, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+                : SearchGrpcPluginSuggestions(
+                    record.Manifest.Id,
+                    address,
+                    request,
+                    correlationId);
+
+            return JsonSerializer.Serialize(
+                suggestions,
+                PluginHostExportsJsonContext.Default.IReadOnlyListSearchSuggestionItem);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Runs the WASM network benchmark path for a plugin.
     /// </summary>
     /// <param name="pluginId">The WASM plugin identifier to benchmark.</param>
@@ -5812,6 +5868,112 @@ public static class PluginHostExports
             .GetResult();
         var enriched = response.Results.FirstOrDefault();
         return enriched is null ? media : MapPluginSearchSummary(enriched);
+    }
+
+    private static IReadOnlyList<SearchSuggestionItem> SearchGrpcPluginSuggestions(
+        string pluginId,
+        Uri? address,
+        SearchSuggestionRequest request,
+        string? correlationId)
+    {
+        if (address is null)
+        {
+            SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+            return [];
+        }
+
+        var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+            ? Guid.NewGuid().ToString("n")
+            : correlationId;
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+        var headers = BuildGrpcHeaders(pluginId, resolvedCorrelationId!);
+
+        var grpcRequest = new PluginContracts.SearchSuggestionsRequest
+        {
+            ControlId = request.ControlId,
+            Query = request.Query,
+            Limit = request.Limit ?? 0,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = resolvedCorrelationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        };
+
+        if (request.SearchQuery is { } searchQuery)
+        {
+            grpcRequest.Search = BuildGrpcSearchRequest(searchQuery, resolvedCorrelationId!, deadlineUtc);
+        }
+
+        var response = client.SearchSuggestionsAsync(grpcRequest, headers: headers, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        return [.. response.Suggestions.Select(static suggestion => new SearchSuggestionItem(
+            suggestion.Value ?? string.Empty,
+            suggestion.Label ?? string.Empty,
+            string.IsNullOrWhiteSpace(suggestion.Description) ? null : suggestion.Description))];
+    }
+
+    private static PluginContracts.SearchRequest BuildGrpcSearchRequest(
+        PluginSearchQuery query,
+        string correlationId,
+        DateTimeOffset deadlineUtc)
+    {
+        var request = new PluginContracts.SearchRequest
+        {
+            Query = query.Query ?? string.Empty,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        };
+
+        if (query.MediaTypes.Count > 0)
+        {
+            request.MediaTypes.AddRange(query.MediaTypes);
+        }
+
+        foreach (var filter in query.Filters)
+        {
+            var grpcFilter = new PluginContracts.SearchFilter
+            {
+                Id = filter.Id,
+                Operation = filter.Operation ?? string.Empty
+            };
+            grpcFilter.Values.AddRange(filter.Values);
+            request.Filters.Add(grpcFilter);
+        }
+
+        foreach (var addition in query.QueryAdditions)
+        {
+            request.QueryAdditions.Add(new PluginContracts.SearchQueryAddition
+            {
+                Id = addition.Id,
+                Value = addition.Value,
+                Type = addition.Type ?? string.Empty
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Sort))
+        {
+            request.Sort = query.Sort;
+        }
+
+        if (query.Page is int page && page >= 0)
+        {
+            request.Page = page;
+        }
+
+        if (query.PageSize is int pageSize && pageSize > 0)
+        {
+            request.PageSize = pageSize;
+        }
+
+        return request;
     }
 
     private static PluginContracts.MediaSummary MapPluginSearchContract(MediaSummary media)

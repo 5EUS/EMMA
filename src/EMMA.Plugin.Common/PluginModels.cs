@@ -36,6 +36,30 @@ public sealed record SearchItem(
     IReadOnlyList<MetadataItem>? metadata = null);
 
 /// <summary>
+/// Requests suggestions for a lookup-backed search control.
+/// </summary>
+/// <param name="ControlId">The filter or query-addition identifier.</param>
+/// <param name="Query">The partial user input to resolve.</param>
+/// <param name="SearchQuery">The current structured search query context.</param>
+/// <param name="Limit">The maximum number of suggestions to return.</param>
+public sealed record SearchSuggestionRequest(
+    string ControlId,
+    string Query,
+    PluginSearchQuery? SearchQuery = null,
+    int? Limit = null);
+
+/// <summary>
+/// Represents a suggested value for a lookup-backed search control.
+/// </summary>
+/// <param name="Value">The submitted control value.</param>
+/// <param name="Label">The user-facing suggestion label.</param>
+/// <param name="Description">Optional supporting text.</param>
+public sealed record SearchSuggestionItem(
+    string Value,
+    string Label,
+    string? Description = null);
+
+/// <summary>
 /// Enriches search results with provider-specific metadata.
 /// </summary>
 public interface IPluginSearchMetadataEnricher
@@ -48,6 +72,22 @@ public interface IPluginSearchMetadataEnricher
     /// <returns>The enriched search items.</returns>
     Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
         IReadOnlyList<SearchItem> items,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Resolves suggestions for lookup-backed search controls.
+/// </summary>
+public interface IPluginSearchSuggestionProvider
+{
+    /// <summary>
+    /// Resolves suggestions for a filter or query addition.
+    /// </summary>
+    /// <param name="request">The suggestion request.</param>
+    /// <param name="cancellationToken">The cancellation token for the lookup flow.</param>
+    /// <returns>The matching suggestions.</returns>
+    Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+        SearchSuggestionRequest request,
         CancellationToken cancellationToken);
 }
 

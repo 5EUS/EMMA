@@ -41,6 +41,7 @@ public static class PluginHostEndpoints
                 manifest.Description,
                 manifest.Author,
                 manifest.MediaTypes,
+                SearchExperience = manifest.SearchExperience,
                 Capabilities = manifest.Capabilities is null
                     ? null
                     : new

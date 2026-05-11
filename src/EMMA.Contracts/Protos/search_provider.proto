@@ -11,6 +11,9 @@ service SearchProvider {
   // Searches the plugin source for media that matches the request.
   rpc Search (SearchRequest) returns (SearchResponse);
 
+  // Resolves suggestions for lookup-backed search controls.
+  rpc SearchSuggestions (SearchSuggestionsRequest) returns (SearchSuggestionsResponse);
+
   // Enriches previously discovered search items with additional metadata.
   rpc EnrichSearchItems (EnrichSearchItemsRequest) returns (EnrichSearchItemsResponse);
 }
@@ -70,6 +73,42 @@ message SearchQueryAddition {
 message SearchResponse {
   // The media summaries returned by the search.
   repeated MediaSummary results = 1;
+}
+
+// Requests suggestions for a lookup-backed search control.
+message SearchSuggestionsRequest {
+  // The filter or query-addition identifier.
+  string control_id = 1;
+
+  // The partial user query to resolve.
+  string query = 2;
+
+  // The current structured search context.
+  SearchRequest search = 3;
+
+  // The maximum number of suggestions to return.
+  int32 limit = 4;
+
+  // Carries correlation and deadline metadata for the request.
+  RequestContext context = 100;
+}
+
+// Returns resolved suggestions for a lookup-backed search control.
+message SearchSuggestionsResponse {
+  // The suggested values.
+  repeated SearchSuggestion suggestions = 1;
+}
+
+// Represents a single lookup suggestion.
+message SearchSuggestion {
+  // The submitted option value.
+  string value = 1;
+
+  // The user-facing label.
+  string label = 2;
+
+  // Optional supporting description.
+  string description = 3;
 }
 
 // Requests metadata enrichment for previously returned search items.

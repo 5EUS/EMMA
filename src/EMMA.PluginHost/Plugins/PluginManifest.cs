@@ -136,6 +136,7 @@ public sealed record PluginManifestSearchFilter(
     string? DefaultValue = null,
     IReadOnlyList<string>? DefaultValues = null,
     PluginManifestSearchFilterRange? Range = null,
+    PluginManifestSearchLookup? Lookup = null,
     IReadOnlyList<PluginManifestSearchFilterOption>? Options = null,
     IReadOnlyDictionary<string, string>? CustomProperties = null);
 
@@ -163,7 +164,21 @@ public sealed record PluginManifestSearchFilterOption(
     string Value,
     string Label,
     IReadOnlyList<string>? MediaTypes = null,
-    bool IsDefault = false);
+    bool IsDefault = false,
+    string? Description = null);
+
+/// <summary>
+/// Describes lookup behavior for a search filter or query addition.
+/// </summary>
+/// <param name="MinQueryLength">The minimum number of characters required before lookup begins.</param>
+/// <param name="MaxResults">The maximum number of results requested from the provider.</param>
+/// <param name="DebounceMs">The recommended client debounce in milliseconds.</param>
+/// <param name="AllowCustomValues">Whether callers may submit values outside the suggestion list.</param>
+public sealed record PluginManifestSearchLookup(
+    int? MinQueryLength = null,
+    int? MaxResults = null,
+    int? DebounceMs = null,
+    bool AllowCustomValues = true);
 
 /// <summary>
 /// Describes how free-text query input is configured for a plugin search surface.
@@ -199,6 +214,7 @@ public sealed record PluginManifestSearchQueryAddition(
     string? Suffix = null,
     string? Placeholder = null,
     string? DefaultValue = null,
+    PluginManifestSearchLookup? Lookup = null,
     IReadOnlyList<PluginManifestSearchFilterOption>? Options = null,
     IReadOnlyList<string>? AppliesToMediaTypes = null,
     bool IsRequired = false);

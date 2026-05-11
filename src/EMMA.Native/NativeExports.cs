@@ -125,6 +125,33 @@ public static partial class NativeExports
         return new SearchHostPhaseResult(json, hostCallStopwatch.ElapsedMilliseconds, hostTimingSnapshot, correlationId);
     }
 
+    private static string SearchSuggestionsViaRemotePluginHost(Uri baseUri, string pluginId, string requestJson)
+    {
+        var requestUri = BuildRequestUri(
+            baseUri,
+            $"/pipeline/paged/search/suggestions?pluginId={Uri.EscapeDataString(pluginId)}");
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUri)
+        {
+            Content = new StringContent(requestJson, Encoding.UTF8, "application/json")
+        };
+        using var response = RemotePluginHostHttpClient.Send(request);
+        return ReadHttpJsonBody(response, requestUri);
+    }
+
+    private static string SearchSuggestionsViaEmbeddedPluginHost(string pluginId, string requestJson)
+    {
+        EnsurePluginHostInitialized();
+
+        var json = PluginHostExports.SearchSuggestionsJsonManaged(pluginId, requestJson, Guid.NewGuid().ToString("n"));
+        if (json is null)
+        {
+            var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host suggestions returned null";
+            throw new InvalidOperationException(error);
+        }
+
+        return json;
+    }
+
     private static bool TryGetObjectProperty(JsonElement element, string propertyName, out JsonElement objectValue)
     {
         if (element.TryGetProperty(propertyName, out var direct)
@@ -601,6 +628,13 @@ public static partial class NativeExports
                     thumbnailAspectRatio = (double)width / height;
                 }
 
+                string? searchExperienceJson = null;
+                if (TryGetJsonProperty(item, "searchExperience", out var searchExperience)
+                    && searchExperience.ValueKind == JsonValueKind.Object)
+                {
+                    searchExperienceJson = searchExperience.GetRawText();
+                }
+
                 mapped.Add(new PluginSummary(
                     id,
                     ReadJsonString(item, "title")
@@ -611,7 +645,8 @@ public static partial class NativeExports
                     thumbnailAspectRatio,
                     thumbnailFit,
                     thumbnailWidth,
-                    thumbnailHeight));
+                        thumbnailHeight,
+                        searchExperienceJson));
             }
 
             return BuildPluginsJson(mapped);

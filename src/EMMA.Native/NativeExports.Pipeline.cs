@@ -184,6 +184,57 @@ public static partial class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_search_suggestions_json")]
+    public static IntPtr RuntimeSearchSuggestionsJson(int handle, IntPtr requestJsonUtf8)
+    {
+        ClearLastError();
+        var stopwatch = Stopwatch.StartNew();
+        string pluginIdForLog = "<none>";
+        var responseBytesForLog = 0;
+        var success = false;
+
+        try
+        {
+            if (!States.TryGetValue(handle, out var state))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var requestJson = PtrToString(requestJsonUtf8) ?? string.Empty;
+            var activePluginId = ResolveActivePluginId(state);
+            pluginIdForLog = activePluginId ?? "<none>";
+
+            if (string.IsNullOrWhiteSpace(activePluginId))
+            {
+                SetLastError("No active plugin selected.");
+                return IntPtr.Zero;
+            }
+
+            var suggestionsJson = TryGetRemotePluginHostBaseUri(out var remoteBaseUri)
+                ? SearchSuggestionsViaRemotePluginHost(remoteBaseUri, activePluginId, requestJson)
+                : SearchSuggestionsViaEmbeddedPluginHost(activePluginId, requestJson);
+
+            responseBytesForLog = Encoding.UTF8.GetByteCount(suggestionsJson);
+            success = true;
+            return AllocUtf8(suggestionsJson);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+        finally
+        {
+            stopwatch.Stop();
+            LogTimedOperation(
+                "search-suggestions",
+                stopwatch.ElapsedMilliseconds,
+                $"handle={handle}, pluginId={pluginIdForLog}, responseBytes={responseBytesForLog}, success={success}",
+                forceInfo: true);
+        }
+    }
+
     private static string? EnrichViaEmbeddedPluginHost(string pluginId, string mediaJson)
     {
         EnsurePluginHostInitialized();

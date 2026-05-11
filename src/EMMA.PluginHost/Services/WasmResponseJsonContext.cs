@@ -42,6 +42,10 @@ namespace EMMA.PluginHost.Services;
 [JsonSerializable(typeof(IReadOnlyList<WasmCapabilityItem>))]
 [JsonSerializable(typeof(List<WasmCapabilityItem>))]
 [JsonSerializable(typeof(WasmQueryArgs))]
+[JsonSerializable(typeof(WasmSearchSuggestionsArgs))]
+[JsonSerializable(typeof(WasmSearchSuggestionItem))]
+[JsonSerializable(typeof(IReadOnlyList<WasmSearchSuggestionItem>))]
+[JsonSerializable(typeof(List<WasmSearchSuggestionItem>))]
 [JsonSerializable(typeof(WasmEnrichMediaArgs))]
 [JsonSerializable(typeof(WasmSearchFilterArg))]
 [JsonSerializable(typeof(WasmSearchQueryAdditionArg))]
@@ -169,6 +173,23 @@ public sealed record WasmQueryArgs(
     [property: JsonPropertyName("sort")] string? Sort = null,
     [property: JsonPropertyName("page")] int? Page = null,
     [property: JsonPropertyName("pageSize")] int? PageSize = null);
+
+/// <summary>
+/// Query args for lookup-backed search suggestion operations.
+/// </summary>
+public sealed record WasmSearchSuggestionsArgs(
+    [property: JsonPropertyName("controlId")] string ControlId,
+    [property: JsonPropertyName("query")] string Query,
+    [property: JsonPropertyName("searchQuery")] WasmQueryArgs? SearchQuery = null,
+    [property: JsonPropertyName("limit")] int? Limit = null);
+
+/// <summary>
+/// Represents a lookup suggestion returned by a WASM plugin.
+/// </summary>
+public sealed record WasmSearchSuggestionItem(
+    [property: JsonPropertyName("value")] string Value,
+    [property: JsonPropertyName("label")] string Label,
+    [property: JsonPropertyName("description")] string? Description = null);
 
 /// <summary>
 /// Represents a structured search filter argument passed to a WASM plugin.
