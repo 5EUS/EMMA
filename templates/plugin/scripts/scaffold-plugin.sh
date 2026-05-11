@@ -10,6 +10,38 @@ assembly_name=""
 plugin_id=""
 force="false"
 
+slugify_assembly_name() {
+  local input="$1"
+  local slug
+
+  slug="$(printf '%s' "$input" | sed -E 's/([a-z0-9])([A-Z])/\1-\2/g; s/[._[:space:]]+/-/g' | tr '[:upper:]' '[:lower:]')"
+  slug="$(printf '%s' "$slug" | sed -E 's/^-+//; s/-+$//; s/--+/-/g')"
+  printf '%s' "$slug"
+}
+
+rename_paths_with_token() {
+  local root="$1"
+  local old_token="$2"
+  local new_token="$3"
+
+  if [[ -z "$old_token" || "$old_token" == "$new_token" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r -d '' path; do
+    local parent
+    local base
+    local renamed
+
+    parent="$(dirname "$path")"
+    base="$(basename "$path")"
+    renamed="${base//${old_token}/${new_token}}"
+    if [[ "$renamed" != "$base" ]]; then
+      mv "$path" "$parent/$renamed"
+    fi
+  done < <(find "$root" -depth -mindepth 1 \( -type f -o -type d \) -name "*${old_token}*" -print0)
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -87,6 +119,7 @@ fi
 
 seed_csproj="$(find "$seed" -maxdepth 1 -name '*.csproj' | head -n 1)"
 seed_manifest="$(find "$seed" -maxdepth 1 -name '*.plugin.json' | head -n 1)"
+seed_solution="$(find "$seed" -maxdepth 1 -name '*.sln' | head -n 1)"
 
 if [[ -z "$seed_csproj" || -z "$seed_manifest" ]]; then
   echo "Seed is missing .csproj or .plugin.json: $seed" >&2
@@ -95,7 +128,12 @@ fi
 
 seed_assembly_name="$(basename "$seed_csproj" .csproj)"
 seed_manifest_name="$(basename "$seed_manifest" .plugin.json)"
+seed_solution_name=""
+if [[ -n "$seed_solution" ]]; then
+  seed_solution_name="$(basename "$seed_solution" .sln)"
+fi
 seed_plugin_id="$(grep -E '"id"\s*:\s*"' "$seed_manifest" | head -n 1 | sed -E 's/.*"id"\s*:\s*"([^"]+)".*/\1/')"
+target_solution_name="$assembly_name"
 
 if [[ -z "$seed_plugin_id" ]]; then
   echo "Could not parse plugin id from seed manifest: $seed_manifest" >&2
@@ -104,7 +142,6 @@ fi
 
 rsync -a \
   --exclude '.git' \
-  --exclude '.github' \
   --exclude 'bin' \
   --exclude 'obj' \
   --exclude 'artifacts' \
@@ -115,13 +152,11 @@ rsync -a \
   --exclude 'scripts/scaffold-plugin.sh' \
   "$seed/" "$destination/"
 
-# Rename top-level project and manifest files.
-if [[ -f "$destination/$seed_assembly_name.csproj" ]]; then
-  mv "$destination/$seed_assembly_name.csproj" "$destination/$assembly_name.csproj"
-fi
+rename_paths_with_token "$destination" "$seed_assembly_name" "$assembly_name"
+rename_paths_with_token "$destination" "$seed_manifest_name" "$assembly_name"
 
-if [[ -f "$destination/$seed_manifest_name.plugin.json" ]]; then
-  mv "$destination/$seed_manifest_name.plugin.json" "$destination/$assembly_name.plugin.json"
+if [[ -n "$seed_solution_name" && -f "$destination/$seed_solution_name.sln" ]]; then
+  mv "$destination/$seed_solution_name.sln" "$destination/$target_solution_name.sln"
 fi
 
 # Replace seed identifiers with target identifiers in common text file types.
@@ -129,6 +164,9 @@ while IFS= read -r -d '' file; do
   perl -0pi -e "s/\Q$seed_assembly_name\E/$assembly_name/g" "$file"
   perl -0pi -e "s/\Q$seed_manifest_name\E/$assembly_name/g" "$file"
   perl -0pi -e "s/\Q$seed_plugin_id\E/$plugin_id/g" "$file"
+  if [[ -n "$seed_solution_name" ]]; then
+    perl -0pi -e "s/\Q$seed_solution_name\E/$target_solution_name/g" "$file"
+  fi
 done < <(find "$destination" -type f \( \
   -name '*.cs' -o -name '*.csproj' -o -name '*.json' -o -name '*.md' -o -name '*.yml' -o -name '*.yaml' -o -name '*.sh' -o -name '*.py' -o -name '*.props' -o -name '*.targets' -o -name '*.xml' -o -name '*.wit' -o -name '*.txt' \
 \) -print0)
@@ -142,4 +180,4 @@ echo
 echo "Next steps:"
 echo "  1) cd $destination"
 echo "  2) dotnet build $assembly_name.csproj"
-echo "  3) Review Program.cs, Infrastructure/, Services/, and *.plugin.json"
+echo "  3) Review Program.cs, Core/, ASPNET/, WASM/, and *.plugin.json"

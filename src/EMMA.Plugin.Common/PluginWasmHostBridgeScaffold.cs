@@ -63,6 +63,32 @@ public static class PluginWasmHostBridgeScaffold
     }
 
     /// <summary>
+    /// Resolves a search payload by preferring the provided payload and otherwise fetching from the host bridge,
+    /// using a shared payload source abstraction for query enrichment.
+    /// </summary>
+    public static string ResolveSearchPayload(
+        string? payloadJson,
+        PluginSearchQuery parsedQuery,
+        Func<PluginSearchQuery, PluginPayloadSource, PluginSearchQuery> queryResolver,
+        Func<PluginSearchQuery, string?> searchUrlBuilder,
+        Func<string, string?, string?> payloadProvider,
+        string operation = PluginOperationNames.Search)
+    {
+        var payloadSource = PluginPayloadSource.FromSync(
+            absoluteUrl => FetchPayload(absoluteUrl, payloadProvider, operation));
+
+        return PluginPayloadResolvers.ResolveProvidedOrHostPayload(
+            payloadJson,
+            operation,
+            () => PluginSearchUrlResolver.ResolveSearchAbsoluteUrl(
+                parsedQuery,
+                queryResolver,
+                searchUrlBuilder,
+                payloadSource),
+            payloadProvider);
+    }
+
+    /// <summary>
     /// Resolves and merges paged chapter feed payloads by using the host bridge for subsequent pages.
     /// </summary>
     /// <param name="mediaId">The media identifier whose chapter feed is being loaded.</param>

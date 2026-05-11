@@ -82,7 +82,6 @@ interface plugin {
   capabilities: func() -> list<capability>;
 
   search: func(query: string, payload-json: string) -> list<media-search-item>;
-
   chapters: func(media-id: string, payload-json: string) -> list<chapter-item>;
   page: func(media-id: string, chapter-id: string, page-index: u32, payload-json: string) -> option<page-item>;
   pages: func(media-id: string, chapter-id: string, start-index: u32, count: u32, payload-json: string) -> list<page-item>;

@@ -1,0 +1,52 @@
+{
+  "name": "page-window-smoke",
+  "displayName": "Page Window Smoke",
+  "description": "Searches the template fixtures, selects the first chapter, and fetches a page window.",
+  "defaultQuery": "template",
+  "queryLabel": "Paged query",
+  "steps": [
+    {
+      "op": "search",
+      "query": "$query",
+      "save": "results"
+    },
+    {
+      "op": "requireCount",
+      "from": "$results",
+      "min": 1
+    },
+    {
+      "op": "selectFirst",
+      "from": "$results",
+      "save": "media"
+    },
+    {
+      "op": "chapters",
+      "mediaId": "$media.id",
+      "save": "chapters"
+    },
+    {
+      "op": "requireCount",
+      "from": "$chapters",
+      "min": 1
+    },
+    {
+      "op": "selectFirst",
+      "from": "$chapters",
+      "save": "chapter"
+    },
+    {
+      "op": "pages",
+      "mediaId": "$media.id",
+      "chapterId": "$chapter.id",
+      "startIndex": 0,
+      "count": 3,
+      "save": "pages"
+    },
+    {
+      "op": "requireCount",
+      "from": "$pages",
+      "min": 1
+    }
+  ]
+}

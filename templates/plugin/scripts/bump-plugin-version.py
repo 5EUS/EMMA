@@ -16,7 +16,7 @@ def bump_patch(version: str) -> str:
 
 def main() -> int:
     repo_root = pathlib.Path(__file__).resolve().parent.parent
-    manifest_path = repo_root / "EMMA.PluginTemplate.plugin.json"
+    manifest_path = repo_root / "EMMA.TemplatePlugin.plugin.json"
 
     if not manifest_path.exists():
         raise FileNotFoundError(f"Manifest not found: {manifest_path}")

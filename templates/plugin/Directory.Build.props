@@ -1,0 +1,8 @@
+<Project>
+  <Import Project="obj/EMMA.PluginDev.props" Condition="Exists('obj/EMMA.PluginDev.props')" />
+
+  <PropertyGroup>
+    <BaseIntermediateOutputPath>obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+  </PropertyGroup>
+</Project>

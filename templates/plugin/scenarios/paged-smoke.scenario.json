@@ -1,0 +1,51 @@
+{
+  "name": "paged-smoke",
+  "displayName": "Paged Smoke",
+  "description": "Searches the template fixtures, selects the first media item, and validates chapters and the first page.",
+  "defaultQuery": "template",
+  "queryLabel": "Paged query",
+  "steps": [
+    {
+      "op": "search",
+      "query": "$query",
+      "save": "results"
+    },
+    {
+      "op": "requireCount",
+      "from": "$results",
+      "min": 1
+    },
+    {
+      "op": "selectFirst",
+      "from": "$results",
+      "save": "media"
+    },
+    {
+      "op": "chapters",
+      "mediaId": "$media.id",
+      "save": "chapters"
+    },
+    {
+      "op": "requireCount",
+      "from": "$chapters",
+      "min": 1
+    },
+    {
+      "op": "selectFirst",
+      "from": "$chapters",
+      "save": "chapter"
+    },
+    {
+      "op": "page",
+      "mediaId": "$media.id",
+      "chapterId": "$chapter.id",
+      "index": 0,
+      "save": "page"
+    },
+    {
+      "op": "requireNotNull",
+      "value": "$page.contentUri",
+      "message": "Expected the first page to expose a content URI."
+    }
+  ]
+}

@@ -69,6 +69,18 @@ public abstract class PluginSearchQueryEnricher
     }
 
     /// <summary>
+    /// Async resolution entry point using a shared payload source abstraction.
+    /// </summary>
+    public Task<PluginSearchQuery> ResolveAsync(
+        PluginSearchQuery query,
+        PluginPayloadSource payloadSource,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(payloadSource);
+        return ResolveAsync(query, payloadSource.FetchAsync, cancellationToken);
+    }
+
+    /// <summary>
     /// Sync resolution entry point. Wraps ResolveAsync with synchronous adapter.
     /// </summary>
     /// <param name="query">The parsed search query to resolve.</param>
@@ -85,6 +97,17 @@ public abstract class PluginSearchQueryEnricher
             .ConfigureAwait(false)
             .GetAwaiter()
             .GetResult();
+    }
+
+    /// <summary>
+    /// Sync resolution entry point using a shared payload source abstraction.
+    /// </summary>
+    public PluginSearchQuery Resolve(
+        PluginSearchQuery query,
+        PluginPayloadSource payloadSource)
+    {
+        ArgumentNullException.ThrowIfNull(payloadSource);
+        return Resolve(query, payloadSource.Fetch);
     }
 
     /// <summary>

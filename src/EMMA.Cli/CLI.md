@@ -21,6 +21,7 @@ Environment:
 - `EMMA_PLUGIN_TARGET` overrides the resolved runtime target for session metadata.
 - `EMMA_PLUGIN_EXECUTION_MODE` overrides the resolved execution mode.
 - `EMMA_PLUGIN_DEV_MODE` defaults to `1` inside the CLI unless the active profile disables plugin logging.
+- The CLI writes `obj/EMMA.PluginDev.props` under the discovered plugin root so design-time builds can mirror the active profile's `PluginTransport` for VS Code linting and IntelliSense.
 
 ## Session bootstrap
 

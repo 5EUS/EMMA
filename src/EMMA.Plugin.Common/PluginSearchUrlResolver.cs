@@ -27,4 +27,19 @@ public static class PluginSearchUrlResolver
 
         return searchUrlBuilder(resolvedQuery);
     }
+
+    /// <summary>
+    /// Resolves a final search URL by enriching a parsed query by using a shared payload source.
+    /// </summary>
+    public static string? ResolveSearchAbsoluteUrl(
+        PluginSearchQuery parsedQuery,
+        Func<PluginSearchQuery, PluginPayloadSource, PluginSearchQuery> queryResolver,
+        Func<PluginSearchQuery, string?> searchUrlBuilder,
+        PluginPayloadSource payloadSource)
+    {
+        ArgumentNullException.ThrowIfNull(payloadSource);
+
+        var resolvedQuery = queryResolver(parsedQuery, payloadSource);
+        return searchUrlBuilder(resolvedQuery);
+    }
 }

@@ -23,6 +23,7 @@ public sealed class PluginDevSessionFactory
     private readonly PluginDevDoctor _doctor = new();
     private readonly PluginDevBuildService _buildService = new();
     private readonly PluginDevScenarioRunner _scenarioRunner = new();
+    private readonly PluginDevDesignTimeBuildProfileSync _designTimeBuildProfileSync = new();
 
     public PluginDevSession Create(string workingDirectory, string? requestedProfileName = null)
     {
@@ -76,6 +77,8 @@ public sealed class PluginDevSessionFactory
             "session.profile.resolved",
             $"Resolved profile '{profile.Name}' for plugin '{profile.PluginId}' using host '{profile.HostUrl}'.");
 
+        TrySyncDesignTimeBuildProfile(session, profile, discovery.RootDirectory);
+
         if (!string.IsNullOrWhiteSpace(profile.ConfigPath))
         {
             session.AddDiagnostic(
@@ -122,6 +125,27 @@ public sealed class PluginDevSessionFactory
         }
 
         return session;
+    }
+
+    private void TrySyncDesignTimeBuildProfile(PluginDevSession session, PluginDevProfile profile, string rootDirectory)
+    {
+        try
+        {
+            var result = _designTimeBuildProfileSync.Sync(rootDirectory, profile);
+            session.AddDiagnostic(
+                "session.design_time_profile.synced",
+                $"Saved design-time PluginTransport='{result.PluginTransport}' for profile '{profile.Name}' to '{result.FilePath}'. VS Code linting and IntelliSense will follow that transport after the workspace reloads its project state.",
+                PluginDevDiagnosticSeverity.Info,
+                "profile");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            session.AddDiagnostic(
+                "session.design_time_profile.sync_failed",
+                $"Failed to save the design-time build profile for '{profile.Name}': {ex.Message}",
+                PluginDevDiagnosticSeverity.Warning,
+                "profile");
+        }
     }
 
     private static IPluginDevRuntimeAdapter CreateRuntimeAdapter(
