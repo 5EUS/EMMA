@@ -3,6 +3,9 @@
 This roadmap tracks the current implementation state of EMMA as of 2026-04-01.
 It is intentionally status-first rather than plan-only.
 
+For the SDK-specific release gate that now defines `v0.7.0` readiness, see
+`plugin-sdk-v0.7.0-release-contract.md`.
+
 ## Milestone Summary
 
 | Milestone | Status | Notes |
@@ -149,3 +152,5 @@ It is intentionally status-first rather than plan-only.
 
 See `milestone-7-plugin-developer-experience.md` for the broader milestone plan
 and `plugin-sdk-authoring-surface.md` for the current SDK authoring surface.
+Use `plugin-sdk-v0.7.0-release-contract.md` as the release gate for SDK
+stabilization work.

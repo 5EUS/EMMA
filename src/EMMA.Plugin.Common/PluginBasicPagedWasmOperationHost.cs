@@ -98,7 +98,8 @@ public abstract class PluginBasicPagedWasmOperationHost<TChapterOperationItem>
                             request.ResolveStartIndex(),
                             request.ResolveCount(),
                             request.payloadJson ?? string.Empty),
-                        _options.PageArrayTypeInfo))
+                        _options.PageArrayTypeInfo),
+                    supportsChapterRequests: SupportsChapterRequests)
                 .Register(PluginOperationNames.Benchmark, request =>
                 {
                     var iterations = Math.Max(1, PluginJsonArgs.GetInt32(request.argsJson, "iterations") ?? 5000);
@@ -250,6 +251,16 @@ public abstract class PluginBasicPagedWasmOperationHost<TChapterOperationItem>
         }
 
         return _invokeDispatcher.Dispatch(request);
+    }
+
+    /// <summary>
+    /// Determines whether the current request supports chapter and page operations.
+    /// </summary>
+    /// <param name="request">The current operation request.</param>
+    /// <returns><see langword="true"/> when the request should be treated as chapter/page capable.</returns>
+    protected virtual bool SupportsChapterRequests(OperationRequest request)
+    {
+        return request.IsPagedMediaRequest();
     }
 
     /// <summary>
