@@ -1,8 +1,9 @@
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 
 namespace EMMA.Plugin.Common.Tests;
 
-public class PluginBasicPagedVideoWasmOperationHostTests
+public partial class PluginBasicPagedVideoWasmOperationHostTests
 {
     [Fact]
     public void Invoke_VideoStreams_ReturnsSerializedStreams()
