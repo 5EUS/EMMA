@@ -2813,18 +2813,31 @@ public sealed class PluginDevBuildException : InvalidOperationException
 
     private static string BuildRelevantExcerpt(PluginDevProcessResult result)
     {
-        var stderrExcerpt = BuildRelevantExcerpt("stderr", result.StandardError);
+        var stderrExcerpt = TryBuildRelevantExcerpt("stderr", result.StandardError, out var stderrHasInterestingLines);
+        var stdoutExcerpt = TryBuildRelevantExcerpt("stdout", result.StandardOutput, out var stdoutHasInterestingLines);
+
+        if (stderrHasInterestingLines && !string.IsNullOrWhiteSpace(stderrExcerpt))
+        {
+            return stderrExcerpt;
+        }
+
+        if (stdoutHasInterestingLines && !string.IsNullOrWhiteSpace(stdoutExcerpt))
+        {
+            return stdoutExcerpt;
+        }
+
         if (!string.IsNullOrWhiteSpace(stderrExcerpt))
         {
             return stderrExcerpt;
         }
 
-        var stdoutExcerpt = BuildRelevantExcerpt("stdout", result.StandardOutput);
         return stdoutExcerpt;
     }
 
-    private static string BuildRelevantExcerpt(string label, string? content)
+    private static string TryBuildRelevantExcerpt(string label, string? content, out bool hasInterestingLines)
     {
+        hasInterestingLines = false;
+
         if (string.IsNullOrWhiteSpace(content))
         {
             return string.Empty;
@@ -2837,6 +2850,7 @@ public sealed class PluginDevBuildException : InvalidOperationException
         var exactErrorBlock = FindTrailingExactErrorBlock(lines);
         if (exactErrorBlock.Length > 0)
         {
+            hasInterestingLines = true;
             return string.Join(Environment.NewLine, exactErrorBlock);
         }
 
@@ -2853,6 +2867,7 @@ public sealed class PluginDevBuildException : InvalidOperationException
             return string.Empty;
         }
 
+        hasInterestingLines = true;
         return $"{label}:\n{string.Join(Environment.NewLine, block)}";
     }
 

@@ -180,4 +180,5 @@ echo
 echo "Next steps:"
 echo "  1) cd $destination"
 echo "  2) dotnet build $assembly_name.csproj"
-echo "  3) Review Program.cs, Core/, ASPNET/, WASM/, and *.plugin.json"
+echo "  3) Review the stub comments in Core/, ASPNET/, WASM/, Program.cs, and *.plugin.json"
+echo "  4) Implement provider search/chapter/page surfaces; the scaffold intentionally returns no results until then"

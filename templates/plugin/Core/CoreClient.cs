@@ -4,133 +4,59 @@ namespace EMMA.TemplatePlugin.Core;
 
 internal sealed class CoreClient
 {
-    private static readonly SearchItem[] SearchCatalog =
-    [
-        new(
-            id: "template-series-1",
-            source: "emma.plugin.template",
-            title: "Template Series One",
-            mediaType: PluginMediaTypes.Paged,
-            thumbnailUrl: "https://example.invalid/template/series-1/poster.jpg",
-            description: "A deterministic paged fixture with two chapters."),
-        new(
-            id: "template-collection-1",
-            source: "emma.plugin.template",
-            title: "Template Collection One",
-            mediaType: PluginMediaTypes.Paged,
-            thumbnailUrl: "https://example.invalid/template/collection-1/poster.jpg",
-            description: "A second deterministic fixture for validating search and paging.")
-    ];
-
-    private static readonly IReadOnlyDictionary<string, ChapterItem[]> ChaptersByMediaId =
-        new Dictionary<string, ChapterItem[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["template-series-1"] =
-            [
-                new ChapterItem("template-series-1-chapter-1", 1, "Chapter 1", []),
-                new ChapterItem("template-series-1-chapter-2", 2, "Chapter 2", [])
-            ],
-            ["template-collection-1"] =
-            [
-                new ChapterItem("template-collection-1-chapter-1", 1, "Issue 1", [])
-            ]
-        };
-
-    private static readonly IReadOnlyDictionary<string, PageItem[]> PagesByChapterId =
-        new Dictionary<string, PageItem[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["template-series-1-chapter-1"] = BuildPages("template-series-1-chapter-1", 4),
-            ["template-series-1-chapter-2"] = BuildPages("template-series-1-chapter-2", 3),
-            ["template-collection-1-chapter-1"] = BuildPages("template-collection-1-chapter-1", 5)
-        };
-
     public IReadOnlyList<SearchItem> Search(string query)
     {
-        var normalized = (query ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            return SearchCatalog;
-        }
-
-        var matches = SearchCatalog
-            .Where(item =>
-                item.id.Contains(normalized, StringComparison.OrdinalIgnoreCase)
-                || item.title.Contains(normalized, StringComparison.OrdinalIgnoreCase)
-                || (item.description?.Contains(normalized, StringComparison.OrdinalIgnoreCase) ?? false))
-            .ToArray();
-
-        return matches.Length == 0 ? SearchCatalog : matches;
+        // Replace this with provider search and map the provider response into SearchItem values.
+        // Returning an empty collection keeps a freshly scaffolded plugin compilable and safe to run
+        // before any provider integration exists.
+        _ = query;
+        return [];
     }
 
     public IReadOnlyList<ChapterItem> GetChapters(string mediaId)
     {
-        return ChaptersByMediaId.TryGetValue(mediaId, out var chapters)
-            ? chapters
-            : [];
+        // Replace this with chapter enumeration for the selected media item.
+        _ = mediaId;
+        return [];
     }
 
     public IReadOnlyList<ChapterOperationItem> GetChapterOperationItems(string mediaId)
     {
+        // Keep this mapped from GetChapters unless your provider needs chapter-operation data that is
+        // different from the chapter list surface.
         var chapters = GetChapters(mediaId);
-        if (chapters.Count == 0)
-        {
-            return [];
-        }
-
-        var results = new List<ChapterOperationItem>(chapters.Count);
-        foreach (var chapter in chapters)
-        {
-            results.Add(new ChapterOperationItem(
-                chapter.id,
-                chapter.number,
-                chapter.title,
-                chapter.uploaderGroups ?? []));
-        }
-
-        return results;
+        return chapters.Count == 0
+            ? []
+            :
+            [
+                .. chapters.Select(chapter => new ChapterOperationItem(
+                    chapter.id,
+                    chapter.number,
+                    chapter.title,
+                    chapter.uploaderGroups ?? []))
+            ];
     }
 
     public PageItem? GetPage(string chapterId, int pageIndex)
     {
-        if (pageIndex < 0)
-        {
-            return null;
-        }
-
-        return PagesByChapterId.TryGetValue(chapterId, out var pages) && pageIndex < pages.Length
-            ? pages[pageIndex]
-            : null;
+        // Replace this when your provider can resolve individual page payloads or content URLs.
+        _ = chapterId;
+        _ = pageIndex;
+        return null;
     }
 
     public IReadOnlyList<PageItem> GetPages(string chapterId, int startIndex, int count)
     {
-        if (startIndex < 0 || count <= 0 || !PagesByChapterId.TryGetValue(chapterId, out var pages) || startIndex >= pages.Length)
-        {
-            return [];
-        }
-
-        var max = Math.Min(count, pages.Length - startIndex);
-        return pages.Skip(startIndex).Take(max).ToArray();
+        // Replace this if your provider can fetch page windows more efficiently than repeated GetPage calls.
+        _ = chapterId;
+        _ = startIndex;
+        _ = count;
+        return [];
     }
 
     public int GetPageCount(string chapterId)
     {
-        return PagesByChapterId.TryGetValue(chapterId, out var pages)
-            ? pages.Length
-            : 0;
-    }
-
-    private static PageItem[] BuildPages(string chapterId, int count)
-    {
-        var pages = new PageItem[count];
-        for (var index = 0; index < count; index++)
-        {
-            pages[index] = new PageItem(
-                $"{chapterId}:page:{index}",
-                index,
-                $"https://example.invalid/assets/{chapterId}/page-{index + 1}.jpg");
-        }
-
-        return pages;
+        _ = chapterId;
+        return 0;
     }
 }
