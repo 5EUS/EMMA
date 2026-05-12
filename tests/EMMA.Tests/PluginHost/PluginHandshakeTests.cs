@@ -157,6 +157,72 @@ public sealed class PluginHandshakeTests
         }
     }
 
+    [Fact]
+    public async Task HandshakeAllAsync_FailsWhenManifestRequiresNewerHostVersion()
+    {
+        AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
+        var tempRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        var app = BuildPluginServer<MockPluginControlService>();
+        await app.StartAsync();
+
+        var address = GetServerAddress(app);
+        var manifestPath = Path.Combine(tempRoot, "demo.plugin.json");
+        await File.WriteAllTextAsync(manifestPath, $"{{\n  \"id\": \"demo\",\n  \"name\": \"Demo Plugin\",\n  \"version\": \"1.0.0\",\n  \"protocol\": \"grpc\",\n  \"endpoint\": \"{address}\",\n  \"runtime\": {{\n    \"minHostVersion\": \"9999.0.0\"\n  }}\n}}\n");
+
+        var options = Options.Create(new PluginHostOptions
+        {
+            ManifestDirectory = tempRoot,
+            HandshakeOnStartup = true,
+            HandshakeTimeoutSeconds = 5,
+            AllowNoSandboxFallback = true,
+            SandboxRootDirectory = Path.Combine(tempRoot, "sandbox")
+        });
+
+        var registry = new PluginRegistry();
+        var sanitizer = new PluginPermissionSanitizer(options, NullLogger<PluginPermissionSanitizer>.Instance);
+        var loader = new PluginManifestLoader(options, sanitizer, NullLogger<PluginManifestLoader>.Instance);
+        var sandbox = new NoOpPluginSandboxManager(options, NullLogger<NoOpPluginSandboxManager>.Instance);
+        var signatureOptions = Options.Create(new PluginSignatureOptions());
+        var verifier = new HmacPluginSignatureVerifier(signatureOptions);
+        var resolver = new PluginEntrypointResolver(options);
+        var endpointAllocator = new PluginEndpointAllocator();
+        var processManager = new PluginProcessManager(
+            options,
+            sandbox,
+            resolver,
+            signatureOptions,
+            verifier,
+            NullLogger<PluginProcessManager>.Instance);
+        var handshake = new PluginHandshakeService(
+            loader,
+            registry,
+            sandbox,
+            processManager,
+            endpointAllocator,
+            new NoOpWasmPluginRuntimeHost(),
+            options,
+            NullLogger<PluginHandshakeService>.Instance);
+
+        await handshake.HandshakeAllAsync(CancellationToken.None);
+
+        var snapshot = registry.GetSnapshot();
+        Assert.Single(snapshot);
+        Assert.False(snapshot[0].Status.Success);
+        Assert.Contains("requires host version", snapshot[0].Runtime.LastErrorMessage ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+        await app.StopAsync();
+        try
+        {
+            Directory.Delete(tempRoot, true);
+        }
+        catch
+        {
+        }
+    }
+
     private static WebApplication BuildPluginServer<TService>() where TService : class
     {
         var builder = WebApplication.CreateBuilder();

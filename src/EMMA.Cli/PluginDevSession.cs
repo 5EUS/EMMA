@@ -1,5 +1,6 @@
 using EMMA.Api;
 using EMMA.Api.Embedded;
+using EMMA.Domain;
 
 namespace EMMA.Cli;
 
@@ -46,7 +47,25 @@ public sealed record PluginDevDiagnostic(string Code, string Message, string Sev
             return "general";
         }
 
-        var segments = code.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (string.Equals(code, ErrorCodes.Unauthenticated, StringComparison.OrdinalIgnoreCase))
+        {
+            return "auth";
+        }
+
+        if (string.Equals(code, ErrorCodes.Timeout, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(code, ErrorCodes.Cancelled, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(code, ErrorCodes.UpstreamFailure, StringComparison.OrdinalIgnoreCase))
+        {
+            return "runtime";
+        }
+
+        if (string.Equals(code, ErrorCodes.InvalidRequest, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(code, ErrorCodes.NotFound, StringComparison.OrdinalIgnoreCase))
+        {
+            return "request";
+        }
+
+        var segments = code.Split(['.', ':'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (segments.Length >= 2)
         {
             return segments[1];
