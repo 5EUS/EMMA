@@ -1,10 +1,12 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Diagnostics;
 using System.Text.Json;
 using EMMA.PluginHost.Library;
 
 namespace EMMA.Tests.PluginHost;
 
+[Collection("Embedded AspNet Plugin Integration")]
 public sealed class EmbeddedAspNetEnrichIntegrationTests
 {
     [Fact]
@@ -95,16 +97,24 @@ public sealed class EmbeddedAspNetEnrichIntegrationTests
     {
         var solutionRoot = ResolveSolutionRoot();
         var siblingRepoRoot = Path.GetFullPath(Path.Combine(solutionRoot, "..", "emma-test-plugin"));
+        var projectPath = Path.Combine(siblingRepoRoot, "EMMA.TestPlugin.csproj");
+        if (!File.Exists(projectPath))
+        {
+            throw new FileNotFoundException("EMMA test plugin project not found.", projectPath);
+        }
+
+        EnsureTestPluginBuilt(projectPath);
+
+        var projectDir = Path.GetDirectoryName(projectPath) ?? throw new DirectoryNotFoundException(projectPath);
+        var outputDir = Path.Combine(projectDir, "bin", "Debug", "net10.0");
         var candidates = new List<string>
         {
-            Path.Combine(siblingRepoRoot, "artifacts", "build-linux-x64", "publish", "EMMA.TestPlugin"),
-            Path.Combine(siblingRepoRoot, "bin", "Debug", "net10.0", "EMMA.TestPlugin")
+            Path.Combine(outputDir, "EMMA.TestPlugin")
         };
 
         if (OperatingSystem.IsWindows())
         {
-            candidates.Insert(0, Path.Combine(siblingRepoRoot, "artifacts", "build-win-x64", "publish", "EMMA.TestPlugin.exe"));
-            candidates.Add(Path.Combine(siblingRepoRoot, "bin", "Debug", "net10.0", "EMMA.TestPlugin.exe"));
+            candidates.Add(Path.Combine(outputDir, "EMMA.TestPlugin.exe"));
         }
 
         foreach (var candidate in candidates)
@@ -115,7 +125,7 @@ public sealed class EmbeddedAspNetEnrichIntegrationTests
             }
         }
 
-        throw new FileNotFoundException("Native EMMA test plugin entrypoint not found.", siblingRepoRoot);
+        throw new FileNotFoundException("Native EMMA test plugin entrypoint not found.", outputDir);
     }
 
     private static string ResolveSolutionRoot()
@@ -170,6 +180,33 @@ public sealed class EmbeddedAspNetEnrichIntegrationTests
         }
         catch
         {
+        }
+    }
+
+    private static void EnsureTestPluginBuilt(string projectPath)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = $"build \"{projectPath}\" -c Debug -f net10.0",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            throw new InvalidOperationException("Failed to start dotnet build.");
+        }
+
+        var output = process.StandardOutput.ReadToEnd();
+        var error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"dotnet build failed.\n{output}\n{error}");
         }
     }
 
@@ -325,4 +362,9 @@ public sealed class EmbeddedAspNetEnrichIntegrationTests
             Environment.SetEnvironmentVariable(_name, _originalValue);
         }
     }
+}
+
+[CollectionDefinition("Embedded AspNet Plugin Integration", DisableParallelization = true)]
+public sealed class EmbeddedAspNetPluginIntegrationCollection
+{
 }

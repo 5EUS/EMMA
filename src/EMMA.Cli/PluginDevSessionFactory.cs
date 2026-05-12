@@ -57,7 +57,7 @@ public sealed class PluginDevSessionFactory
             metadataCache: new InMemoryCachePort());
 
         var api = new EmbeddedPagedMediaApi(runtime);
-        var runtimeAdapter = CreateRuntimeAdapter(profile, runtime, api, discovery, availableProfiles);
+        var runtimeAdapter = CreateRuntimeAdapter(profile, runtime, api, discovery, availableProfiles, hostAuthToken);
 
         var session = new PluginDevSession(
             workingDirectory,
@@ -153,7 +153,8 @@ public sealed class PluginDevSessionFactory
         EmbeddedRuntime runtime,
         EmbeddedPagedMediaApi api,
         PluginDevDiscoveryResult discovery,
-        IReadOnlyList<PluginDevProfile> availableProfiles)
+        IReadOnlyList<PluginDevProfile> availableProfiles,
+        string? hostAuthToken)
     {
         if (profile.ExecutionMode == PluginExecutionMode.Direct && profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
         {
@@ -218,7 +219,7 @@ public sealed class PluginDevSessionFactory
                 profile.Logging);
         }
 
-        return new HostBridgeRuntimeAdapter(runtime, api);
+        return new HostBridgeRuntimeAdapter(runtime, api, new Uri(profile.HostUrl, UriKind.Absolute), hostAuthToken);
     }
 
     private static bool IsNativeTargetRunnable(PluginRuntimeTarget target)

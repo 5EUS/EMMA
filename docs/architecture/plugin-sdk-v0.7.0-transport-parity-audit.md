@@ -46,9 +46,9 @@ runtime capability.
 | Chapters/page/pages | Default paged provider path exists | Standard paged WASM host path exists | Parity for paged flow | Good baseline for v0.7.0 |
 | Video streams/segment SDK path | `AddDefaultVideoProvider<TRuntime>()` exists as a first-class builder path | `PluginWasmVideoOperationScaffold` exists, but there is no equivalent high-level standard video host/default-provider path | Gap | Major v0.7.0 release gate |
 | Capability declaration model | Builder path can register paged and video runtime/provider features directly in sample usage | Capability profiles already contain `PagedAndVideo`, but the standard paged host and template/sample stay `PagedOnly` | Partial parity with drift risk | Needs normalization before release |
-| Plugin-dev runtime inspection | Direct runtime adapters expose video operations | Host-bridge adapter still explicitly rejects video inspection | Gap | Major v0.7.0 workflow gate |
-| Template default path | Template ASP.NET path uses `CreateWithDefaults(...)` plus default paged providers | Template WASM path is still explicitly `PagedOnly` | Partial parity if paged-only is intentional; otherwise gap | Requires explicit product decision or template upgrade |
-| Sample plugin reference path | Sample ASP.NET path demonstrates paged + video provider registration | Sample WASM path demonstrates paged host path with video stubs/manual gap | Gap | Sample cannot yet be the parity reference |
+| Plugin-dev runtime inspection | Direct runtime adapters expose video operations | Host-bridge adapter now exposes search enrichment and video inspection through authenticated dev endpoints | Parity for plugin-dev workflow | Workflow gap closed in Phase 3 |
+| Template default path | Template ASP.NET path uses `CreateWithDefaults(...)` plus default paged providers | Template WASM path is explicitly `PagedOnly` | Intentional paged-first template baseline | Template now reflects the chosen golden path instead of an accidental subset |
+| Sample plugin reference path | Sample ASP.NET and WASM paths now stay on the same paged-first default surface | Dedicated video validation lives in `emma-video-test` | Aligned | Sample no longer claims unsupported video parity |
 | Package-consumer behavior | Transitional docs still mention compatibility/package catch-up | Same | Open gate | Must be validated before claiming stable SDK surface |
 
 ## Evidence map
@@ -58,12 +58,13 @@ runtime capability.
 - `EMMA/src/EMMA.Plugin.AspNetCore/PluginSdkHost.cs`
   - `AddDefaultPagedProviders<TRuntime>()`
   - `AddDefaultVideoProvider<TRuntime>()`
-- `emma-test-plugin/Program.cs`
-  - sample registers `IPluginVideoRuntime`
-  - sample calls `AddDefaultVideoProvider<AspNetClient>()`
+- `emma-video-test/Program.cs`
+  - dedicated sample registers `IPluginVideoRuntime`
+  - dedicated sample calls `AddDefaultVideoProvider<AspNetClient>()`
 
 Conclusion: ASP.NET already has a first-class default-provider story for paged
-and video in the reference sample.
+and video, but the dedicated video sample is the correct reference path for
+that surface.
 
 ### WASM has strong paged scaffolding but not equivalent video scaffolding
 
@@ -74,9 +75,8 @@ and video in the reference sample.
 - `EMMA/src/EMMA.Plugin.Common/PluginWasmVideoOperationScaffold.cs`
   - contains low-level invoke helpers for video stream/segment operations
 - `emma-test-plugin/WASM/WasmGlue.cs`
-  - sample host derives from `PluginBasicPagedWasmOperationHost<T>`
+  - sample host stays on the shared paged host path
   - sample host declares `PluginCapabilityProfile.PagedOnly`
-  - video exports are present but not yet elevated into the standard host path
 - `emma-video-test/Infrastructure/WasmPluginOperationHost.cs`
   - dedicated video-focused sample manually registers paged and video invoke
     operations in a custom WASM host
@@ -85,10 +85,10 @@ and video in the reference sample.
   - dedicated typed exports implement `VideoStreams(...)` and
     `VideoSegment(...)`
 
-Conclusion: WASM has enough low-level pieces to support parity, but it still
-lacks the equivalent first-class authoring abstraction that ASP.NET already has.
-The important nuance is that WASM video already works in a dedicated sample; the
-release gap is the missing standardized/default path.
+Conclusion: WASM has enough low-level pieces to support parity, and the
+dedicated video sample is the correct parity reference. The remaining release
+work is keeping template/sample/default paths explicit about when they are
+paged-first versus paged+video.
 
 Platform note at Phase 1 close:
 

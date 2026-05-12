@@ -200,4 +200,23 @@ public static class PluginTypedExportScaffold
 
         return responseFactory(result.contentType, result.payloadJson);
     }
+
+    /// <summary>
+    /// Executes a typed invoke wrapper and converts unexpected exceptions into a caller-defined failed operation error.
+    /// </summary>
+    public static TResponse InvokeWithOperationErrorHandling<TResponse, TError>(
+        Func<TResponse> invoke,
+        Func<string, TError> failedFactory,
+        string fallbackMessage = "operation failed")
+        where TError : Exception
+    {
+        try
+        {
+            return invoke();
+        }
+        catch (Exception ex) when (ex is not TError)
+        {
+            throw failedFactory(string.IsNullOrWhiteSpace(ex.Message) ? fallbackMessage : ex.Message);
+        }
+    }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ConsoleAppFramework;
 using EMMA.Plugin.Common;
 
@@ -133,6 +134,32 @@ public class MyCommands
                     }
                 }
             ]));
+    }
+
+    /// <summary>
+    /// Video streams command test.
+    /// </summary>
+    /// <param name="id">-i, Media ID.</param>
+    [Command("video-streams")]
+    public async Task VideoStreamsAsync(string id)
+    {
+        var response = await _application.GetVideoStreamsAsync(id, CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    /// <summary>
+    /// Video segment command test.
+    /// </summary>
+    /// <param name="mid">-mi, Media ID.</param>
+    /// <param name="sid">-si, Stream ID.</param>
+    /// <param name="sequence">-s, Segment sequence.</param>
+    [Command("video-segment")]
+    public async Task VideoSegmentAsync(string mid, string sid, int sequence)
+    {
+        var response = await _application.GetVideoSegmentAsync(mid, sid, sequence, CancellationToken.None);
+        Console.WriteLine(response is null
+            ? "Video segment returned no payload."
+            : JsonSerializer.Serialize(response, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     /// <summary>

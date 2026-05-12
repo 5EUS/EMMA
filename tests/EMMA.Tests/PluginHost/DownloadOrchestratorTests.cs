@@ -55,7 +55,9 @@ public sealed class DownloadOrchestratorTests
         await allCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(2, maxObservedConcurrency);
-        Assert.All(port.Snapshot(), job => Assert.Equal(DownloadJobState.Completed, job.State));
+        await AssertEventuallyAsync(
+            () => port.Snapshot().All(job => job.State == DownloadJobState.Completed),
+            TimeSpan.FromSeconds(5));
     }
 
     [Fact]

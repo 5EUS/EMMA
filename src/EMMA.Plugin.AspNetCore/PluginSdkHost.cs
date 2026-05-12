@@ -122,6 +122,8 @@ public sealed record PluginSdkManifestDefaultsOptions(
     string RootMessage = "EMMA plugin is running.");
 
 internal sealed record PluginDevEnrichSearchRequest(IReadOnlyList<SearchItem>? Items);
+internal sealed record PluginDevVideoStreamsRequest(string MediaId);
+internal sealed record PluginDevVideoSegmentRequest(string MediaId, string StreamId, int Sequence);
 
 /// <summary>
 /// Applies manifest-derived and explicit defaults to <see cref="PluginSdkControlOptions"/> instances.
@@ -547,28 +549,86 @@ public static class PluginSdkHost
     {
         PluginAspNetHost.MapDefaultEndpoints(app, hostOptions);
 
-        if (app.Services.GetService<IPluginSearchMetadataRuntime>() is null)
+        if (app.Services.GetService<IPluginSearchMetadataRuntime>() is not null)
         {
-            return;
+            app.MapPost("/dev/search/enrich", async (
+                PluginDevEnrichSearchRequest request,
+                IPluginSearchMetadataRuntime runtime,
+                IOptions<PluginSdkSecurityOptions> securityOptions,
+                HttpContext httpContext,
+                CancellationToken cancellationToken) =>
+            {
+                var authorizationError = EnsureAuthorized(httpContext, securityOptions.Value);
+                if (authorizationError is not null)
+                {
+                    return authorizationError;
+                }
+
+                var items = request.Items?.Where(static item => !string.IsNullOrWhiteSpace(item.id)).ToArray() ?? [];
+                var enriched = await runtime.EnrichSearchItemsAsync(items, cancellationToken);
+                return Results.Json(enriched);
+            });
         }
 
-        app.MapPost("/dev/search/enrich", async (
-            PluginDevEnrichSearchRequest request,
-            IPluginSearchMetadataRuntime runtime,
-            IOptions<PluginSdkSecurityOptions> securityOptions,
-            HttpContext httpContext,
-            CancellationToken cancellationToken) =>
+        if (app.Services.GetService<IPluginVideoRuntime>() is not null)
         {
-            var authorizationError = EnsureAuthorized(httpContext, securityOptions.Value);
-            if (authorizationError is not null)
+            app.MapPost("/dev/video/streams", async (
+                PluginDevVideoStreamsRequest request,
+                IPluginVideoRuntime runtime,
+                IOptions<PluginSdkSecurityOptions> securityOptions,
+                HttpContext httpContext,
+                CancellationToken cancellationToken) =>
             {
-                return authorizationError;
-            }
+                var authorizationError = EnsureAuthorized(httpContext, securityOptions.Value);
+                if (authorizationError is not null)
+                {
+                    return authorizationError;
+                }
 
-            var items = request.Items?.Where(static item => !string.IsNullOrWhiteSpace(item.id)).ToArray() ?? [];
-            var enriched = await runtime.EnrichSearchItemsAsync(items, cancellationToken);
-            return Results.Json(enriched);
-        });
+                var response = await runtime.GetStreamsAsync(request.MediaId, cancellationToken);
+                var streams = response.Streams.Select(static stream => new
+                {
+                    stream.Id,
+                    stream.Label,
+                    stream.PlaylistUri,
+                    stream.RequestHeaders,
+                    stream.RequestCookies,
+                    stream.StreamType,
+                    stream.IsLive,
+                    stream.DrmProtected,
+                    stream.DrmScheme,
+                    AudioTracks = stream.AudioTracks,
+                    SubtitleTracks = stream.SubtitleTracks,
+                    stream.DefaultAudioTrackId,
+                    stream.DefaultSubtitleTrackId
+                });
+
+                return Results.Json(streams);
+            });
+
+            app.MapPost("/dev/video/segment", async (
+                PluginDevVideoSegmentRequest request,
+                IPluginVideoRuntime runtime,
+                IOptions<PluginSdkSecurityOptions> securityOptions,
+                HttpContext httpContext,
+                CancellationToken cancellationToken) =>
+            {
+                var authorizationError = EnsureAuthorized(httpContext, securityOptions.Value);
+                if (authorizationError is not null)
+                {
+                    return authorizationError;
+                }
+
+                var response = await runtime.GetSegmentAsync(request.MediaId, request.StreamId, request.Sequence, cancellationToken);
+                var payload = response.Payload.ToByteArray();
+                return Results.Json(new
+                {
+                    ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/octet-stream" : response.ContentType,
+                    PayloadBase64 = Convert.ToBase64String(payload),
+                    SizeBytes = payload.Length
+                });
+            });
+        }
     }
 
     private static IResult? EnsureAuthorized(HttpContext httpContext, PluginSdkSecurityOptions options)

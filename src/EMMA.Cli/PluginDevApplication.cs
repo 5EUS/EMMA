@@ -214,6 +214,26 @@ public sealed class PluginDevApplication
         return result;
     }
 
+    public async Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        var session = RequireSession();
+        RecordInfo($"Video streams requested for media '{mediaId}'.");
+        var result = await RunWithRuntimeLogsAsync(session, adapter => adapter.GetVideoStreamsAsync(mediaId, cancellationToken));
+        RecordInfo($"VideoStreams('{mediaId}') returned {result.Count} item(s).");
+        return result;
+    }
+
+    public async Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+    {
+        var session = RequireSession();
+        RecordInfo($"Video segment requested for media '{mediaId}', stream '{streamId}', sequence {sequence}.");
+        var result = await RunWithRuntimeLogsAsync(session, adapter => adapter.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken));
+        RecordInfo(result is null
+            ? $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned no payload."
+            : $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned {result.SizeBytes} byte(s) as '{result.ContentType}'.");
+        return result;
+    }
+
     public async Task<string> BuildAsync(CancellationToken cancellationToken)
     {
         var session = RequireSession();

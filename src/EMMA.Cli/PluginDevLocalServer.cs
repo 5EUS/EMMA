@@ -32,6 +32,8 @@ public static class PluginDevLocalServer
     new("scenario", "scenario <name> [query]", "Run a built-in dev scenario for the active profile."),
     new("search", "search -q <query>", "Search for media using the active runtime."),
     new("session", "session", "Show the resolved plugin development session."),
+    new("video-segment", "video-segment -mi <mediaId> -si <streamId> -s <sequence>", "Get one video segment for a stream."),
+    new("video-streams", "video-streams -i <mediaId>", "List video streams for a media item."),
     new("watch", "watch [start|stop|status]", "Manage file watching for the active profile.")
   ];
   private static Task? _backgroundTask;
@@ -295,6 +297,31 @@ public static class PluginDevLocalServer
               backend.RecordInfo(result is null
                 ? "Page asset returned no payload."
                 : $"Page asset size: {result.Length} byte(s). Browser console output is summary-only for binary responses.");
+              return $"Executed '{trimmed}'.";
+            }
+
+            case "video-streams":
+            {
+              var mediaId = ReadRequiredOption(command, args, "-i", "--mediaId");
+              var result = await backend.GetVideoStreamsAsync(mediaId, CancellationToken.None);
+              backend.RecordInfo(JsonSerializer.Serialize(result, UiJsonOptions));
+              return $"Executed '{trimmed}'.";
+            }
+
+            case "video-segment":
+            {
+              var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
+              var streamId = ReadRequiredOption(command, args, "-si", "--streamId");
+              var sequenceText = ReadRequiredOption(command, args, "-s", "--sequence");
+              if (!int.TryParse(sequenceText, out var sequence))
+              {
+                throw new InvalidOperationException("Segment sequence must be an integer.");
+              }
+
+              var result = await backend.GetVideoSegmentAsync(mediaId, streamId, sequence, CancellationToken.None);
+              backend.RecordInfo(result is null
+                ? "Video segment returned no payload."
+                : JsonSerializer.Serialize(result, UiJsonOptions));
               return $"Executed '{trimmed}'.";
             }
 

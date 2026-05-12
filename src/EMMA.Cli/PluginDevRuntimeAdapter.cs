@@ -104,8 +104,10 @@ public interface IPluginDevRuntimeLogSource
     IReadOnlyList<PluginDevRuntimeLogLine> DrainRuntimeLogs();
 }
 
-public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPagedMediaApi api) : IPluginDevRuntimeAdapter
+public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPagedMediaApi api, Uri hostUri, string? authToken) : IPluginDevRuntimeAdapter
 {
+    private const string HostAuthHeaderName = "x-emma-plugin-host-auth";
+
     public string Name => "host-bridge";
     public bool SupportsReload => false;
     public bool SupportsPageAsset => true;
@@ -134,8 +136,17 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
             null)).ToArray();
     }
 
-    public Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
-        => Task.FromException<IReadOnlyList<SearchItem>>(new NotSupportedException("Host-bridge runtime does not expose search metadata enrichment yet."));
+    public async Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
+    {
+        var payload = new EnrichSearchItemsRequest(items);
+
+        using var httpClient = CreateAuthorizedHttpClient();
+        using var response = await httpClient.PostAsJsonAsync("/dev/search/enrich", payload, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var enriched = await response.Content.ReadFromJsonAsync(PluginDevJsonContexts.Runtime.SearchItemArray, cancellationToken);
+        return enriched ?? [];
+    }
 
     public async Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
     {
@@ -177,11 +188,24 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
         return pagesResult.Pages.Select(static page => new PageItem(page.PageId, page.Index, page.ContentUri.ToString())).ToArray();
     }
 
-    public Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
-        => Task.FromException<IReadOnlyList<PluginDevVideoStream>>(new NotSupportedException("Host-bridge runtime does not expose video stream inspection yet."));
+    public async Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        using var httpClient = CreateAuthorizedHttpClient();
+        using var response = await httpClient.PostAsJsonAsync("/dev/video/streams", new VideoStreamsRequest(mediaId), cancellationToken);
+        response.EnsureSuccessStatusCode();
 
-    public Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
-        => Task.FromException<PluginDevVideoSegment?>(new NotSupportedException("Host-bridge runtime does not expose video segment inspection yet."));
+        var streams = await response.Content.ReadFromJsonAsync(PluginDevJsonContexts.Runtime.PluginDevVideoStreamArray, cancellationToken);
+        return streams ?? [];
+    }
+
+    public async Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+    {
+        using var httpClient = CreateAuthorizedHttpClient();
+        using var response = await httpClient.PostAsJsonAsync("/dev/video/segment", new VideoSegmentRequest(mediaId, streamId, sequence), cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync(PluginDevJsonContexts.Runtime.PluginDevVideoSegment, cancellationToken);
+    }
 
     public async Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
     {
@@ -205,6 +229,25 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult("Host-bridge runtime has no explicit reload path yet.");
     }
+
+    private HttpClient CreateAuthorizedHttpClient()
+    {
+        var httpClient = new HttpClient
+        {
+            BaseAddress = hostUri
+        };
+
+        if (!string.IsNullOrWhiteSpace(authToken))
+        {
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation(HostAuthHeaderName, authToken);
+        }
+
+        return httpClient;
+    }
+
+    private sealed record EnrichSearchItemsRequest(IReadOnlyList<SearchItem> Items);
+    private sealed record VideoStreamsRequest(string MediaId);
+    private sealed record VideoSegmentRequest(string MediaId, string StreamId, int Sequence);
 }
 
 public sealed class UnsupportedRuntimeAdapter(string name, string reason) : IPluginDevRuntimeAdapter

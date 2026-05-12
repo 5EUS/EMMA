@@ -116,6 +116,8 @@ public static class PluginHostExports
                     return 0; // Already initialized
                 }
 
+                AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
                 InitializeSqliteForEmbeddedHost();
 
                 var services = new ServiceCollection();
@@ -130,8 +132,12 @@ public static class PluginHostExports
                             .SetValue(options, sandboxDir);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.HandshakeOnStartup))!
                             .SetValue(options, ResolveHandshakeOnStartupEnabled());
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.HandshakeTimeoutSeconds))!
+                            .SetValue(options, 20);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmOperationTimeoutSeconds))!
                              .SetValue(options, 15);
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.StartupTimeoutSeconds))!
+                            .SetValue(options, 20);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.NativeWasmLibraryMode))!
                             .SetValue(options, ResolveNativeWasmLibraryMode());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.SandboxEnabled))!

@@ -84,19 +84,32 @@ public sealed class PluginOperationPayloadRouter
         Func<string, string?, string?> payloadProvider,
         bool useArgsJsonFallbackHint = true)
     {
+        var providedPayload = PluginPayload.NormalizePayload(request.payloadJson);
+        if (!string.IsNullOrWhiteSpace(providedPayload))
+        {
+            return providedPayload;
+        }
+
         var normalizedOperation = request.NormalizedOperation();
         var providerOperation = string.IsNullOrWhiteSpace(request.operation)
             ? normalizedOperation
             : request.operation;
 
-        var hint = _hintResolvers.TryGetValue(normalizedOperation, out var hintResolver)
-            ? hintResolver(request)
-            : useArgsJsonFallbackHint
-                ? request.argsJson
-                : null;
+        try
+        {
+            var hint = _hintResolvers.TryGetValue(normalizedOperation, out var hintResolver)
+                ? hintResolver(request)
+                : useArgsJsonFallbackHint
+                    ? request.argsJson
+                    : null;
 
-        return PluginPayload.ResolvePayload(
-            request.payloadJson,
-            () => payloadProvider(providerOperation, hint));
+            return PluginPayload.ResolvePayload(
+                null,
+                () => payloadProvider(providerOperation, hint));
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 }

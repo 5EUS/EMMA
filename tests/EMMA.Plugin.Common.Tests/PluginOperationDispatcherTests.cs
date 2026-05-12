@@ -65,4 +65,30 @@ public class PluginOperationDispatcherTests
 
         Assert.Equal("{\"op\":\"search\",\"hint\":\"hint://search\"}", payload);
     }
+
+    [Fact]
+    public void PayloadRouter_ReturnsEmpty_WhenHintResolverThrows()
+    {
+        var router = new PluginOperationPayloadRouter()
+            .Register("search", _ => throw new InvalidOperationException("boom"));
+
+        var request = new OperationRequest("search", null, null, "{\"query\":\"naruto\"}", null);
+
+        var payload = router.Resolve(request, (_, _) => throw new InvalidOperationException("provider should not run"));
+
+        Assert.Equal(string.Empty, payload);
+    }
+
+    [Fact]
+    public void PayloadRouter_ReturnsEmpty_WhenPayloadProviderThrows()
+    {
+        var router = new PluginOperationPayloadRouter()
+            .Register("search", _ => "hint://search");
+
+        var request = new OperationRequest("search", null, null, null, null);
+
+        var payload = router.Resolve(request, (_, _) => throw new InvalidOperationException("boom"));
+
+        Assert.Equal(string.Empty, payload);
+    }
 }

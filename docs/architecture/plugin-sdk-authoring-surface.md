@@ -117,8 +117,8 @@ mapping decisions.
 - WASM exports are generator-backed when the local EMMA workspace is present
 - WASM JSON context attributes are generator-backed on the same path
 - payload mapping uses the new collection helpers for repeated parse loops
-- the WASM host now uses the shared paged + video abstraction rather than a
-  plugin-local paged-only path
+- the ASP.NET and WASM transports now stay aligned on the same paged-first
+  golden path instead of claiming video support they do not implement
 
 `emma-video-test` now demonstrates the intended reusable video-focused WASM
 path:
@@ -128,8 +128,9 @@ path:
 - the plugin no longer needs a plugin-local custom host builder just to wire the
   standard video operations
 
-The sample project still carries compatibility shims for non-local SDK use so
-the repository can transition incrementally while package publishing catches up.
+The sample/template repositories continue to support both local-workspace and
+package-based SDK consumption so the same public surface can be exercised in
+source and package mode during the `v0.7.0` hardening pass.
 
 ## What remains out of scope
 
