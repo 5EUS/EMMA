@@ -15,6 +15,11 @@ For the current-state baseline and Phase 1 sign-off against this contract, see:
 - `plugin-sdk-v0.7.0-phase-1-signoff.md`
 - `plugin-sdk-v0.7.0-transport-parity-audit.md`
 
+For the canonical author path and final release-candidate sign-off, see:
+
+- `plugin-sdk-v0.7.0-author-workflow.md`
+- `plugin-sdk-v0.7.0-phase-5-signoff.md`
+
 ## Release objective
 
 `v0.7.0` should be the release that finalizes the current generation of EMMA

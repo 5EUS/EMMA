@@ -6,6 +6,10 @@ A scaffold-ready EMMA plugin seed that mirrors the current split-transport repo 
 - `EMMA.TemplatePlugin.csproj`: ASP.NET host transport
 - `EMMA.TemplatePlugin.Wasm.csproj`: WASM transport
 
+The canonical `v0.7.0` author path is documented in
+`EMMA/docs/architecture/plugin-sdk-v0.7.0-author-workflow.md` from the main
+EMMA repository. This template is expected to follow that path exactly.
+
 The shipped implementation is stub-backed so a freshly scaffolded plugin builds
 immediately, returns no results, and exposes clear implementation surfaces before
 you integrate a real provider.
