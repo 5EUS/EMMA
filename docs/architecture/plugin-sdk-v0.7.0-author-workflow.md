@@ -11,6 +11,10 @@ without depending on local EMMA source-only assumptions.
 For the release contract behind this workflow, see
 `plugin-sdk-v0.7.0-release-contract.md`.
 
+For migration guidance from the pre-`v0.7.0` sample/template shape, see
+`plugin-sdk-v0.7.0-migration-guide.md`. For the current package-mode
+verification record, see `plugin-sdk-v0.7.0-package-consumer-validation.md`.
+
 ## Supported golden path
 
 The canonical `v0.7.0` plugin-author workflow is:

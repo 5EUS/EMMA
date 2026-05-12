@@ -18,8 +18,11 @@ you integrate a real provider.
 
 1. Replace the stub methods in `Core/CoreClient.cs` with your provider API integration.
 2. Update `EMMA.TemplatePlugin.plugin.json` with your plugin id, name, version, and permissions.
-3. Review `plugin.dev.sample.json` and set the sync destinations for your local host environment.
+3. Review `plugin.dev.sample.json` and `plugin.dev.json`, then set the sync destinations for your local host environment.
 4. Adjust the workflows and signing metadata for your repository.
+
+`plugin.dev.json` is the auto-discovered local config. `plugin.dev.sample.json`
+is the committed baseline that matches the documented `v0.7.0` workflow.
 
 ## Run
 
@@ -51,6 +54,17 @@ Build the ASP.NET package variant for Linux x64:
 
 ```bash
 TARGETS="linux-x64" ./scripts/build-pack-plugin-aspnet.sh ./EMMA.TemplatePlugin.plugin.json
+```
+
+Validate package mode explicitly once the `0.7.0` SDK packages are staged on a
+feed visible to the repository:
+
+```bash
+UseLocalEmmaSdk=false EMMA_SDK_VERSION=0.7.0 \
+dotnet run --project EMMA.TemplatePlugin.csproj
+
+UseLocalEmmaSdk=false EMMA_SDK_VERSION=0.7.0 \
+./scripts/build-pack-plugin.sh ./EMMA.TemplatePlugin.plugin.json
 ```
 
 ## Notes

@@ -8,6 +8,9 @@ final deferred-items list.
 
 For the release contract, see `plugin-sdk-v0.7.0-release-contract.md`. For the
 canonical plugin-author path, see `plugin-sdk-v0.7.0-author-workflow.md`.
+For migration and package-mode validation artifacts, see
+`plugin-sdk-v0.7.0-migration-guide.md` and
+`plugin-sdk-v0.7.0-package-consumer-validation.md`.
 
 ## Phase 5 decisions
 
@@ -40,13 +43,15 @@ At Phase 5 close, the release candidate has the following status:
 1. The repository now contains one canonical plugin-author workflow document.
 2. The template and sample plugin both describe the same paged-first,
    package-consumable authoring model.
-3. Phase 4 package/sign validation hardening remains in place and is part of
+3. The migration path from the earlier sample/template shape is explicitly
+   documented for package consumers and source-workspace users.
+4. Phase 4 package/sign validation hardening remains in place and is part of
    the certified workflow.
-4. The local source-backed readiness path has executable evidence:
+5. The local source-backed readiness path has executable evidence:
    the sample WASM build completed, the Linux direct build completed, the
    metadata-enrichment scenario passed, and the WASM pack/sign/validate flow
    completed with `WASI_SDK_PATH` configured.
-5. Explicit package-consumer mode remains a release gate because the shared
+6. Explicit package-consumer mode remains a release gate because the shared
    sample/template props now correctly request `EMMA` packages at version
    `0.7.0`, but the configured feeds only expose `0.6.8` today. This is the
    expected result until the `0.7.0` packages are published or staged on a
