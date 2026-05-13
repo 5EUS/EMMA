@@ -63,4 +63,48 @@ public static class PluginWasmHostBuilderPresets
             .AddCliHandler(PluginOperationNames.Pages, serializePagesForCli)
             .AddCliHandler(PluginOperationNames.Invoke, serializeInvokeForCli);
     }
+
+    /// <summary>
+    /// Adds the standard video CLI operations to a WASM host builder.
+    /// </summary>
+    /// <param name="builder">The builder to configure.</param>
+    /// <param name="search">The search handler.</param>
+    /// <param name="searchTypeInfo">The JSON type metadata for search results.</param>
+    /// <param name="chapters">The chapters handler.</param>
+    /// <param name="chaptersTypeInfo">The JSON type metadata for chapter results.</param>
+    /// <param name="serializePageForCli">The page serialization handler.</param>
+    /// <param name="serializePagesForCli">The pages serialization handler.</param>
+    /// <param name="videoStreams">The video-streams handler.</param>
+    /// <param name="videoStreamsTypeInfo">The JSON type metadata for video stream results.</param>
+    /// <param name="serializeVideoSegmentForCli">The video-segment serialization handler.</param>
+    /// <param name="serializeInvokeForCli">The invoke serialization handler.</param>
+    /// <returns>The configured builder.</returns>
+    public static PluginWasmHostBuilder AddStandardVideoCliOperations(
+        this PluginWasmHostBuilder builder,
+        Func<string, string, SearchItem[]> search,
+        JsonTypeInfo<SearchItem[]> searchTypeInfo,
+        Func<string, string, ChapterItem[]> chapters,
+        JsonTypeInfo<ChapterItem[]> chaptersTypeInfo,
+        Func<string[], string, string> serializePageForCli,
+        Func<string[], string, string> serializePagesForCli,
+        Func<string[], VideoStreamOperationItem[]> videoStreams,
+        JsonTypeInfo<VideoStreamOperationItem[]> videoStreamsTypeInfo,
+        Func<string[], string, string> serializeVideoSegmentForCli,
+        Func<string[], string, string> serializeInvokeForCli)
+    {
+        return builder
+            .AddCliJson(
+                PluginOperationNames.Search,
+                (args, payload) => search(args.Length > 0 ? args[0] : string.Empty, payload),
+                searchTypeInfo)
+            .AddCliJson(
+                PluginOperationNames.Chapters,
+                (args, payload) => chapters(args.Length > 0 ? args[0] : string.Empty, payload),
+                chaptersTypeInfo)
+            .AddCliHandler(PluginOperationNames.Page, serializePageForCli)
+            .AddCliHandler(PluginOperationNames.Pages, serializePagesForCli)
+            .AddCliJson(PluginOperationNames.VideoStreams, (args, _) => videoStreams(args), videoStreamsTypeInfo)
+            .AddCliHandler(PluginOperationNames.VideoSegment, serializeVideoSegmentForCli)
+            .AddCliHandler(PluginOperationNames.Invoke, serializeInvokeForCli);
+    }
 }

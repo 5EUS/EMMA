@@ -19,6 +19,11 @@ public enum PluginCapabilityProfile
     /// Supports paged, video, and audio media operations.
     /// </summary>
     PagedVideoAudio,
+
+    /// <summary>
+    /// Supports video media operations only.
+    /// </summary>
+    VideoOnly,
 }
 
 /// <summary>
@@ -48,6 +53,20 @@ public static class PluginCapabilityProfiles
                 new CapabilityItem("search", ["paged", "video"], ["search", "invoke"]),
                 new CapabilityItem("paged-navigation", ["paged", "video"], ["chapters", "page", "pages", "invoke"]),
                 new CapabilityItem("media-operation", ["paged", "video"], ["invoke", "video-streams", "video-segment"]),
+            ],
+            PluginCapabilityProfile.PagedVideoAudio =>
+            [
+                new CapabilityItem("health", ["paged", "video", "audio"], ["handshake", "capabilities", "search", "invoke"]),
+                new CapabilityItem("search", ["paged", "video", "audio"], ["search", "invoke"]),
+                new CapabilityItem("paged-navigation", ["paged", "video"], ["chapters", "page", "pages", "invoke"]),
+                new CapabilityItem("media-operation", ["paged", "video", "audio"], ["invoke", "video-streams", "video-segment"]),
+            ],
+            PluginCapabilityProfile.VideoOnly =>
+            [
+                new CapabilityItem("health", ["video"], ["handshake", "capabilities", "search", "invoke"]),
+                new CapabilityItem("search", ["video"], ["search", "invoke"]),
+                new CapabilityItem("paged-navigation", ["video"], ["chapters", "page", "pages", "invoke"]),
+                new CapabilityItem("media-operation", ["video"], ["invoke", "video-streams", "video-segment"]),
             ],
             _ =>
             [

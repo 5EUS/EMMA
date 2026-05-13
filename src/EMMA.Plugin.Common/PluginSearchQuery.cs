@@ -73,10 +73,23 @@ public sealed record PluginSearchQuery(
             return new PluginSearchQuery(defaultQuery, [], [], [], null, null, null);
         }
 
+        var trimmed = argsJson.Trim();
+        if (!LooksLikeJson(trimmed))
+        {
+            return new PluginSearchQuery(trimmed, [], [], [], null, null, null);
+        }
+
         try
         {
-            using var doc = JsonDocument.Parse(argsJson);
+            using var doc = JsonDocument.Parse(trimmed);
             var root = doc.RootElement;
+
+            if (root.ValueKind == JsonValueKind.String)
+            {
+                var rawQuery = root.GetString();
+                return new PluginSearchQuery(rawQuery ?? defaultQuery, [], [], [], null, null, null);
+            }
+
             if (root.ValueKind != JsonValueKind.Object)
             {
                 return new PluginSearchQuery(defaultQuery, [], [], [], null, null, null);
@@ -100,7 +113,7 @@ public sealed record PluginSearchQuery(
 
     private static IReadOnlyList<string> ReadStringArray(JsonElement root, string property)
     {
-        if (!root.TryGetProperty(property, out var element) || element.ValueKind != JsonValueKind.Array)
+        if (!TryGetPropertyCaseInsensitive(root, property, out var element) || element.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -114,7 +127,7 @@ public sealed record PluginSearchQuery(
 
     private static IReadOnlyList<PluginSearchFilter> ReadFilters(JsonElement root)
     {
-        if (!root.TryGetProperty("filters", out var element) || element.ValueKind != JsonValueKind.Array)
+        if (!TryGetPropertyCaseInsensitive(root, "filters", out var element) || element.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -143,7 +156,7 @@ public sealed record PluginSearchQuery(
 
     private static IReadOnlyList<PluginSearchQueryAddition> ReadQueryAdditions(JsonElement root)
     {
-        if (!root.TryGetProperty("queryAdditions", out var element) || element.ValueKind != JsonValueKind.Array)
+        if (!TryGetPropertyCaseInsensitive(root, "queryAdditions", out var element) || element.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -172,7 +185,7 @@ public sealed record PluginSearchQuery(
 
     private static string? ReadString(JsonElement element, string property)
     {
-        if (element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+        if (TryGetPropertyCaseInsensitive(element, property, out var value) && value.ValueKind == JsonValueKind.String)
         {
             return value.GetString();
         }
@@ -182,7 +195,7 @@ public sealed record PluginSearchQuery(
 
     private static int? ReadInt32(JsonElement element, string property)
     {
-        if (!element.TryGetProperty(property, out var value))
+        if (!TryGetPropertyCaseInsensitive(element, property, out var value))
         {
             return null;
         }
@@ -198,5 +211,34 @@ public sealed record PluginSearchQuery(
         }
 
         return null;
+    }
+
+    private static bool LooksLikeJson(string value)
+    {
+        return value.Length > 0
+            && (value[0] == '{'
+                || value[0] == '['
+                || value[0] == '"');
+    }
+
+    private static bool TryGetPropertyCaseInsensitive(JsonElement element, string property, out JsonElement value)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            value = default;
+            return false;
+        }
+
+        foreach (var candidate in element.EnumerateObject())
+        {
+            if (string.Equals(candidate.Name, property, StringComparison.OrdinalIgnoreCase))
+            {
+                value = candidate.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 }
