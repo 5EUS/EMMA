@@ -42,6 +42,72 @@ rename_paths_with_token() {
   done < <(find "$root" -depth -mindepth 1 \( -type f -o -type d \) -name "*${old_token}*" -print0)
 }
 
+replace_token_in_text_files() {
+  local root="$1"
+  local old_token="$2"
+  local new_token="$3"
+
+  if [[ -z "$old_token" || "$old_token" == "$new_token" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r -d '' file; do
+    perl -0pi -e "s/\Q$old_token\E/$new_token/g" "$file"
+  done < <(find "$root" -type f \( \
+    -name '*.cs' -o -name '*.csproj' -o -name '*.json' -o -name '*.md' -o -name '*.yml' -o -name '*.yaml' -o -name '*.sh' -o -name '*.py' -o -name '*.props' -o -name '*.targets' -o -name '*.xml' -o -name '*.wit' -o -name '*.txt' \
+  \) -print0)
+}
+
+declare -a seed_project_names=()
+declare -a replacement_pairs=()
+
+collect_seed_project_names() {
+  local root="$1"
+
+  while IFS= read -r project_name; do
+    seed_project_names+=("$project_name")
+  done < <(find "$root" -maxdepth 1 -name '*.csproj' -print | sort | while IFS= read -r project_path; do
+    basename "$project_path" .csproj
+  done)
+}
+
+build_replacement_pairs() {
+  local root_name="$1"
+  local target_root_name="$2"
+
+  replacement_pairs=()
+
+  for seed_project_name in "${seed_project_names[@]}"; do
+    local suffix=""
+    local target_name
+
+    if [[ "$seed_project_name" == "$root_name"* ]]; then
+      suffix="${seed_project_name#$root_name}"
+      target_name="$target_root_name$suffix"
+    else
+      target_name="$seed_project_name"
+    fi
+
+    replacement_pairs+=("$seed_project_name=$target_name")
+  done
+}
+
+apply_project_name_replacements() {
+  local root="$1"
+
+  for pair in "${replacement_pairs[@]}"; do
+    local old_name="${pair%%=*}"
+    local new_name="${pair#*=}"
+    rename_paths_with_token "$root" "$old_name" "$new_name"
+  done
+
+  for pair in "${replacement_pairs[@]}"; do
+    local old_name="${pair%%=*}"
+    local new_name="${pair#*=}"
+    replace_token_in_text_files "$root" "$old_name" "$new_name"
+  done
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -117,7 +183,7 @@ else
   mkdir -p "$destination"
 fi
 
-seed_csproj="$(find "$seed" -maxdepth 1 -name '*.csproj' | head -n 1)"
+seed_csproj="$(find "$seed" -maxdepth 1 -name '*.csproj' | sort | head -n 1)"
 seed_manifest="$(find "$seed" -maxdepth 1 -name '*.plugin.json' | head -n 1)"
 seed_solution="$(find "$seed" -maxdepth 1 -name '*.sln' | head -n 1)"
 
@@ -134,6 +200,8 @@ if [[ -n "$seed_solution" ]]; then
 fi
 seed_plugin_id="$(grep -E '"id"\s*:\s*"' "$seed_manifest" | head -n 1 | sed -E 's/.*"id"\s*:\s*"([^"]+)".*/\1/')"
 target_solution_name="$assembly_name"
+collect_seed_project_names "$seed"
+build_replacement_pairs "$seed_manifest_name" "$assembly_name"
 
 if [[ -z "$seed_plugin_id" ]]; then
   echo "Could not parse plugin id from seed manifest: $seed_manifest" >&2
@@ -152,24 +220,18 @@ rsync -a \
   --exclude 'scripts/scaffold-plugin.sh' \
   "$seed/" "$destination/"
 
-rename_paths_with_token "$destination" "$seed_assembly_name" "$assembly_name"
+apply_project_name_replacements "$destination"
 rename_paths_with_token "$destination" "$seed_manifest_name" "$assembly_name"
 
 if [[ -n "$seed_solution_name" && -f "$destination/$seed_solution_name.sln" ]]; then
   mv "$destination/$seed_solution_name.sln" "$destination/$target_solution_name.sln"
 fi
 
-# Replace seed identifiers with target identifiers in common text file types.
-while IFS= read -r -d '' file; do
-  perl -0pi -e "s/\Q$seed_assembly_name\E/$assembly_name/g" "$file"
-  perl -0pi -e "s/\Q$seed_manifest_name\E/$assembly_name/g" "$file"
-  perl -0pi -e "s/\Q$seed_plugin_id\E/$plugin_id/g" "$file"
-  if [[ -n "$seed_solution_name" ]]; then
-    perl -0pi -e "s/\Q$seed_solution_name\E/$target_solution_name/g" "$file"
-  fi
-done < <(find "$destination" -type f \( \
-  -name '*.cs' -o -name '*.csproj' -o -name '*.json' -o -name '*.md' -o -name '*.yml' -o -name '*.yaml' -o -name '*.sh' -o -name '*.py' -o -name '*.props' -o -name '*.targets' -o -name '*.xml' -o -name '*.wit' -o -name '*.txt' \
-\) -print0)
+replace_token_in_text_files "$destination" "$seed_manifest_name" "$assembly_name"
+replace_token_in_text_files "$destination" "$seed_plugin_id" "$plugin_id"
+if [[ -n "$seed_solution_name" ]]; then
+  replace_token_in_text_files "$destination" "$seed_solution_name" "$target_solution_name"
+fi
 
 echo "Scaffold complete."
 echo "  Seed:          $seed"
@@ -180,5 +242,6 @@ echo
 echo "Next steps:"
 echo "  1) cd $destination"
 echo "  2) dotnet build $assembly_name.csproj"
-echo "  3) Review the stub comments in Core/, ASPNET/, WASM/, Program.cs, and *.plugin.json"
-echo "  4) Implement provider search/chapter/page surfaces; the scaffold intentionally returns no results until then"
+echo "  3) WASI_SDK_PATH=/path/to/wasi-sdk dotnet build $assembly_name.Wasm.csproj"
+echo "  4) Review the stub comments in Core/, ASPNET/, WASM/, Program.cs, and *.plugin.json"
+echo "  5) Start with Core/CoreClient.cs for paged media, then Core/SourceFeatures.cs for optional search metadata and suggestion flows"

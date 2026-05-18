@@ -14,12 +14,19 @@ The shipped implementation is stub-backed so a freshly scaffolded plugin builds
 immediately, returns no results, and exposes clear implementation surfaces before
 you integrate a real provider.
 
+The scaffold also includes dormant transport wiring for common source-specific
+features such as deferred search metadata and search suggestions. Those hooks
+default to no-op behavior so the generated plugin stays instantly compilable,
+but you can turn them on by editing one file instead of reworking both
+transports.
+
 ## What To Customize First
 
 1. Replace the stub methods in `Core/CoreClient.cs` with your provider API integration.
 2. Update `EMMA.TemplatePlugin.plugin.json` with your plugin id, name, version, and permissions.
-3. Review `plugin.dev.sample.json` and `plugin.dev.json`, then set the sync destinations for your local host environment.
-4. Adjust the workflows and signing metadata for your repository.
+3. Review `Core/SourceFeatures.cs` if your source needs search suggestions or deferred search metadata.
+4. Review `plugin.dev.sample.json` and `plugin.dev.json`, then set the sync destinations for your local host environment.
+5. Adjust the workflows and signing metadata for your repository.
 
 `plugin.dev.json` is the auto-discovered local config. `plugin.dev.sample.json`
 is the committed baseline that matches the documented `v0.7.0` workflow.
@@ -40,6 +47,12 @@ Build the WASM transport with:
 
 ```bash
 WASI_SDK_PATH=/path/to/wasi-sdk dotnet build EMMA.TemplatePlugin.Wasm.csproj
+```
+
+Build the full split-transport solution with:
+
+```bash
+dotnet build EMMA.TemplatePlugin.sln
 ```
 
 ## Validate and Pack
@@ -71,4 +84,6 @@ UseLocalEmmaSdk=false EMMA_SDK_VERSION=0.7.0 \
 
 - The generated plugin defaults to paged media only.
 - The template includes sample scenarios and CI workflows that treat empty search results as the expected pre-integration baseline.
-- Search, chapter, and page hooks are stubbed intentionally so the generated project compiles cleanly before provider-specific code exists.
+- Search, chapter, and page hooks are stubbed intentionally in `Core/CoreClient.cs` so the generated project compiles cleanly before provider-specific code exists.
+- Optional search metadata and search suggestion hooks live in `Core/SourceFeatures.cs`; by default they return the incoming items or no suggestions, which keeps the scaffold safe to run before provider integration.
+- Both ASP.NET and WASM transports are already wired to those optional hooks, so adding source-specific search behavior does not require transport-specific boilerplate first.

@@ -69,7 +69,7 @@ jobs:
 
       - name: Build release package
         env:
-          EMMA_SDK_VERSION: ${{ vars.EMMA_SDK_VERSION || '0.6.8' }}
+          EMMA_SDK_VERSION: ${{ vars.EMMA_SDK_VERSION || '0.7.0' }}
           ASPNET_NO_RESTORE: "1"
           EMMA_REQUIRE_SIGNED_PLUGINS: "1"
           EMMA_HMAC_KEY_BASE64: ${{ secrets.EMMA_HMAC_KEY_BASE64 }}

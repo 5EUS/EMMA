@@ -31,6 +31,25 @@ namespace EMMA.TemplatePlugin.WASM
         {
         }
 
+        protected override PluginOperationDispatcher ConfigureAdditionalInvokeHandlers(PluginOperationDispatcher dispatcher)
+        {
+            return dispatcher
+                .Register("enrich-search-metadata", request =>
+                {
+                    var enriched = _client.EnrichSearchItems(request.argsJson ?? string.Empty).ToArray();
+                    return PluginWasmInvokeScaffold.BuildJsonResult(
+                        enriched,
+                        WasmJsonContext.Default.SearchItemArray);
+                })
+                .Register("search-suggestions", request =>
+                {
+                    var suggestions = _client.GetSearchSuggestions(request.argsJson ?? string.Empty).ToArray();
+                    return PluginWasmInvokeScaffold.BuildJsonResult(
+                        suggestions,
+                        WasmJsonContext.Default.SearchSuggestionItemArray);
+                });
+        }
+
         protected override string? FetchSearchPayload(PluginSearchQuery parsedQuery) => _client.FetchSearchPayload(parsedQuery);
 
         protected override (IReadOnlyList<SearchItem> Results, long ParseMs, long MapMs) SearchFromPayloadWithTimings(string payloadJson)
@@ -70,6 +89,7 @@ namespace EMMA.TemplatePlugin.WASM
     [JsonSerializable(typeof(IReadOnlyList<MetadataItem>))]
     [JsonSerializable(typeof(List<MetadataItem>))]
     [JsonSerializable(typeof(SearchItem[]))]
+    [JsonSerializable(typeof(SearchSuggestionItem[]))]
     [JsonSerializable(typeof(ChapterItem[]))]
     [JsonSerializable(typeof(WasmChapterOperationItem[]))]
     [JsonSerializable(typeof(PageItem))]

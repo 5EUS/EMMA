@@ -6,7 +6,8 @@ using Microsoft.Extensions.Logging;
 
 namespace EMMA.TemplatePlugin.ASPNET;
 
-public sealed class AspNetClient(ILogger<AspNetClient> logger) : IPluginPagedMediaRuntime
+public sealed class AspNetClient(ILogger<AspNetClient> logger)
+    : IPluginPagedMediaRuntime, IPluginSearchMetadataRuntime, IPluginSearchSuggestionsRuntime
 {
     private static readonly CoreClient Core = new();
     private readonly ILogger<AspNetClient> _logger = logger;
@@ -84,5 +85,19 @@ public sealed class AspNetClient(ILogger<AspNetClient> logger) : IPluginPagedMed
 
         var reachedEnd = startIndex + results.Count >= Core.GetPageCount(chapterId);
         return Task.FromResult((Pages: (IReadOnlyList<MediaPage>)results, ReachedEnd: reachedEnd));
+    }
+
+    public Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
+        IReadOnlyList<SearchItem> items,
+        CancellationToken cancellationToken)
+    {
+        return SourceFeatures.EnrichSearchItemsAsync(items, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+        SearchSuggestionRequest request,
+        CancellationToken cancellationToken)
+    {
+        return SourceFeatures.GetSearchSuggestionsAsync(request, cancellationToken);
     }
 }

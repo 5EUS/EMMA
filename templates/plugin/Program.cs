@@ -2,6 +2,7 @@
 using EMMA.Plugin.AspNetCore;
 using EMMA.Plugin.Common;
 using EMMA.TemplatePlugin.ASPNET;
+using Microsoft.Extensions.DependencyInjection;
 #else
 using EMMA.Plugin.Common;
 using EMMA.TemplatePlugin.WASM;
@@ -14,6 +15,7 @@ namespace EMMA.TemplatePlugin;
     typeof(WasmPluginOperationHost),
     typeof(WasmJsonContext),
     typeof(WasmChapterOperationItem[]),
+    typeof(SearchSuggestionItem[]),
     typeof(BenchmarkResult),
     typeof(NetworkBenchmarkResult),
     ExportBridgeNamespace = "LibraryWorld.wit.exports.emma.plugin")]
@@ -40,6 +42,11 @@ public static partial class Program
     {
         var devMode = PluginEnvironment.IsDevelopmentMode();
         PluginBuilder.CreateWithDefaults(args, HostDefaults)
+            .ConfigureServices(services =>
+            {
+                services.AddTransient<IPluginSearchMetadataRuntime>(static provider => provider.GetRequiredService<AspNetClient>());
+                services.AddTransient<IPluginSearchSuggestionsRuntime>(static provider => provider.GetRequiredService<AspNetClient>());
+            })
             .ConfigureDefaultControl(ConfigureDefaultControlService)
                 .AddDefaultPagedProviders<AspNetClient>()
             .Run(mapDefaultEndpoints: devMode);

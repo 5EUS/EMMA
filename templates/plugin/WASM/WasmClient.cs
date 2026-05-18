@@ -28,6 +28,11 @@ internal sealed class WasmClient
         return new SearchParseMapResult(Core.Search(query), 0, 0);
     }
 
+    public IReadOnlyList<SearchItem> EnrichSearchItems(string enrichmentArgsJson)
+    {
+        return SourceFeatures.EnrichSearchItems(enrichmentArgsJson);
+    }
+
     public IReadOnlyList<ChapterItem> GetChaptersFromPayload(string mediaId, string payloadJson)
     {
         // Use payloadJson when the provider requires a fetch-at-home or chapter bootstrap payload.
@@ -69,6 +74,11 @@ internal sealed class WasmClient
         // Return serialized page bootstrap input here when page fetching needs an upstream token or URL.
         _ = chapterId;
         return null;
+    }
+
+    public IReadOnlyList<SearchSuggestionItem> GetSearchSuggestions(string requestJson)
+    {
+        return SourceFeatures.GetSearchSuggestions(requestJson);
     }
 
     internal sealed record SearchRequest(string Query);
