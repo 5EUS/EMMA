@@ -19,4 +19,8 @@
     <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(EMMAAndroidAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^android(-|simulator-)'))">
+    <TargetFrameworks>net10.0;net10.0-android</TargetFrameworks>
+  </PropertyGroup>
+
 </Project>

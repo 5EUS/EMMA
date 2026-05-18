@@ -7,19 +7,19 @@
     <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' != 'true'">
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and ('$(EMMAIosAotBuild)' != 'true' and '$(EMMAAndroidAotBuild)' != 'true')">
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Grpc.AspNetCore.Server" Version="2.60.0" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios' or '$(TargetFramework)' == 'net10.0-android'">
     <Compile Remove="Services/ApiAuthHeader.cs" />
     <Compile Remove="Services/ApiKeyAuthMiddleware.cs" />
     <Compile Remove="Services/ApiKeyGrpcInterceptor.cs" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-preview.2.25163.2" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true'">
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and ('$(EMMAIosAotBuild)' == 'true' or '$(EMMAAndroidAotBuild)' == 'true')">
     <Compile Remove="Services/ApiAuthHeader.cs" />
     <Compile Remove="Services/ApiKeyAuthMiddleware.cs" />
     <Compile Remove="Services/ApiKeyGrpcInterceptor.cs" />
@@ -34,6 +34,10 @@
 
   <PropertyGroup Condition="'$(EMMAIosAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^ios(-|simulator-)'))">
     <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EMMAAndroidAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^android(-|simulator-)'))">
+    <TargetFrameworks>net10.0;net10.0-android</TargetFrameworks>
   </PropertyGroup>
 
 </Project>

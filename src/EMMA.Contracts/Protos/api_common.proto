@@ -4,21 +4,41 @@ package emma.api.v1;
 
 option csharp_namespace = "EMMA.Contracts.Api.V1";
 
+// Carries request-scoped metadata for the public API surface.
 message ApiRequestContext {
+  // Correlates logs and downstream work for a single request.
   string correlation_id = 1;
+
+  // Carries the absolute UTC deadline expected by the caller.
   string deadline_utc = 2;
+
+  // Identifies the calling client application.
   string client_id = 3;
 }
 
+// Represents an API error payload.
 message ApiError {
+  // The stable error code.
   string code = 1;
+
+  // The human-readable error message.
   string message = 2;
+
+  // Additional error details for diagnostics.
   string details = 3;
 }
 
+// Enumerates the media types exposed by the public API.
 enum ApiMediaType {
+  // No media type was specified.
   API_MEDIA_TYPE_UNSPECIFIED = 0;
+
+  // The media item is paged content such as manga or comics.
   API_MEDIA_TYPE_PAGED = 1;
+
+  // The media item is video content.
   API_MEDIA_TYPE_VIDEO = 2;
+
+  // The media item is audio content.
   API_MEDIA_TYPE_AUDIO = 3;
 }

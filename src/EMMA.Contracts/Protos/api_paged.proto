@@ -6,95 +6,167 @@ option csharp_namespace = "EMMA.Contracts.Api.V1";
 
 import "api_common.proto";
 
+// Exposes paged media operations on the public API surface.
 service PagedMediaApi {
+  // Searches for paged media items.
   rpc Search (SearchRequest) returns (SearchResponse);
+
+  // Loads chapters for a media item.
   rpc GetChapters (ChaptersRequest) returns (ChaptersResponse);
+
+  // Loads a single page for a chapter.
   rpc GetPage (PageRequest) returns (PageResponse);
+
+  // Loads the binary asset for a single page.
   rpc GetPageAsset (PageAssetRequest) returns (PageAssetResponse);
 }
 
+// Requests a paged media search.
 message SearchRequest {
+  // The free-text query to execute.
   string query = 1;
+
+  // Carries correlation, deadline, and client metadata for the request.
   ApiRequestContext context = 100;
 }
 
+// Returns the outcome of a paged media search.
 message SearchResponse {
+  // The success or failure payload for the request.
   oneof outcome {
     SearchResult result = 1;
     ApiError error = 100;
   }
 }
 
+// Carries successful paged search results.
 message SearchResult {
+  // The paged media items returned by the search.
   repeated ApiMediaSummary items = 1;
 }
 
+// Requests chapters for a media item.
 message ChaptersRequest {
+  // The media identifier to resolve chapters for.
   string media_id = 1;
+
+  // Carries correlation, deadline, and client metadata for the request.
   ApiRequestContext context = 100;
 }
 
+// Returns the outcome of a chapters request.
 message ChaptersResponse {
+  // The success or failure payload for the request.
   oneof outcome {
     ChaptersResult result = 1;
     ApiError error = 100;
   }
 }
 
+// Carries successful chapter results.
 message ChaptersResult {
+  // The chapters returned by the request.
   repeated ApiMediaChapter items = 1;
 }
 
+// Requests a single page for a chapter.
 message PageRequest {
+  // The media identifier that owns the chapter.
   string media_id = 1;
+
+  // The chapter identifier that owns the page.
   string chapter_id = 2;
+
+  // The zero-based page index to load.
   int32 index = 3;
+
+  // Carries correlation, deadline, and client metadata for the request.
   ApiRequestContext context = 100;
 }
 
+// Returns the outcome of a page request.
 message PageResponse {
+  // The success or failure payload for the request.
   oneof outcome {
     ApiMediaPage page = 1;
     ApiError error = 100;
   }
 }
 
+// Requests the binary asset for a page.
 message PageAssetRequest {
+  // The media identifier that owns the chapter.
   string media_id = 1;
+
+  // The chapter identifier that owns the page.
   string chapter_id = 2;
+
+  // The zero-based page index to load.
   int32 index = 3;
+
+  // Carries correlation, deadline, and client metadata for the request.
   ApiRequestContext context = 100;
 }
 
+// Returns the outcome of a page asset request.
 message PageAssetResponse {
+  // The success or failure payload for the request.
   oneof outcome {
     ApiPageAsset asset = 1;
     ApiError error = 100;
   }
 }
 
+// Represents a binary page asset.
 message ApiPageAsset {
+  // The asset content type.
   string content_type = 1;
+
+  // The raw asset payload.
   bytes payload = 2;
 }
 
+// Describes a paged media item on the public API surface.
 message ApiMediaSummary {
+  // The media identifier.
   string id = 1;
+
+  // The source or plugin identifier.
   string source = 2;
+
+  // The display title.
   string title = 3;
+
+  // The typed media category.
   ApiMediaType media_type = 4;
+
+  // The preferred thumbnail URL.
   string thumbnail_url = 5;
 }
 
+// Describes a chapter on the public API surface.
 message ApiMediaChapter {
+  // The chapter identifier.
   string id = 1;
+
+  // The chapter number.
   int32 number = 2;
+
+  // The chapter title.
   string title = 3;
+
+  // The uploader or scanlation groups associated with the chapter.
   repeated string uploader_groups = 4;
 }
 
+// Describes a page on the public API surface.
 message ApiMediaPage {
+  // The page identifier.
   string id = 1;
+
+  // The zero-based page index.
   int32 index = 2;
+
+  // The URI that can be used to retrieve the page content.
   string content_uri = 3;
 }

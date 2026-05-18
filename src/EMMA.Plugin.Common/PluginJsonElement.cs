@@ -2,8 +2,17 @@ using System.Text.Json;
 
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Provides safe accessors for common JSON element shapes.
+/// </summary>
 public static class PluginJsonElement
 {
+    /// <summary>
+    /// Gets a child object property from a JSON element.
+    /// </summary>
+    /// <param name="element">The JSON element that owns the property.</param>
+    /// <param name="name">The property name to read.</param>
+    /// <returns>The object property when present and of the correct kind; otherwise, <see langword="null"/>.</returns>
     public static JsonElement? GetObject(JsonElement element, string name)
     {
         if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Object)
@@ -14,6 +23,12 @@ public static class PluginJsonElement
         return null;
     }
 
+    /// <summary>
+    /// Gets a child array property from a JSON element.
+    /// </summary>
+    /// <param name="element">The JSON element that owns the property.</param>
+    /// <param name="name">The property name to read.</param>
+    /// <returns>The array property when present and of the correct kind; otherwise, <see langword="null"/>.</returns>
     public static JsonElement? GetArray(JsonElement element, string name)
     {
         if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array)
@@ -24,6 +39,12 @@ public static class PluginJsonElement
         return null;
     }
 
+    /// <summary>
+    /// Gets a string property from a JSON element.
+    /// </summary>
+    /// <param name="element">The JSON element that owns the property.</param>
+    /// <param name="name">The property name to read.</param>
+    /// <returns>The string value when present and valid; otherwise, <see langword="null"/>.</returns>
     public static string? GetString(JsonElement element, string name)
     {
         if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
@@ -34,6 +55,12 @@ public static class PluginJsonElement
         return null;
     }
 
+    /// <summary>
+    /// Gets an integer property from a JSON element, accepting both numeric and string representations.
+    /// </summary>
+    /// <param name="element">The JSON element that owns the property.</param>
+    /// <param name="name">The property name to read.</param>
+    /// <returns>The parsed integer when present and valid; otherwise, <see langword="null"/>.</returns>
     public static int? GetInt32(JsonElement element, string name)
     {
         if (!element.TryGetProperty(name, out var value))
@@ -55,6 +82,11 @@ public static class PluginJsonElement
         return null;
     }
 
+    /// <summary>
+    /// Picks the first non-empty localized string from a language map, preferring English when available.
+    /// </summary>
+    /// <param name="map">The JSON object that contains language-to-string entries.</param>
+    /// <returns>The selected string value, or <see langword="null"/> when no usable value exists.</returns>
     public static string? PickMapString(JsonElement? map)
     {
         if (map is null || map.Value.ValueKind != JsonValueKind.Object)

@@ -11,13 +11,25 @@ namespace EMMA.PluginHost.Sandboxing;
 /// <summary>
 /// Windows sandbox scaffolding placeholder (job objects, low-integrity tokens).
 /// </summary>
+/// <param name="options">The plugin host options.</param>
+/// <param name="logger">The logger used for sandbox diagnostics.</param>
 public sealed class WindowsPluginSandboxManager(IOptions<PluginHostOptions> options, ILogger<WindowsPluginSandboxManager> logger)
     : PluginSandboxManagerBase(options, logger)
 {
+    /// <summary>
+    /// Gets the platform name used in diagnostics.
+    /// </summary>
     protected override string PlatformName => "Windows";
 
     private readonly ConcurrentDictionary<string, SafeJobHandle> _jobs = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Prepares sandbox resources for Windows-hosted plugins.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="pluginRoot">The plugin sandbox root path.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes with <see langword="true"/> because enforcement is applied after process start.</returns>
     protected override Task<bool> PrepareSandboxAsync(
         PluginManifest manifest,
         string pluginRoot,
@@ -26,6 +38,13 @@ public sealed class WindowsPluginSandboxManager(IOptions<PluginHostOptions> opti
         return Task.FromResult(true);
     }
 
+    /// <summary>
+    /// Attaches the running plugin process to a Windows job object when sandboxing is enabled.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="process">The running process.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when enforcement has been attempted.</returns>
     public override Task EnforceAsync(PluginManifest manifest, Process process, CancellationToken cancellationToken)
     {
         if (!Options.SandboxEnabled)

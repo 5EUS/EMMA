@@ -5,14 +5,26 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Persists repository configuration and cached catalogs on disk.
+/// </summary>
+/// <param name="options">The plugin host options.</param>
 public sealed class PluginRepositoryStore(IOptions<PluginHostOptions> options)
 {
     private const string RepositoriesFileName = "repositories.json";
     private readonly PluginHostOptions _options = options.Value;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    /// <summary>
+    /// Gets the resolved repository storage directory path.
+    /// </summary>
     public string RepositoryDirectoryPath => ResolveRepositoryDirectoryPath(_options);
 
+    /// <summary>
+    /// Lists the configured repositories from persistent storage.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The configured repositories.</returns>
     public async Task<IReadOnlyList<PluginRepositoryRecord>> ListAsync(CancellationToken cancellationToken)
     {
         await _gate.WaitAsync(cancellationToken);
@@ -30,6 +42,12 @@ public sealed class PluginRepositoryStore(IOptions<PluginHostOptions> options)
         }
     }
 
+    /// <summary>
+    /// Gets a configured repository by identifier.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The repository record, or <see langword="null"/> when it does not exist.</returns>
     public async Task<PluginRepositoryRecord?> GetAsync(string repositoryId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(repositoryId))
@@ -50,6 +68,11 @@ public sealed class PluginRepositoryStore(IOptions<PluginHostOptions> options)
         }
     }
 
+    /// <summary>
+    /// Inserts or updates a repository record in persistent storage.
+    /// </summary>
+    /// <param name="repository">The repository record.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     public async Task UpsertAsync(PluginRepositoryRecord repository, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repository.Id);
@@ -73,6 +96,12 @@ public sealed class PluginRepositoryStore(IOptions<PluginHostOptions> options)
         }
     }
 
+    /// <summary>
+    /// Removes a repository record and its cached catalog.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns><see langword="true"/> when the repository was removed; otherwise, <see langword="false"/>.</returns>
     public async Task<bool> RemoveAsync(string repositoryId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(repositoryId))
@@ -103,6 +132,13 @@ public sealed class PluginRepositoryStore(IOptions<PluginHostOptions> options)
         }
     }
 
+    /// <summary>
+    /// Saves a repository catalog JSON payload to persistent storage.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="catalog">The parsed catalog.</param>
+    /// <param name="rawJson">The raw catalog JSON.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     public async Task SaveCatalogAsync(
         string repositoryId,
         PluginRepositoryCatalog catalog,
@@ -126,6 +162,12 @@ public sealed class PluginRepositoryStore(IOptions<PluginHostOptions> options)
         }
     }
 
+    /// <summary>
+    /// Loads a cached repository catalog from persistent storage.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The cached catalog, or <see langword="null"/> when none exists.</returns>
     public async Task<PluginRepositoryCatalog?> LoadCatalogAsync(string repositoryId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(repositoryId))

@@ -135,6 +135,12 @@ public sealed class PluginHandshakeService(
         }
     }
 
+    /// <summary>
+    /// Performs handshake for a single plugin manifest and updates the registry with the result.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The resulting handshake status.</returns>
     public async Task<PluginHandshakeStatus> HandshakeSingleAsync(
         PluginManifest manifest,
         CancellationToken cancellationToken)

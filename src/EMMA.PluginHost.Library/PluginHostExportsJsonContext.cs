@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EMMA.Domain;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Services;
 
@@ -19,6 +20,15 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(MediaSummary))]
 [JsonSerializable(typeof(IReadOnlyList<MediaSummary>))]
 [JsonSerializable(typeof(List<MediaSummary>))]
+[JsonSerializable(typeof(SearchItem))]
+[JsonSerializable(typeof(IReadOnlyList<SearchItem>))]
+[JsonSerializable(typeof(List<SearchItem>))]
+[JsonSerializable(typeof(SearchSuggestionRequest))]
+[JsonSerializable(typeof(SearchSuggestionItem))]
+[JsonSerializable(typeof(IReadOnlyList<SearchSuggestionItem>))]
+[JsonSerializable(typeof(List<SearchSuggestionItem>))]
+[JsonSerializable(typeof(PluginDevEnrichSearchItemsRequest))]
+[JsonSerializable(typeof(PluginHostExports.EnrichedMediaSummaryResponse))]
 [JsonSerializable(typeof(MediaChapter))]
 [JsonSerializable(typeof(IReadOnlyList<MediaChapter>))]
 [JsonSerializable(typeof(List<MediaChapter>))]
@@ -41,10 +51,21 @@ namespace EMMA.PluginHost.Library;
 [JsonSerializable(typeof(PluginManifestSearchLandingAction))]
 [JsonSerializable(typeof(PluginManifestSearchFilter))]
 [JsonSerializable(typeof(PluginManifestSearchFilterRange))]
+[JsonSerializable(typeof(PluginManifestSearchLookup))]
 [JsonSerializable(typeof(PluginManifestSearchFilterOption))]
 [JsonSerializable(typeof(PluginManifestSearchQueryOptions))]
 [JsonSerializable(typeof(PluginManifestSearchQueryAddition))]
 [JsonSerializable(typeof(MediaProgressResponse))]
+[JsonSerializable(typeof(MigrationOrphanedItemResponse))]
+[JsonSerializable(typeof(IReadOnlyList<MigrationOrphanedItemResponse>))]
+[JsonSerializable(typeof(List<MigrationOrphanedItemResponse>))]
+[JsonSerializable(typeof(MigrationMatchResponse))]
+[JsonSerializable(typeof(IReadOnlyList<MigrationMatchResponse>))]
+[JsonSerializable(typeof(List<MigrationMatchResponse>))]
+[JsonSerializable(typeof(MigrationCheckRequest))]
+[JsonSerializable(typeof(MigrationCheckResponse))]
+[JsonSerializable(typeof(MigrationExecutionRequest))]
+[JsonSerializable(typeof(MigrationExecutionResponse))]
 [JsonSerializable(typeof(HistoryEntryResponse))]
 [JsonSerializable(typeof(IReadOnlyList<HistoryEntryResponse>))]
 [JsonSerializable(typeof(List<HistoryEntryResponse>))]

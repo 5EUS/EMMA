@@ -4,6 +4,7 @@
     <TargetFrameworks>net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
@@ -11,7 +12,11 @@
     <TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' != 'true'">
+  <PropertyGroup Condition="'$(EMMAAndroidAotBuild)' == 'true' or $([System.Text.RegularExpressions.Regex]::IsMatch('$(RuntimeIdentifier)', '^android(-|simulator-)'))">
+    <TargetFrameworks>net10.0;net10.0-android</TargetFrameworks>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0' and ('$(EMMAIosAotBuild)' != 'true' and '$(EMMAAndroidAotBuild)' != 'true')">
     <ProjectReference Include="..\EMMA.PluginHost\EMMA.PluginHost.csproj" />
   </ItemGroup>
 
@@ -24,7 +29,7 @@
     <ProjectReference Include="..\EMMA.Plugin.Common\EMMA.Plugin.Common.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios' or ('$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true')">
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios' or '$(TargetFramework)' == 'net10.0-android' or ('$(TargetFramework)' == 'net10.0' and '$(EMMAIosAotBuild)' == 'true') or ('$(TargetFramework)' == 'net10.0' and '$(EMMAAndroidAotBuild)' == 'true')">
     <Compile Include="..\EMMA.PluginHost\Configuration\**\*.cs" Link="PluginHost\Configuration\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\EMMA.PluginHost\Platform\**\*.cs" Link="PluginHost\Platform\%(RecursiveDir)%(Filename)%(Extension)" />
     <Compile Include="..\EMMA.PluginHost\Plugins\**\*.cs" Link="PluginHost\Plugins\%(RecursiveDir)%(Filename)%(Extension)" />

@@ -1,0 +1,186 @@
+name: warm-rust-release-caches
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: warm-rust-release-caches-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_CACHE_VERSION: v1
+
+jobs:
+  warm-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Cache Linux Rust build outputs
+        uses: actions/cache@v4
+        with:
+          path: src/EMMA.WasmRuntime.Native/target
+          key: ${{ runner.os }}-wasm-runtime-linux-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml', 'scripts/build-wasm-runtime-native.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-wasm-runtime-linux-${{ env.RUST_CACHE_VERSION }}-
+            ${{ runner.os }}-wasm-runtime-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Warm Linux WASM runtime cache
+        run: ./scripts/build-wasm-runtime-native.sh linux-x64
+
+  warm-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Cache Windows Rust build outputs
+        uses: actions/cache@v4
+        with:
+          path: src/EMMA.WasmRuntime.Native/target
+          key: ${{ runner.os }}-wasm-runtime-win-x64-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml', 'scripts/build-wasm-runtime-native.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-wasm-runtime-win-x64-${{ env.RUST_CACHE_VERSION }}-
+            ${{ runner.os }}-wasm-runtime-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Warm Windows WASM runtime cache
+        run: ./scripts/build-wasm-runtime-native.sh win-x64
+
+  warm-macos:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Determine macOS target
+        id: target
+        run: |
+          set -euo pipefail
+
+          case "$(uname -m)" in
+            arm64)
+              echo "rid=osx-arm64" >> "$GITHUB_OUTPUT"
+              echo "rust_target=aarch64-apple-darwin" >> "$GITHUB_OUTPUT"
+              ;;
+            x86_64)
+              echo "rid=osx-x64" >> "$GITHUB_OUTPUT"
+              echo "rust_target=x86_64-apple-darwin" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported macOS runner architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Add macOS Rust target
+        run: rustup target add "${{ steps.target.outputs.rust_target }}"
+
+      - name: Cache macOS Rust build outputs
+        uses: actions/cache@v4
+        with:
+          path: src/EMMA.WasmRuntime.Native/target
+          key: ${{ runner.os }}-wasm-runtime-macos-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml', 'scripts/build-wasm-runtime-native.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-wasm-runtime-macos-${{ env.RUST_CACHE_VERSION }}-
+            ${{ runner.os }}-wasm-runtime-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Warm macOS WASM runtime cache
+        run: ./scripts/build-wasm-runtime-native.sh "${{ steps.target.outputs.rid }}"
+
+  warm-ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add iOS Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Cache iOS Rust build outputs
+        uses: actions/cache@v4
+        with:
+          path: src/EMMA.WasmRuntime.Native/target
+          key: ${{ runner.os }}-wasm-runtime-ios-${{ env.RUST_CACHE_VERSION }}-${{ hashFiles('src/EMMA.WasmRuntime.Native/Cargo.lock', 'src/EMMA.WasmRuntime.Native/Cargo.toml', 'scripts/build-wasm-runtime-native.sh', 'scripts/build-ios-native-framework.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-wasm-runtime-ios-${{ env.RUST_CACHE_VERSION }}-
+            ${{ runner.os }}-wasm-runtime-${{ env.RUST_CACHE_VERSION }}-
+
+      - name: Warm iOS WASM runtime caches
+        run: |
+          set -euo pipefail
+          ./scripts/build-wasm-runtime-native.sh ios-arm64
+          ./scripts/build-wasm-runtime-native.sh iossimulator-arm64

@@ -43,6 +43,13 @@ jobs:
             -o artifacts/nuget \
             -p:Version=$PACKAGE_VERSION
 
+      - name: Pack EMMA.Plugin.Common.Generators
+        run: |
+          dotnet pack src/EMMA.Plugin.Common.Generators/EMMA.Plugin.Common.Generators.csproj \
+            -c Release \
+            -o artifacts/nuget \
+            -p:Version=$PACKAGE_VERSION
+
       - name: Pack EMMA.Plugin.AspNetCore
         run: |
           dotnet pack src/EMMA.Plugin.AspNetCore/EMMA.Plugin.AspNetCore.csproj \

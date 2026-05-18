@@ -3,8 +3,16 @@ using System.Net.Sockets;
 
 namespace EMMA.PluginHost.Plugins;
 
+/// <summary>
+/// Assigns loopback endpoints to plugins that require one but do not declare a fixed address.
+/// </summary>
 public sealed class PluginEndpointAllocator
 {
+    /// <summary>
+    /// Ensures that a gRPC plugin manifest has a concrete loopback endpoint.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest to inspect.</param>
+    /// <returns>The original manifest when no endpoint change is needed; otherwise, a copy with an allocated endpoint.</returns>
     public PluginManifest EnsureEndpoint(PluginManifest manifest)
     {
         if (!string.Equals(manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))

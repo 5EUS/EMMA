@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using EMMA.Domain;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
@@ -670,6 +671,14 @@ public sealed class PluginRepositoryInstallOrchestratorTests
             throw new NotSupportedException();
         }
 
+        public Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+            PluginRecord record,
+            SearchSuggestionRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task<string> SearchJsonAsync(PluginRecord record, string query, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
@@ -708,6 +717,11 @@ public sealed class PluginRepositoryInstallOrchestratorTests
         public Task<MediaPagesResult> GetPagesAsync(PluginRecord record, MediaId mediaId, string chapterId, int startIndex, int count, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<MediaSummary>> EnrichSearchMetadataAsync(PluginRecord record, IEnumerable<string> mediaIds, IReadOnlyList<MediaSummary>? results, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<IReadOnlyList<MediaSummary>>(results ?? []);
         }
     }
 }

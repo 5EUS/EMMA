@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="EMMA.TemplatePlugin.Shared.props" />
+
+  <PropertyGroup>
+    <AssemblyName>EMMA.TemplatePlugin</AssemblyName>
+    <RootNamespace>EMMA.TemplatePlugin</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <DefineConstants>$(DefineConstants);PLUGIN_TRANSPORT_ASPNET</DefineConstants>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="EMMA.TemplatePlugin.Core.csproj" />
+    <Compile Include="Program.cs" />
+    <Compile Include="ASPNET/AspNetClient.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalEmmaSdk)' == 'true'">
+    <ProjectReference Include="$(EmmaSdkRoot)/src/EMMA.Contracts/EMMA.Contracts.csproj" />
+    <ProjectReference Include="$(EmmaSdkRoot)/src/EMMA.Plugin.AspNetCore/EMMA.Plugin.AspNetCore.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.60.0" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseLocalEmmaSdk)' != 'true'">
+    <PackageReference Include="EMMA.Contracts" Version="$(EmmaSdkVersion)" />
+    <PackageReference Include="EMMA.Plugin.AspNetCore" Version="$(EmmaSdkVersion)" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.60.0" />
+  </ItemGroup>
+</Project>

@@ -7,6 +7,11 @@ namespace EMMA.PluginHost.Services;
 /// <summary>
 /// Checks plugin resource usage against configured budgets and quarantines plugins that exceed them.
 /// </summary>
+/// <param name="registry">The plugin registry.</param>
+/// <param name="processManager">The plugin process manager.</param>
+/// <param name="options">The plugin host options.</param>
+/// <param name="metrics">The plugin host metrics collector.</param>
+/// <param name="logger">The logger used for budget diagnostics.</param>
 public sealed class PluginBudgetWatcher(
     PluginRegistry registry,
     PluginProcessManager processManager,
@@ -20,6 +25,11 @@ public sealed class PluginBudgetWatcher(
     private readonly PluginHostMetrics _metrics = metrics;
     private readonly ILogger<PluginBudgetWatcher> _logger = logger;
 
+    /// <summary>
+    /// Runs the periodic budget enforcement loop.
+    /// </summary>
+    /// <param name="stoppingToken">The cancellation token that stops the background service.</param>
+    /// <returns>A task that completes when the service stops.</returns>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (_options.BudgetWatchIntervalSeconds <= 0)

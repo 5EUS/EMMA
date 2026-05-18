@@ -9,13 +9,25 @@ namespace EMMA.PluginHost.Sandboxing;
 /// <summary>
 /// Linux sandbox scaffolding placeholder (cgroups, seccomp, namespaces).
 /// </summary>
+/// <param name="options">The plugin host options.</param>
+/// <param name="logger">The logger used for sandbox diagnostics.</param>
 public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> options, ILogger<LinuxPluginSandboxManager> logger)
     : PluginSandboxManagerBase(options, logger)
 {
+    /// <summary>
+    /// Gets the platform name used in diagnostics.
+    /// </summary>
     protected override string PlatformName => "Linux";
 
     private const string BubblewrapName = "bwrap";
 
+    /// <summary>
+    /// Prepares sandbox resources for Linux-hosted plugins.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="pluginRoot">The plugin sandbox root path.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes with <see langword="true"/> when bubblewrap is available; otherwise, it may return <see langword="false"/> when no-sandbox fallback is explicitly enabled.</returns>
     protected override Task<bool> PrepareSandboxAsync(
         PluginManifest manifest,
         string pluginRoot,
@@ -44,6 +56,12 @@ public sealed class LinuxPluginSandboxManager(IOptions<PluginHostOptions> option
         return Task.FromResult(false);
     }
 
+    /// <summary>
+    /// Wraps the plugin process start info with a bubblewrap sandbox when available.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="startInfo">The process start configuration.</param>
+    /// <returns>The updated process start configuration.</returns>
     public override ProcessStartInfo ApplyToStartInfo(PluginManifest manifest, ProcessStartInfo startInfo)
     {
         if (!Options.SandboxEnabled)

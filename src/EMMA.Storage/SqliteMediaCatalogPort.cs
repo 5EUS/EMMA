@@ -31,6 +31,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 thumbnail_url,
                 language,
                 tags,
+                attributes,
                 created_at,
                 updated_at
             ) VALUES (
@@ -43,6 +44,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 $thumbnailUrl,
                 $language,
                 $tags,
+                $attributes,
                 $createdAt,
                 $updatedAt
             )
@@ -55,6 +57,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 thumbnail_url = excluded.thumbnail_url,
                 language = excluded.language,
                 tags = excluded.tags,
+                attributes = excluded.attributes,
                 updated_at = excluded.updated_at;
             """;
 
@@ -67,6 +70,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
         command.Parameters.AddWithValue("$thumbnailUrl", (object?)media.ThumbnailUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("$language", (object?)media.Language ?? DBNull.Value);
         command.Parameters.AddWithValue("$tags", tagsJson);
+        command.Parameters.AddWithValue("$attributes", (object?)media.Attributes ?? DBNull.Value);
         command.Parameters.AddWithValue("$createdAt", media.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", media.UpdatedAtUtc.ToString("O"));
 
@@ -90,6 +94,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 thumbnail_url,
                 language,
                 tags,
+                attributes,
                 created_at,
                 updated_at
             FROM media
@@ -124,6 +129,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 thumbnail_url,
                 language,
                 tags,
+                attributes,
                 created_at,
                 updated_at
             FROM media
@@ -338,8 +344,9 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
             reader.IsDBNull(6) ? null : reader.GetString(6),
             reader.IsDBNull(7) ? null : reader.GetString(7),
             tags,
-            DateTimeOffset.Parse(reader.GetString(9)),
-            DateTimeOffset.Parse(reader.GetString(10)));
+            DateTimeOffset.Parse(reader.GetString(10)),
+            DateTimeOffset.Parse(reader.GetString(11)),
+            reader.IsDBNull(9) ? null : reader.GetString(9));
     }
 
     private static MediaChapterRecord ReadChapter(SqliteDataReader reader)
@@ -413,6 +420,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 thumbnail_url,
                 language,
                 tags,
+                attributes,
                 created_at,
                 updated_at
             ) VALUES (
@@ -425,6 +433,7 @@ public sealed class SqliteMediaCatalogPort(StorageOptions options) : IMediaCatal
                 NULL,
                 NULL,
                 $tags,
+                NULL,
                 $createdAt,
                 $updatedAt
             );

@@ -4,7 +4,11 @@ package emma.plugins;
 
 option csharp_namespace = "EMMA.Contracts.Plugins";
 
+// Carries request-scoped metadata between the host and a plugin.
 message RequestContext {
+  // Correlates logs and downstream work for a single request.
   string correlation_id = 1;
+
+  // Carries the absolute UTC deadline expected by the caller.
   string deadline_utc = 2;
 }

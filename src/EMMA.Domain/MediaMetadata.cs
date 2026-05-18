@@ -14,4 +14,5 @@ public sealed record MediaMetadata(
     string? Language,
     IReadOnlyList<string> Tags,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    string? Attributes = null);

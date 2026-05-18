@@ -62,7 +62,7 @@ if [[ ! -d "$WASI_SDK_HOST_PATH" ]]; then
   exit 1
 fi
 
-manifest_arg=${1:-$PLUGIN_DIR/EMMA.PluginTemplate.plugin.json}
+manifest_arg=${1:-$PLUGIN_DIR/EMMA.TemplatePlugin.plugin.json}
 if [[ "$manifest_arg" = /* ]]; then
   manifest_host_path="$manifest_arg"
 else

@@ -1,0 +1,100 @@
+{
+  "id": "emma.plugin.template",
+  "name": "EMMA Template Plugin",
+  "version": "0.1.0",
+  "description": "Scaffolded EMMA plugin with split ASP.NET and WASM transports plus deterministic paged fixtures.",
+  "author": "projectemma",
+  "protocol": "grpc",
+  "runtime": {
+    "minHostVersion": "1.0.0"
+  },
+  "mediaTypes": [
+    "paged"
+  ],
+  "thumbnail": {
+    "aspectRatio": 0.7,
+    "fit": "cover",
+    "width": 256,
+    "height": 384
+  },
+  "searchExperience": {
+    "capabilities": [
+      "landing-v1",
+      "query-additions-v1"
+    ],
+    "landing": {
+      "template": "media-search",
+      "title": "Template Library",
+      "subtitle": "Replace these deterministic fixtures with your provider integration.",
+      "sections": [
+        {
+          "id": "hero",
+          "type": "hero",
+          "title": "EMMA Template Plugin",
+          "description": "This scaffold ships sample paged fixtures so search, chapters, and pages work before you integrate a real provider.",
+          "mediaTypes": [
+            "paged"
+          ],
+          "actions": [
+            {
+              "id": "quick-series",
+              "label": "Series",
+              "type": "set-query",
+              "value": "series"
+            },
+            {
+              "id": "quick-collection",
+              "label": "Collection",
+              "type": "set-query",
+              "value": "collection"
+            }
+          ]
+        }
+      ]
+    },
+    "query": {
+      "allowFreeText": true,
+      "minLength": 0,
+      "maxLength": 200,
+      "additions": [
+        {
+          "id": "template.mode",
+          "label": "Fixture Mode",
+          "type": "single",
+          "defaultValue": "all",
+          "options": [
+            {
+              "value": "all",
+              "label": "All Fixtures",
+              "isDefault": true
+            },
+            {
+              "value": "series",
+              "label": "Series Only"
+            },
+            {
+              "value": "collection",
+              "label": "Collection Only"
+            }
+          ],
+          "appliesToMediaTypes": [
+            "paged"
+          ]
+        }
+      ]
+    }
+  },
+  "capabilities": {
+    "network": [],
+    "fileSystem": [],
+    "cache": false,
+    "cpuBudgetMs": 250,
+    "memoryMb": 512
+  },
+  "permissions": {
+    "domains": [
+      "example.invalid"
+    ],
+    "paths": []
+  }
+}

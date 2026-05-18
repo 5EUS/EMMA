@@ -71,8 +71,8 @@ public sealed class SqliteProgressPort(StorageOptions options) : IProgressPort
             WHERE media_id = $mediaId
               AND plugin_id = $pluginId
               AND user_id = $userId
-              AND id LIKE 'paged::%'
-            ORDER BY datetime(last_viewed_at) DESC
+                            AND id LIKE 'paged::%'
+                        ORDER BY last_viewed_at DESC
             LIMIT 1;
             """;
         command.Parameters.AddWithValue("$mediaId", mediaId.Value);
@@ -175,8 +175,8 @@ public sealed class SqliteProgressPort(StorageOptions options) : IProgressPort
             WHERE media_id = $mediaId
               AND plugin_id = $pluginId
               AND user_id = $userId
-              AND id LIKE 'video::%'
-            ORDER BY datetime(last_viewed_at) DESC
+                            AND id LIKE 'video::%'
+                        ORDER BY last_viewed_at DESC
             LIMIT 1;
             """;
         command.Parameters.AddWithValue("$mediaId", mediaId.Value);

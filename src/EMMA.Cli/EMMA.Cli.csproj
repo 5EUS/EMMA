@@ -4,6 +4,27 @@
     <ProjectReference Include="..\EMMA.Api\EMMA.Api.csproj" />
     <ProjectReference Include="..\EMMA.Contracts\EMMA.Contracts.csproj" />
     <ProjectReference Include="..\EMMA.Infrastructure\EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="..\EMMA.Plugin.Common\EMMA.Plugin.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ConsoleAppFramework" Version="5.7.13">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Grpc.Net.Client" Version="2.71.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('..\..\artifacts\wasm-runtime-native')">
+    <None Include="..\..\artifacts\wasm-runtime-native\**\*">
+      <Link>runtimes/wasm-runtime-native/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 
   <PropertyGroup>

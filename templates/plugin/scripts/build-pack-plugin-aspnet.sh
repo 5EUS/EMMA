@@ -4,11 +4,11 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PLUGIN_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 ROOT_DIR="$PLUGIN_DIR"
-MANIFEST_PATH="${1:-$PLUGIN_DIR/EMMA.PluginTemplate.plugin.json}"
+MANIFEST_PATH="${1:-$PLUGIN_DIR/EMMA.TemplatePlugin.plugin.json}"
 OUT_DIR="$PLUGIN_DIR/artifacts"
 PACK_DIR="$OUT_DIR/pack"
 ASPNET_BUILD_CONFIGURATION="${ASPNET_BUILD_CONFIGURATION:-Release}"
-ASPNET_PROJECT_PATH="${ASPNET_PROJECT_PATH:-}"
+ASPNET_PROJECT_PATH="${ASPNET_PROJECT_PATH:-$PLUGIN_DIR/EMMA.TemplatePlugin.csproj}"
 EMMA_SDK_VERSION="${EMMA_SDK_VERSION:-}"
 ASPNET_NO_RESTORE="${ASPNET_NO_RESTORE:-0}"
 HOST_OS="$(uname -s)"
@@ -37,39 +37,13 @@ resolve_env_flag() {
 
 SIGNING_KEY_BASE64="${EMMA_PLUGIN_SIGNING_PRIVATE_KEY_BASE64:-${EMMA_HMAC_KEY_BASE64:-}}"
 SIGNING_KEY_PEM="${EMMA_PLUGIN_SIGNING_PRIVATE_KEY_PEM:-}"
-SIGNING_KEY_ID="${EMMA_PLUGIN_SIGNING_KEY_ID:-${EMMA_PLUGIN_SIGNATURE_KEY_ID:-default-delegated-key}}"
-SIGNING_REPOSITORY_ID="${EMMA_PLUGIN_REPOSITORY_ID:-emma-test}"
+SIGNING_KEY_ID="${EMMA_PLUGIN_SIGNING_KEY_ID:-${EMMA_PLUGIN_SIGNATURE_KEY_ID:-change-me-release-key}}"
+SIGNING_REPOSITORY_ID="${EMMA_PLUGIN_REPOSITORY_ID:-change-me}"
 SIGNING_ISSUED_AT_UTC="${EMMA_PLUGIN_SIGNATURE_ISSUED_AT_UTC:-}"
 SIGNING_EXPIRES_AT_UTC="${EMMA_PLUGIN_SIGNATURE_EXPIRES_AT_UTC:-}"
 REQUIRE_SIGNED_PLUGINS_VALUE="${EMMA_REQUIRE_SIGNED_PLUGINS:-${PluginSignature__RequireSignedPlugins:-}}"
 REQUIRE_SIGNING="$(resolve_env_flag "$REQUIRE_SIGNED_PLUGINS_VALUE")"
 SIGN_MANIFEST_IN_PLACE="${SIGN_MANIFEST_IN_PLACE:-0}"
-
-resolve_project_path() {
-  if [[ -n "$ASPNET_PROJECT_PATH" ]]; then
-    echo "$ASPNET_PROJECT_PATH"
-    return 0
-  fi
-
-  local -a csproj_candidates=()
-  while IFS= read -r candidate; do
-    csproj_candidates+=("$candidate")
-  done < <(find "$PLUGIN_DIR" -maxdepth 1 -type f -name "*.csproj" | sort)
-
-  if [[ ${#csproj_candidates[@]} -eq 1 ]]; then
-    echo "${csproj_candidates[0]}"
-    return 0
-  fi
-
-  if [[ ${#csproj_candidates[@]} -eq 0 ]]; then
-    echo "No .csproj found in plugin directory: $PLUGIN_DIR" >&2
-  else
-    echo "Multiple .csproj files found in plugin directory. Set ASPNET_PROJECT_PATH explicitly." >&2
-    printf '  - %s\n' "${csproj_candidates[@]}" >&2
-  fi
-
-  exit 1
-}
 
 if [[ ! -f "$MANIFEST_PATH" ]]; then
   echo "Manifest not found: $MANIFEST_PATH" >&2
@@ -82,9 +56,8 @@ if [[ "${MANIFEST_PATH##*.}" == "csproj" ]]; then
   exit 1
 fi
 
-PROJECT_PATH="$(resolve_project_path)"
-if [[ ! -f "$PROJECT_PATH" ]]; then
-  echo "ASP.NET project not found: $PROJECT_PATH" >&2
+if [[ ! -f "$ASPNET_PROJECT_PATH" ]]; then
+  echo "ASP.NET project not found: $ASPNET_PROJECT_PATH" >&2
   exit 1
 fi
 
@@ -119,11 +92,6 @@ print(version)
 PY
 )
 
-if [[ ${#manifest_fields[@]} -lt 3 ]]; then
-  echo "Failed to parse manifest fields." >&2
-  exit 1
-fi
-
 PLUGIN_ID="${manifest_fields[0]}"
 PLUGIN_NAME="${manifest_fields[1]}"
 PLUGIN_VERSION="${manifest_fields[2]}"
@@ -144,18 +112,12 @@ for TARGET in $TARGETS; do
   rm -rf "$BUILD_DIR" "$PACKAGE_ROOT" "$PACK_DIR/${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip"
   mkdir -p "$PUBLISH_DIR" "$MANIFEST_OUT_DIR" "$PLUGIN_OUT_DIR"
 
-  if [[ "$TARGET" != linux-* && "$TARGET" != osx-* && "$TARGET" != win-* ]]; then
-    echo "Unsupported ASP.NET packaging target: $TARGET (supported: linux-*, osx-*, win-*)" >&2
-    exit 1
-  fi
-
   publish_args=(
     -c "$ASPNET_BUILD_CONFIGURATION"
     -r "$TARGET"
     --self-contained false
     -p:UseAppHost=true
     -p:PublishSingleFile=true
-    -p:PluginTransport=AspNet
     -o "$PUBLISH_DIR"
   )
 
@@ -167,61 +129,12 @@ for TARGET in $TARGETS; do
     publish_args+=("--no-restore")
   fi
 
-  dotnet publish "$PROJECT_PATH" \
-    "${publish_args[@]}"
+  dotnet publish "$ASPNET_PROJECT_PATH" "${publish_args[@]}"
 
   find "$PUBLISH_DIR" -maxdepth 1 -type f \( -name "*.pdb" -o -name "*.dbg" -o -name "*.xml" \) -delete || true
   rm -f "$PUBLISH_DIR/createdump"
 
-  APP_RUNTIME_CONFIG=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.runtimeconfig.json" | head -n 1)
-  APP_EXECUTABLE=""
-
-  if [[ -n "$APP_RUNTIME_CONFIG" ]]; then
-    APP_EXECUTABLE=$(basename "$APP_RUNTIME_CONFIG" .runtimeconfig.json)
-  else
-    PROJECT_BASENAME=$(basename "$PROJECT_PATH" .csproj)
-
-    if [[ "$TARGET" == win-* ]]; then
-      if [[ -f "$PUBLISH_DIR/${PROJECT_BASENAME}.exe" ]]; then
-        APP_EXECUTABLE="$PROJECT_BASENAME"
-      fi
-    else
-      if [[ -f "$PUBLISH_DIR/$PROJECT_BASENAME" ]]; then
-        APP_EXECUTABLE="$PROJECT_BASENAME"
-      fi
-    fi
-
-    if [[ -z "$APP_EXECUTABLE" ]]; then
-      if [[ "$TARGET" == win-* ]]; then
-        APP_EXECUTABLE=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -name "*.exe" | xargs -r -n1 basename | head -n 1 | sed 's/\.exe$//')
-      else
-        APP_EXECUTABLE=$(find "$PUBLISH_DIR" -maxdepth 1 -type f -executable | xargs -r -n1 basename | head -n 1)
-      fi
-    fi
-
-    if [[ -z "$APP_EXECUTABLE" ]]; then
-      echo "Failed to locate app executable in publish output." >&2
-      exit 1
-    fi
-  fi
-
   cp -R "$PUBLISH_DIR"/. "$PLUGIN_OUT_DIR/"
-
-  if [[ "$TARGET" == win-* ]]; then
-    if [[ -f "$PLUGIN_OUT_DIR/${APP_EXECUTABLE}.exe" && "${APP_EXECUTABLE}" != "$ENTRYPOINT_NAME" ]]; then
-      mv "$PLUGIN_OUT_DIR/${APP_EXECUTABLE}.exe" "$PLUGIN_OUT_DIR/${ENTRYPOINT_NAME}.exe"
-      APP_EXECUTABLE="$ENTRYPOINT_NAME"
-    fi
-  else
-    if [[ -f "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" && "$APP_EXECUTABLE" != "$ENTRYPOINT_NAME" ]]; then
-      mv "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME"
-      APP_EXECUTABLE="$ENTRYPOINT_NAME"
-    fi
-
-    chmod +x "$PLUGIN_OUT_DIR/$APP_EXECUTABLE" || true
-    chmod +x "$PLUGIN_OUT_DIR/$ENTRYPOINT_NAME" || true
-    find "$PLUGIN_OUT_DIR" -type f -name "*.so" -exec chmod +x {} \; || true
-  fi
 
   MANIFEST_OUT="$MANIFEST_OUT_DIR/$PLUGIN_ID.json"
   cp "$MANIFEST_PATH" "$MANIFEST_OUT"
@@ -237,11 +150,9 @@ for TARGET in $TARGETS; do
 
     if [[ "$SIGN_MANIFEST_IN_PLACE" == "1" ]]; then
       cp "$MANIFEST_OUT" "$MANIFEST_PATH"
-      echo "Signed source manifest in-place: $MANIFEST_PATH"
     fi
   fi
 
   ( cd "$PACKAGE_ROOT" && zip -r "../${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip" . ) >/dev/null
-
   echo "Packaged ASP.NET plugin: $PACK_DIR/${PLUGIN_ID}_${PLUGIN_VERSION}_${TARGET}.zip"
 done

@@ -2,6 +2,12 @@ using System.Text.RegularExpressions;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Coordinates repository persistence, catalog refresh, and release selection operations.
+/// </summary>
+/// <param name="store">The repository store.</param>
+/// <param name="catalogClient">The repository HTTP client.</param>
+/// <param name="logger">The logger used for repository diagnostics.</param>
 public sealed class PluginRepositoryService(
     PluginRepositoryStore store,
     PluginRepositoryCatalogClient catalogClient,
@@ -13,11 +19,22 @@ public sealed class PluginRepositoryService(
     private readonly PluginRepositoryCatalogClient _catalogClient = catalogClient;
     private readonly ILogger<PluginRepositoryService> _logger = logger;
 
+    /// <summary>
+    /// Lists the configured plugin repositories.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The configured repositories.</returns>
     public Task<IReadOnlyList<PluginRepositoryRecord>> ListRepositoriesAsync(CancellationToken cancellationToken)
     {
         return _store.ListAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Adds or updates a configured plugin repository and refreshes its catalog.
+    /// </summary>
+    /// <param name="request">The repository creation request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The persisted repository record.</returns>
     public async Task<PluginRepositoryRecord> AddRepositoryAsync(
         AddPluginRepositoryRequest request,
         CancellationToken cancellationToken)
@@ -62,11 +79,24 @@ public sealed class PluginRepositoryService(
         return updated;
     }
 
+    /// <summary>
+    /// Removes a configured repository.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns><see langword="true"/> when the repository was removed; otherwise, <see langword="false"/>.</returns>
     public async Task<bool> RemoveRepositoryAsync(string repositoryId, CancellationToken cancellationToken)
     {
         return await _store.RemoveAsync(NormalizeRepositoryId(repositoryId, null, null), cancellationToken);
     }
 
+    /// <summary>
+    /// Gets a repository catalog snapshot, optionally refreshing it first.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="refresh">Whether the catalog should be refreshed.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The repository catalog snapshot.</returns>
     public async Task<PluginRepositoryCatalogSnapshot> GetRepositoryCatalogSnapshotAsync(
         string repositoryId,
         bool refresh,
@@ -91,6 +121,13 @@ public sealed class PluginRepositoryService(
         return await RefreshCatalogAsync(repository, cancellationToken);
     }
 
+    /// <summary>
+    /// Gets the flattened plugin list for a repository, optionally refreshing the catalog first.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="refresh">Whether the catalog should be refreshed.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The repository plugin response.</returns>
     public async Task<RepositoryPluginsResponse> GetRepositoryPluginsAsync(
         string repositoryId,
         bool refresh,
@@ -106,6 +143,12 @@ public sealed class PluginRepositoryService(
         return new RepositoryPluginsResponse(snapshot.Repository, plugins, snapshot.Refreshed, snapshot.RetrievedAtUtc);
     }
 
+    /// <summary>
+    /// Gets the flattened plugin list across all configured repositories.
+    /// </summary>
+    /// <param name="refresh">Whether each repository catalog should be refreshed.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The combined plugin list.</returns>
     public async Task<IReadOnlyList<PluginRepositoryPluginView>> GetAllRepositoryPluginsAsync(
         bool refresh,
         CancellationToken cancellationToken)
@@ -135,6 +178,15 @@ public sealed class PluginRepositoryService(
             .ToList();
     }
 
+    /// <summary>
+    /// Resolves a plugin release from a repository catalog.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier.</param>
+    /// <param name="pluginId">The plugin identifier.</param>
+    /// <param name="version">The optional version, or <see langword="null"/> for the latest release.</param>
+    /// <param name="refreshCatalog">Whether the catalog should be refreshed first.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The selected repository plugin release.</returns>
     public async Task<PluginRepositorySelectionResult> ResolvePluginReleaseAsync(
         string repositoryId,
         string pluginId,
