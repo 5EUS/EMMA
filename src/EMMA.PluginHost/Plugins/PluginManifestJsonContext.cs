@@ -23,6 +23,7 @@ namespace EMMA.PluginHost.Plugins;
 [JsonSerializable(typeof(PluginManifestSearchLandingAction))]
 [JsonSerializable(typeof(PluginManifestSearchFilter))]
 [JsonSerializable(typeof(PluginManifestSearchFilterRange))]
+[JsonSerializable(typeof(PluginManifestSearchLookup))]
 [JsonSerializable(typeof(PluginManifestSearchFilterOption))]
 [JsonSerializable(typeof(PluginManifestSearchQueryOptions))]
 [JsonSerializable(typeof(PluginManifestSearchQueryAddition))]

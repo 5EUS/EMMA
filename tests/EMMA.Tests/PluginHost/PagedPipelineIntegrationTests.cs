@@ -217,6 +217,36 @@ public sealed class PagedPipelineIntegrationTests
         }
     }
 
+    private sealed class MockPluginControlService : PluginControl.PluginControlBase
+    {
+        public override Task<HealthResponse> GetHealth(HealthRequest request, ServerCallContext context)
+        {
+            return Task.FromResult(new HealthResponse
+            {
+                Status = "ok",
+                Version = "1.0.0",
+                Message = "mock"
+            });
+        }
+
+        public override Task<CapabilitiesResponse> GetCapabilities(CapabilitiesRequest request, ServerCallContext context)
+        {
+            var response = new CapabilitiesResponse
+            {
+                Budgets = new CapabilityBudgets
+                {
+                    CpuBudgetMs = 250,
+                    MemoryMb = 128
+                },
+                Permissions = new CapabilityPermissions()
+            };
+            response.Capabilities.Add("health");
+            response.Capabilities.Add("capabilities");
+            response.Permissions.Paths.Add("/response");
+            return Task.FromResult(response);
+        }
+    }
+
     private static WebApplication BuildPluginServer(CallCounters counters)
     {
         var builder = WebApplication.CreateBuilder();
@@ -230,10 +260,12 @@ public sealed class PagedPipelineIntegrationTests
 
         builder.Services.AddGrpc();
         builder.Services.AddSingleton(counters);
+        builder.Services.AddSingleton<MockPluginControlService>();
         builder.Services.AddSingleton<CountingSearchProvider>();
         builder.Services.AddSingleton<CountingPageProvider>();
 
         var app = builder.Build();
+        app.MapGrpcService<MockPluginControlService>();
         app.MapGrpcService<CountingSearchProvider>();
         app.MapGrpcService<CountingPageProvider>();
 

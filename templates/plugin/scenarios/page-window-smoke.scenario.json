@@ -1,0 +1,23 @@
+{
+  "name": "page-window-smoke",
+  "displayName": "Page Window Smoke",
+  "description": "Verifies that a freshly scaffolded plugin can execute a search without errors before chapter and page-window logic is implemented.",
+  "defaultQuery": "template",
+  "queryLabel": "Paged query",
+  "steps": [
+    {
+      "op": "search",
+      "query": "$query",
+      "save": "results"
+    },
+    {
+      "op": "requireCount",
+      "from": "$results",
+      "max": 0
+    },
+    {
+      "op": "log",
+      "message": "Template scaffold returned no results, which is expected until chapter and page-window fetching are implemented."
+    }
+  ]
+}

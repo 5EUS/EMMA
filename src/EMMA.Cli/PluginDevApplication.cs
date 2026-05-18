@@ -214,6 +214,26 @@ public sealed class PluginDevApplication
         return result;
     }
 
+    public async Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        var session = RequireSession();
+        RecordInfo($"Video streams requested for media '{mediaId}'.");
+        var result = await RunWithRuntimeLogsAsync(session, adapter => adapter.GetVideoStreamsAsync(mediaId, cancellationToken));
+        RecordInfo($"VideoStreams('{mediaId}') returned {result.Count} item(s).");
+        return result;
+    }
+
+    public async Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+    {
+        var session = RequireSession();
+        RecordInfo($"Video segment requested for media '{mediaId}', stream '{streamId}', sequence {sequence}.");
+        var result = await RunWithRuntimeLogsAsync(session, adapter => adapter.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken));
+        RecordInfo(result is null
+            ? $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned no payload."
+            : $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned {result.SizeBytes} byte(s) as '{result.ContentType}'.");
+        return result;
+    }
+
     public async Task<string> BuildAsync(CancellationToken cancellationToken)
     {
         var session = RequireSession();
@@ -225,8 +245,8 @@ public sealed class PluginDevApplication
         {
             var output = await session.BuildService.BuildAsync(session, cancellationToken);
             var syncMessage = session.BuildService.SyncBuildArtifacts(session);
-            RecordInfo($"Build completed using plan '{plan.Name}'.");
             RecordInfo(output);
+            RecordInfo($"Build completed using plan '{plan.Name}'.");
             if (!string.IsNullOrWhiteSpace(syncMessage))
             {
                 RecordInfo(syncMessage);
@@ -411,13 +431,19 @@ public sealed class PluginDevApplication
                     var buildOutput = await session.BuildService.BuildAsync(session, CancellationToken.None);
                     var syncMessage = session.BuildService.SyncBuildArtifacts(session);
                     RememberWatchBuildArtifactPath(plan.ArtifactPath ?? session.Profile.ArtifactPath);
-                    buildMessage = string.IsNullOrWhiteSpace(buildOutput)
-                        ? $"Watch build completed using plan '{plan.Name}'."
-                        : $"Watch build completed using plan '{plan.Name}'.\n{buildOutput}";
+                    var buildParts = new List<string>(3);
+                    if (!string.IsNullOrWhiteSpace(buildOutput))
+                    {
+                        buildParts.Add(buildOutput);
+                    }
+
+                    buildParts.Add($"Watch build completed using plan '{plan.Name}'.");
                     if (!string.IsNullOrWhiteSpace(syncMessage))
                     {
-                        buildMessage = $"{buildMessage}\n{syncMessage}";
+                        buildParts.Add(syncMessage);
                     }
+
+                    buildMessage = string.Join("\n", buildParts);
                     RecordInfo(buildMessage);
                 }
             }

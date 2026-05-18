@@ -104,8 +104,10 @@ public interface IPluginDevRuntimeLogSource
     IReadOnlyList<PluginDevRuntimeLogLine> DrainRuntimeLogs();
 }
 
-public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPagedMediaApi api) : IPluginDevRuntimeAdapter
+public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPagedMediaApi api, Uri hostUri, string? authToken) : IPluginDevRuntimeAdapter
 {
+    private const string HostAuthHeaderName = "x-emma-plugin-host-auth";
+
     public string Name => "host-bridge";
     public bool SupportsReload => false;
     public bool SupportsPageAsset => true;
@@ -134,8 +136,17 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
             null)).ToArray();
     }
 
-    public Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
-        => Task.FromException<IReadOnlyList<SearchItem>>(new NotSupportedException("Host-bridge runtime does not expose search metadata enrichment yet."));
+    public async Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(IReadOnlyList<SearchItem> items, CancellationToken cancellationToken)
+    {
+        var payload = new EnrichSearchItemsRequest(items);
+
+        using var httpClient = CreateAuthorizedHttpClient();
+        using var response = await httpClient.PostAsJsonAsync("/dev/search/enrich", payload, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var enriched = await response.Content.ReadFromJsonAsync(PluginDevJsonContexts.Runtime.SearchItemArray, cancellationToken);
+        return enriched ?? [];
+    }
 
     public async Task<IReadOnlyList<ChapterItem>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken)
     {
@@ -177,11 +188,24 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
         return pagesResult.Pages.Select(static page => new PageItem(page.PageId, page.Index, page.ContentUri.ToString())).ToArray();
     }
 
-    public Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
-        => Task.FromException<IReadOnlyList<PluginDevVideoStream>>(new NotSupportedException("Host-bridge runtime does not expose video stream inspection yet."));
+    public async Task<IReadOnlyList<PluginDevVideoStream>> GetVideoStreamsAsync(string mediaId, CancellationToken cancellationToken)
+    {
+        using var httpClient = CreateAuthorizedHttpClient();
+        using var response = await httpClient.PostAsJsonAsync("/dev/video/streams", new VideoStreamsRequest(mediaId), cancellationToken);
+        response.EnsureSuccessStatusCode();
 
-    public Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
-        => Task.FromException<PluginDevVideoSegment?>(new NotSupportedException("Host-bridge runtime does not expose video segment inspection yet."));
+        var streams = await response.Content.ReadFromJsonAsync(PluginDevJsonContexts.Runtime.PluginDevVideoStreamArray, cancellationToken);
+        return streams ?? [];
+    }
+
+    public async Task<PluginDevVideoSegment?> GetVideoSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken)
+    {
+        using var httpClient = CreateAuthorizedHttpClient();
+        using var response = await httpClient.PostAsJsonAsync("/dev/video/segment", new VideoSegmentRequest(mediaId, streamId, sequence), cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        return await response.Content.ReadFromJsonAsync(PluginDevJsonContexts.Runtime.PluginDevVideoSegment, cancellationToken);
+    }
 
     public async Task<byte[]?> GetPageAssetAsync(string mediaId, string chapterId, CancellationToken cancellationToken)
     {
@@ -205,6 +229,25 @@ public sealed class HostBridgeRuntimeAdapter(EmbeddedRuntime runtime, EmbeddedPa
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult("Host-bridge runtime has no explicit reload path yet.");
     }
+
+    private HttpClient CreateAuthorizedHttpClient()
+    {
+        var httpClient = new HttpClient
+        {
+            BaseAddress = hostUri
+        };
+
+        if (!string.IsNullOrWhiteSpace(authToken))
+        {
+            httpClient.DefaultRequestHeaders.TryAddWithoutValidation(HostAuthHeaderName, authToken);
+        }
+
+        return httpClient;
+    }
+
+    private sealed record EnrichSearchItemsRequest(IReadOnlyList<SearchItem> Items);
+    private sealed record VideoStreamsRequest(string MediaId);
+    private sealed record VideoSegmentRequest(string MediaId, string StreamId, int Sequence);
 }
 
 public sealed class UnsupportedRuntimeAdapter(string name, string reason) : IPluginDevRuntimeAdapter
@@ -316,8 +359,12 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
     private const string HostAuthHeaderName = "x-emma-plugin-host-auth";
     private const string CorrelationIdHeaderName = "x-correlation-id";
     private const string EnrichSearchItemsPath = "/dev/search/enrich";
+    private static readonly TimeSpan EntrypointResolveTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan EntrypointResolveRetryDelay = TimeSpan.FromMilliseconds(150);
 
     private readonly string _entryPointPath;
+    private readonly string _entryPointFileName;
+    private readonly string _entryPointDirectory;
     private readonly Uri _hostUri;
     private readonly PluginRuntimeTarget _target;
     private readonly PluginDevLoggingOptions _logging;
@@ -334,6 +381,8 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
         PluginDevLoggingOptions logging)
     {
         _entryPointPath = entryPointPath;
+        _entryPointFileName = Path.GetFileName(entryPointPath);
+        _entryPointDirectory = Path.GetDirectoryName(entryPointPath) ?? Environment.CurrentDirectory;
         _hostUri = hostUri;
         _target = target;
         _logging = logging;
@@ -567,7 +616,8 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
 
     private void StartProcess()
     {
-        if (!File.Exists(_entryPointPath))
+        var resolvedEntryPointPath = WaitForCurrentEntrypointPath();
+        if (string.IsNullOrWhiteSpace(resolvedEntryPointPath) || !File.Exists(resolvedEntryPointPath))
         {
             throw new InvalidOperationException($"Native runtime entrypoint was not found: {_entryPointPath}");
         }
@@ -578,8 +628,8 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
         var port = _hostUri.Port.ToString(CultureInfo.InvariantCulture);
         var startInfo = new ProcessStartInfo
         {
-            FileName = _entryPointPath,
-            WorkingDirectory = Path.GetDirectoryName(_entryPointPath) ?? Environment.CurrentDirectory,
+            FileName = resolvedEntryPointPath,
+            WorkingDirectory = Path.GetDirectoryName(resolvedEntryPointPath) ?? _entryPointDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
@@ -624,12 +674,57 @@ public sealed class NativeProcessRuntimeAdapter : IPluginDevRuntimeAdapter, IPlu
 
         if (!process.Start())
         {
-            throw new InvalidOperationException($"Failed to start native runtime '{_entryPointPath}'.");
+            throw new InvalidOperationException($"Failed to start native runtime '{resolvedEntryPointPath}'.");
         }
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         _process = process;
+    }
+
+    private string? WaitForCurrentEntrypointPath()
+    {
+        var deadlineUtc = DateTime.UtcNow + EntrypointResolveTimeout;
+        string? resolvedEntryPointPath;
+        do
+        {
+            resolvedEntryPointPath = ResolveCurrentEntrypointPath();
+            if (!string.IsNullOrWhiteSpace(resolvedEntryPointPath) && File.Exists(resolvedEntryPointPath))
+            {
+                return resolvedEntryPointPath;
+            }
+
+            Thread.Sleep(EntrypointResolveRetryDelay);
+        }
+        while (DateTime.UtcNow < deadlineUtc);
+
+        return ResolveCurrentEntrypointPath();
+    }
+
+    private string? ResolveCurrentEntrypointPath()
+    {
+        if (File.Exists(_entryPointPath))
+        {
+            return _entryPointPath;
+        }
+
+        if (!Directory.Exists(_entryPointDirectory))
+        {
+            return null;
+        }
+
+        var directCandidate = Path.Combine(_entryPointDirectory, _entryPointFileName);
+        if (File.Exists(directCandidate))
+        {
+            return directCandidate;
+        }
+
+        var discoveredCandidate = Directory.EnumerateFiles(_entryPointDirectory, _entryPointFileName, SearchOption.AllDirectories)
+            .OrderByDescending(static file => File.GetLastWriteTimeUtc(file))
+            .ThenBy(static file => file, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+
+        return discoveredCandidate;
     }
 
     private async Task WaitForPortAsync(CancellationToken cancellationToken)
@@ -1154,13 +1249,92 @@ public sealed class PluginDevBuildService
 {
     public PluginDevBuildPlan? GetBuildPlan(PluginDevSession session)
     {
-        return session.Profile.RuntimeTarget switch
+        var plan = session.Profile.RuntimeTarget switch
         {
             PluginRuntimeTarget.Wasm => CreateWasmBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Wasm), session.Profile.WasiSdkPath),
             PluginRuntimeTarget.Linux => CreateNativeBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Linux), PluginRuntimeTarget.Linux),
             PluginRuntimeTarget.Windows => CreateNativeBuildPlan(session.Discovery.RootDirectory, ResolveProjectPathForTarget(session, PluginRuntimeTarget.Windows), PluginRuntimeTarget.Windows),
             _ => null
         };
+
+        if (plan is null)
+        {
+            return null;
+        }
+
+        if (OperatingSystem.IsMacOS() && session.Profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
+        {
+            return CreateMacWasmDockerBuildPlan(session, plan) ?? plan;
+        }
+
+        return plan;
+    }
+
+    private static PluginDevBuildPlan? CreateMacWasmDockerBuildPlan(PluginDevSession session, PluginDevBuildPlan fallbackPlan)
+    {
+        var rootDirectory = session.Discovery.RootDirectory;
+        var scriptPath = Path.Combine(rootDirectory, "scripts", "build-pack-plugin-docker.sh");
+        if (!File.Exists(scriptPath))
+        {
+            return null;
+        }
+
+        var manifestPath = session.Discovery.ManifestPath;
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        var command = BuildMacDockerBuildCommand(session, scriptPath, manifestPath);
+        return new PluginDevBuildPlan(
+            "wasm-build-docker",
+            rootDirectory,
+            "bash",
+            ["-lc", command],
+            fallbackPlan.ArtifactPath,
+            "Normalized WASM Docker build plan selected automatically on macOS.");
+    }
+
+    private static string BuildMacDockerBuildCommand(PluginDevSession session, string scriptPath, string manifestPath)
+    {
+        var envAssignments = new List<string>();
+
+        var dockerImage = Environment.GetEnvironmentVariable("EMMA_DOCKER_IMAGE");
+        if (!string.IsNullOrWhiteSpace(dockerImage))
+        {
+            envAssignments.Add($"DOCKER_IMAGE={PluginDevProcessRunner.QuoteForShell(dockerImage)}");
+        }
+
+        var dockerPlatform = Environment.GetEnvironmentVariable("EMMA_DOCKER_PLATFORM");
+        if (!string.IsNullOrWhiteSpace(dockerPlatform))
+        {
+            envAssignments.Add($"DOCKER_PLATFORM={PluginDevProcessRunner.QuoteForShell(dockerPlatform)}");
+        }
+
+        var dockerTargets = Environment.GetEnvironmentVariable("EMMA_DOCKER_TARGETS");
+        if (string.IsNullOrWhiteSpace(dockerTargets))
+        {
+            dockerTargets = "wasm";
+        }
+
+        envAssignments.Add($"TARGETS={PluginDevProcessRunner.QuoteForShell(dockerTargets)}");
+
+        var wasiSdkHostPath = Environment.GetEnvironmentVariable("EMMA_WASI_SDK_HOST_PATH");
+        if (string.IsNullOrWhiteSpace(wasiSdkHostPath))
+        {
+            wasiSdkHostPath = session.Profile.WasiSdkPath;
+        }
+
+        if (!string.IsNullOrWhiteSpace(wasiSdkHostPath))
+        {
+            envAssignments.Add($"WASI_SDK_HOST_PATH={PluginDevProcessRunner.QuoteForShell(wasiSdkHostPath)}");
+        }
+
+        var envPrefix = envAssignments.Count == 0
+            ? string.Empty
+            : string.Join(" ", envAssignments) + " ";
+
+        return $"{envPrefix}{PluginDevProcessRunner.QuoteForShell(scriptPath)} {PluginDevProcessRunner.QuoteForShell(manifestPath)}";
     }
 
     private static PluginDevBuildPlan? CreateWasmBuildPlan(string rootDirectory, string? projectPath, string? wasiSdkPath)
@@ -1186,7 +1360,7 @@ public sealed class PluginDevBuildService
             "bash",
             [
                 "-lc",
-                $"set -euo pipefail; rm -rf {quotedProjectDirectory}/bin {quotedProjectDirectory}/obj {quotedPublishDirectory}; mkdir -p {quotedPublishDirectory}; restore_log={quotedPublishDirectory}/restore.log; if ! dotnet restore {quotedProjectPath} --no-cache --force-evaluate --runtime wasi-wasm >\"$restore_log\" 2>&1; then cat \"$restore_log\"; exit 1; fi; publish_none_log={quotedPublishDirectory}/publish-nativecodegen-none.log; if ! {wasiSdkPrefix} dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=none -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -o {quotedPublishDirectory} 2>&1 | tee \"$publish_none_log\"; then if grep -q 'native/.*\\.wasm\" because it was not found' \"$publish_none_log\"; then echo 'WASM publish produced no native artifact with NativeCodeGen=none; retrying with NativeCodeGen=llvm...'; {wasiSdkPrefix} dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=llvm -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -o {quotedPublishDirectory}; else cat \"$publish_none_log\"; exit 1; fi; fi"
+                $"set -euo pipefail; rm -rf {quotedProjectDirectory}/bin {quotedProjectDirectory}/obj {quotedPublishDirectory}; mkdir -p {quotedPublishDirectory}; restore_log={quotedPublishDirectory}/restore.log; if ! dotnet restore {quotedProjectPath} --no-cache --force-evaluate --runtime wasi-wasm >\"$restore_log\" 2>&1; then cat \"$restore_log\"; exit 1; fi; {wasiSdkPrefix} dotnet publish {quotedProjectPath} -c Release -r wasi-wasm --self-contained true -p:PublishAot=false -p:NativeCodeGen=llvm -p:DebugType=None -p:DebugSymbols=false -p:WasmSingleFileBundle=true -o {quotedPublishDirectory}"
             ],
             publishDirectory,
             "Normalized WASM publish plan for CLI-driven plugin development.");
@@ -1259,10 +1433,13 @@ public sealed class PluginDevBuildService
         var result = await PluginDevProcessRunner.RunAsync(plan.WorkingDirectory, plan.Command, plan.Arguments, cancellationToken);
         if (result.ExitCode != 0)
         {
+            var userFacingOutput = PluginDevBuildException.FormatProcessOutput(result);
+            var detailedOutput = PluginDevBuildException.FormatDetailedProcessOutput(result);
             throw new PluginDevBuildException(
                 plan.Name,
                 result.ExitCode,
-                PluginDevBuildException.FormatProcessOutput(result));
+                userFacingOutput,
+                detailedOutput);
         }
 
         return string.IsNullOrWhiteSpace(result.StandardOutput)
@@ -1288,6 +1465,39 @@ public sealed class PluginDevBuildService
         var sourcePath = Path.GetFullPath(plan.ArtifactPath);
         var destinationPath = sync.DestinationPath
             ?? throw new InvalidOperationException("Cannot sync build outputs because no sync destination path is configured.");
+        destinationPath = Path.GetFullPath(destinationPath);
+
+        var manifestPath = session.Discovery.ManifestPath;
+        var pluginId = TryReadPluginId(manifestPath);
+        var syncMessages = new List<string>();
+
+        var installLayout = ResolveInstalledSyncLayout(destinationPath, session.Profile.RuntimeTarget);
+
+        if (session.Profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
+        {
+            var wasmArtifactPath = ResolveWasmArtifactPath(session)
+                ?? throw new InvalidOperationException("Cannot sync build outputs because no built WASM component artifact could be resolved.");
+
+            var pluginRootPath = installLayout?.PluginRootPath;
+            var artifactDestinationDirectory = installLayout?.ArtifactDirectoryPath ?? destinationPath;
+
+            if (sync.CleanDestination && !string.IsNullOrWhiteSpace(pluginRootPath) && Directory.Exists(pluginRootPath))
+            {
+                Directory.Delete(pluginRootPath, recursive: true);
+            }
+            else if (sync.CleanDestination && Directory.Exists(destinationPath))
+            {
+                Directory.Delete(destinationPath, recursive: true);
+            }
+
+            Directory.CreateDirectory(artifactDestinationDirectory);
+            var artifactDestinationPath = Path.Combine(artifactDestinationDirectory, "plugin.wasm");
+            File.Copy(wasmArtifactPath, artifactDestinationPath, overwrite: true);
+            syncMessages.Add($"Synced WASM artifact '{wasmArtifactPath}' to '{artifactDestinationPath}'.");
+
+            TrySyncManifest(manifestPath, pluginId, installLayout?.ManifestsDirectoryPath, syncMessages);
+            return string.Join("\n", syncMessages);
+        }
 
         if (File.Exists(sourcePath))
         {
@@ -1298,7 +1508,9 @@ public sealed class PluginDevBuildService
             }
 
             File.Copy(sourcePath, destinationPath, overwrite: true);
-            return $"Synced build artifact '{sourcePath}' to '{destinationPath}'.";
+            syncMessages.Add($"Synced build artifact '{sourcePath}' to '{destinationPath}'.");
+            TrySyncManifest(manifestPath, pluginId, installLayout?.ManifestsDirectoryPath, syncMessages);
+            return string.Join("\n", syncMessages);
         }
 
         if (!Directory.Exists(sourcePath))
@@ -1306,13 +1518,17 @@ public sealed class PluginDevBuildService
             throw new InvalidOperationException($"Cannot sync build outputs because the built artifact path does not exist: {sourcePath}");
         }
 
-        if (sync.CleanDestination && Directory.Exists(destinationPath))
+        var directoryDestinationPath = installLayout?.PluginRootPath ?? destinationPath;
+
+        if (sync.CleanDestination && Directory.Exists(directoryDestinationPath))
         {
-            Directory.Delete(destinationPath, recursive: true);
+            Directory.Delete(directoryDestinationPath, recursive: true);
         }
 
-        CopyDirectoryContents(sourcePath, destinationPath);
-        return $"Synced build outputs from '{sourcePath}' to '{destinationPath}'.";
+        CopyDirectoryContents(sourcePath, directoryDestinationPath);
+        syncMessages.Add($"Synced build outputs from '{sourcePath}' to '{directoryDestinationPath}'.");
+        TrySyncManifest(manifestPath, pluginId, installLayout?.ManifestsDirectoryPath, syncMessages);
+        return string.Join("\n", syncMessages);
     }
 
     public PluginDevPackResult PackCurrentProfile(PluginDevSession session)
@@ -1573,6 +1789,75 @@ public sealed class PluginDevBuildService
             File.Copy(file, destinationPath, overwrite: true);
         }
     }
+
+    private static void TrySyncManifest(string? manifestPath, string? pluginId, string? manifestsDirectoryPath, List<string> messages)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath)
+            || string.IsNullOrWhiteSpace(pluginId)
+            || string.IsNullOrWhiteSpace(manifestsDirectoryPath)
+            || !File.Exists(manifestPath))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(manifestsDirectoryPath);
+        var manifestDestinationPath = Path.Combine(manifestsDirectoryPath, pluginId + ".json");
+        File.Copy(manifestPath, manifestDestinationPath, overwrite: true);
+        messages.Add($"Synced manifest '{manifestPath}' to '{manifestDestinationPath}'.");
+    }
+
+    private static string? TryReadPluginId(string? manifestPath)
+    {
+        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+        {
+            return null;
+        }
+
+        using var manifestDocument = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        return manifestDocument.RootElement.TryGetProperty("id", out var idProperty)
+            ? idProperty.GetString()
+            : null;
+    }
+
+    private static PluginDevInstalledSyncLayout? ResolveInstalledSyncLayout(string destinationPath, PluginRuntimeTarget runtimeTarget)
+    {
+        var normalizedDestinationPath = Path.GetFullPath(destinationPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var destinationDirectoryInfo = new DirectoryInfo(normalizedDestinationPath);
+
+        DirectoryInfo? pluginRootDirectory = destinationDirectoryInfo;
+        if (runtimeTarget == PluginRuntimeTarget.Wasm
+            && string.Equals(destinationDirectoryInfo.Name, "wasm", StringComparison.OrdinalIgnoreCase)
+            && destinationDirectoryInfo.Parent is not null)
+        {
+            pluginRootDirectory = destinationDirectoryInfo.Parent;
+        }
+
+        if (pluginRootDirectory?.Parent is null
+            || !string.Equals(pluginRootDirectory.Parent.Name, "plugins", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var pluginsDirectory = pluginRootDirectory.Parent;
+        var emmaRootDirectory = pluginsDirectory.Parent;
+        if (emmaRootDirectory is null)
+        {
+            return null;
+        }
+
+        var manifestsDirectoryPath = Path.Combine(emmaRootDirectory.FullName, "manifests");
+        var artifactDirectoryPath = runtimeTarget == PluginRuntimeTarget.Wasm
+            ? Path.Combine(pluginRootDirectory.FullName, "wasm")
+            : pluginRootDirectory.FullName;
+
+        return new PluginDevInstalledSyncLayout(pluginRootDirectory.FullName, artifactDirectoryPath, manifestsDirectoryPath);
+    }
+
+    private sealed record PluginDevInstalledSyncLayout(
+        string PluginRootPath,
+        string ArtifactDirectoryPath,
+        string ManifestsDirectoryPath);
 }
 
 public static class PluginDevRuntimeLibraryResolver
@@ -1983,161 +2268,161 @@ public sealed class PluginDevScenarioRunner
                 switch (op)
                 {
                     case "search":
-                    {
-                        var searchQuery = ResolveRequiredString(step, "query", variables);
-                        var result = await runtime.SearchAsync(searchQuery, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Search('{searchQuery}') returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var searchQuery = ResolveRequiredString(step, "query", variables);
+                            var result = await runtime.SearchAsync(searchQuery, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Search('{searchQuery}') returned {result.Count} item(s).");
+                            break;
+                        }
                     case "enrich":
-                    {
-                        var input = ResolveRequiredObject(step, "from", variables);
-                        var inputItems = CoerceSearchItems(input);
-                        var result = await runtime.EnrichSearchItemsAsync(inputItems, cancellationToken);
-                        object? savedValue = input is SearchItem ? result.FirstOrDefault() : result;
-                        SaveValue(variables, step.Save, savedValue);
-                        messages.Add($"Enrich resolved {result.Count} item(s) from '{ResolveRequiredString(step, "from", variables)}'.");
-                        break;
-                    }
+                        {
+                            var input = ResolveRequiredObject(step, "from", variables);
+                            var inputItems = CoerceSearchItems(input);
+                            var result = await runtime.EnrichSearchItemsAsync(inputItems, cancellationToken);
+                            object? savedValue = input is SearchItem ? result.FirstOrDefault() : result;
+                            SaveValue(variables, step.Save, savedValue);
+                            messages.Add($"Enrich resolved {result.Count} item(s) from '{ResolveRequiredString(step, "from", variables)}'.");
+                            break;
+                        }
                     case "chapters":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var result = await runtime.GetChaptersAsync(mediaId, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Chapters('{mediaId}') returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var result = await runtime.GetChaptersAsync(mediaId, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Chapters('{mediaId}') returned {result.Count} item(s).");
+                            break;
+                        }
                     case "page":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var chapterId = ResolveRequiredString(step, "chapterId", variables);
-                        var index = ResolveRequiredInt(step, "index", variables);
-                        var result = await runtime.GetPageAsync(mediaId, chapterId, index, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add(result is null
-                            ? $"Page('{mediaId}', '{chapterId}', {index}) returned no page."
-                            : $"Page('{mediaId}', '{chapterId}', {index}) resolved '{result.contentUri}'.");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var chapterId = ResolveRequiredString(step, "chapterId", variables);
+                            var index = ResolveRequiredInt(step, "index", variables);
+                            var result = await runtime.GetPageAsync(mediaId, chapterId, index, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add(result is null
+                                ? $"Page('{mediaId}', '{chapterId}', {index}) returned no page."
+                                : $"Page('{mediaId}', '{chapterId}', {index}) resolved '{result.contentUri}'.");
+                            break;
+                        }
                     case "pages":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var chapterId = ResolveRequiredString(step, "chapterId", variables);
-                        var startIndex = ResolveRequiredInt(step, "startIndex", variables);
-                        var count = ResolveRequiredInt(step, "count", variables);
-                        var result = await runtime.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Pages('{mediaId}', '{chapterId}', {startIndex}, {count}) returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var chapterId = ResolveRequiredString(step, "chapterId", variables);
+                            var startIndex = ResolveRequiredInt(step, "startIndex", variables);
+                            var count = ResolveRequiredInt(step, "count", variables);
+                            var result = await runtime.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Pages('{mediaId}', '{chapterId}', {startIndex}, {count}) returned {result.Count} item(s).");
+                            break;
+                        }
                     case "videostreams":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var result = await runtime.GetVideoStreamsAsync(mediaId, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"VideoStreams('{mediaId}') returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var result = await runtime.GetVideoStreamsAsync(mediaId, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"VideoStreams('{mediaId}') returned {result.Count} item(s).");
+                            break;
+                        }
                     case "videosegment":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var streamId = ResolveRequiredString(step, "streamId", variables);
-                        var sequence = ResolveRequiredInt(step, "sequence", variables);
-                        var result = await runtime.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add(result is null
-                            ? $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned no payload."
-                            : $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned {result.SizeBytes} byte(s) as '{result.ContentType}'.");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var streamId = ResolveRequiredString(step, "streamId", variables);
+                            var sequence = ResolveRequiredInt(step, "sequence", variables);
+                            var result = await runtime.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add(result is null
+                                ? $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned no payload."
+                                : $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned {result.SizeBytes} byte(s) as '{result.ContentType}'.");
+                            break;
+                        }
                     case "selectfirst":
-                    {
-                        var collection = ResolveRequiredCollection(step, "from", variables);
-                        if (collection.Count == 0)
                         {
-                            messages.Add($"SelectFirst from '{ResolveRequiredString(step, "from", variables)}' failed because the collection was empty.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            var collection = ResolveRequiredCollection(step, "from", variables);
+                            if (collection.Count == 0)
+                            {
+                                messages.Add($"SelectFirst from '{ResolveRequiredString(step, "from", variables)}' failed because the collection was empty.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        var result = collection[0];
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Selected first item: {StringifyValue(result)}.");
-                        break;
-                    }
+                            var result = collection[0];
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Selected first item: {StringifyValue(result)}.");
+                            break;
+                        }
                     case "selectat":
-                    {
-                        var collection = ResolveRequiredCollection(step, "from", variables);
-                        var index = ResolveRequiredInt(step, "index", variables);
-                        if (index < 0 || index >= collection.Count)
                         {
-                            messages.Add($"SelectAt failed because index {index} is outside the collection range 0..{collection.Count - 1}.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            var collection = ResolveRequiredCollection(step, "from", variables);
+                            var index = ResolveRequiredInt(step, "index", variables);
+                            if (index < 0 || index >= collection.Count)
+                            {
+                                messages.Add($"SelectAt failed because index {index} is outside the collection range 0..{collection.Count - 1}.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        var result = collection[index];
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Selected item at index {index}: {StringifyValue(result)}.");
-                        break;
-                    }
+                            var result = collection[index];
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Selected item at index {index}: {StringifyValue(result)}.");
+                            break;
+                        }
                     case "requirecount":
-                    {
-                        var collection = ResolveRequiredCollection(step, "from", variables);
-                        var min = ResolveOptionalInt(step, "min", variables);
-                        var max = ResolveOptionalInt(step, "max", variables);
-                        if (min is not null && collection.Count < min.Value)
                         {
-                            messages.Add($"RequireCount failed: expected at least {min.Value} item(s), but found {collection.Count}.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            var collection = ResolveRequiredCollection(step, "from", variables);
+                            var min = ResolveOptionalInt(step, "min", variables);
+                            var max = ResolveOptionalInt(step, "max", variables);
+                            if (min is not null && collection.Count < min.Value)
+                            {
+                                messages.Add($"RequireCount failed: expected at least {min.Value} item(s), but found {collection.Count}.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        if (max is not null && collection.Count > max.Value)
-                        {
-                            messages.Add($"RequireCount failed: expected at most {max.Value} item(s), but found {collection.Count}.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            if (max is not null && collection.Count > max.Value)
+                            {
+                                messages.Add($"RequireCount failed: expected at most {max.Value} item(s), but found {collection.Count}.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        messages.Add($"RequireCount passed with {collection.Count} item(s).");
-                        break;
-                    }
+                            messages.Add($"RequireCount passed with {collection.Count} item(s).");
+                            break;
+                        }
                     case "requirenotnull":
-                    {
-                        var value = ResolveRequiredObject(step, "value", variables);
-                        if (value is null)
                         {
-                            var failureMessage = ResolveOptionalString(step, "message", variables) ?? "RequireNotNull failed because the resolved value was null.";
-                            messages.Add(failureMessage);
+                            var value = ResolveRequiredObject(step, "value", variables);
+                            if (value is null)
+                            {
+                                var failureMessage = ResolveOptionalString(step, "message", variables) ?? "RequireNotNull failed because the resolved value was null.";
+                                messages.Add(failureMessage);
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
+
+                            SaveValue(variables, step.Save, value);
+                            messages.Add($"RequireNotNull passed for '{ResolveRequiredString(step, "value", variables)}'.");
+                            break;
+                        }
+                    case "set":
+                        {
+                            var value = ResolveRequiredObject(step, "value", variables);
+                            if (string.IsNullOrWhiteSpace(step.Save))
+                            {
+                                throw new InvalidOperationException("Scenario step 'set' requires a save target.");
+                            }
+
+                            SaveValue(variables, step.Save, value);
+                            messages.Add($"Set '{step.Save}' to {StringifyValue(value)}.");
+                            break;
+                        }
+                    case "log":
+                        {
+                            var message = ResolveRequiredString(step, "message", variables);
+                            messages.Add(message);
+                            break;
+                        }
+                    case "placeholder":
+                        {
+                            var message = ResolveRequiredString(step, "message", variables);
+                            messages.Add(message);
                             return new PluginDevScenarioResult(scenario.Name, false, messages);
                         }
-
-                        SaveValue(variables, step.Save, value);
-                        messages.Add($"RequireNotNull passed for '{ResolveRequiredString(step, "value", variables)}'.");
-                        break;
-                    }
-                    case "set":
-                    {
-                        var value = ResolveRequiredObject(step, "value", variables);
-                        if (string.IsNullOrWhiteSpace(step.Save))
-                        {
-                            throw new InvalidOperationException("Scenario step 'set' requires a save target.");
-                        }
-
-                        SaveValue(variables, step.Save, value);
-                        messages.Add($"Set '{step.Save}' to {StringifyValue(value)}.");
-                        break;
-                    }
-                    case "log":
-                    {
-                        var message = ResolveRequiredString(step, "message", variables);
-                        messages.Add(message);
-                        break;
-                    }
-                    case "placeholder":
-                    {
-                        var message = ResolveRequiredString(step, "message", variables);
-                        messages.Add(message);
-                        return new PluginDevScenarioResult(scenario.Name, false, messages);
-                    }
                     default:
                         throw new InvalidOperationException($"Scenario '{scenario.Name}' uses unsupported op '{step.Op}'.");
                 }
@@ -2531,19 +2816,26 @@ public sealed record PluginDevProcessResult(int ExitCode, string StandardOutput,
 
 public sealed class PluginDevBuildException : InvalidOperationException
 {
-    public PluginDevBuildException(string planName, int exitCode, string formattedOutput)
-        : base($"Build failed using plan '{planName}' with exit code {exitCode}.\n{formattedOutput}")
+    public PluginDevBuildException(string planName, int exitCode, string userFacingOutput, string formattedOutput)
+        : base($"Build failed using plan '{planName}' with exit code {exitCode}.\n{userFacingOutput}")
     {
         PlanName = planName;
         ExitCode = exitCode;
+        UserFacingOutput = userFacingOutput;
         FormattedOutput = formattedOutput;
     }
 
     public string PlanName { get; }
     public int ExitCode { get; }
+    public string UserFacingOutput { get; }
     public string FormattedOutput { get; }
 
     public static string FormatProcessOutput(PluginDevProcessResult result)
+        => BuildRelevantExcerpt(result) is { Length: > 0 } relevantExcerpt
+            ? relevantExcerpt
+            : FormatDetailedProcessOutput(result);
+
+    public static string FormatDetailedProcessOutput(PluginDevProcessResult result)
     {
         var sections = new List<string>();
 
@@ -2557,12 +2849,178 @@ public sealed class PluginDevBuildException : InvalidOperationException
             sections.Add($"stderr:\n{result.StandardError.Trim()}");
         }
 
-        if (sections.Count == 0)
+        return sections.Count == 0
+            ? "The build process did not emit any stdout or stderr output."
+            : string.Join("\n\n", sections);
+    }
+
+    private static string BuildRelevantExcerpt(PluginDevProcessResult result)
+    {
+        var stderrExcerpt = TryBuildRelevantExcerpt("stderr", result.StandardError, out var stderrHasInterestingLines);
+        var stdoutExcerpt = TryBuildRelevantExcerpt("stdout", result.StandardOutput, out var stdoutHasInterestingLines);
+
+        if (stderrHasInterestingLines && !string.IsNullOrWhiteSpace(stderrExcerpt))
         {
-            return "The build process did not emit any stdout or stderr output.";
+            return stderrExcerpt;
         }
 
-        return string.Join("\n\n", sections);
+        if (stdoutHasInterestingLines && !string.IsNullOrWhiteSpace(stdoutExcerpt))
+        {
+            return stdoutExcerpt;
+        }
+
+        if (!string.IsNullOrWhiteSpace(stderrExcerpt))
+        {
+            return stderrExcerpt;
+        }
+
+        return stdoutExcerpt;
+    }
+
+    private static string TryBuildRelevantExcerpt(string label, string? content, out bool hasInterestingLines)
+    {
+        hasInterestingLines = false;
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return string.Empty;
+        }
+
+        var lines = content
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n');
+
+        var exactErrorBlock = FindTrailingExactErrorBlock(lines);
+        if (exactErrorBlock.Length > 0)
+        {
+            hasInterestingLines = true;
+            return string.Join(Environment.NewLine, exactErrorBlock);
+        }
+
+        var lastInterestingIndex = FindLastInterestingLine(lines);
+        if (lastInterestingIndex < 0)
+        {
+            return $"{label}:\n{TakeTailBlock(lines)}";
+        }
+
+        var startIndex = FindBlockStart(lines, lastInterestingIndex);
+        var block = TrimBlock(lines, startIndex, lastInterestingIndex + 1);
+        if (block.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        hasInterestingLines = true;
+        return $"{label}:\n{string.Join(Environment.NewLine, block)}";
+    }
+
+    private static string[] FindTrailingExactErrorBlock(string[] lines)
+    {
+        var block = new List<string>();
+
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var line = lines[index].Trim();
+            if (line.Length == 0)
+            {
+                if (block.Count == 0)
+                {
+                    continue;
+                }
+
+                continue;
+            }
+
+            if (IsExactCompilerErrorLine(line))
+            {
+                block.Add(line);
+                continue;
+            }
+
+            if (block.Count > 0)
+            {
+                break;
+            }
+        }
+
+        block.Reverse();
+        return [.. block];
+    }
+
+    private static bool IsExactCompilerErrorLine(string line)
+    {
+        return line.Contains(": error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("error CS", StringComparison.OrdinalIgnoreCase)
+            || line.Contains(" error CS", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int FindLastInterestingLine(string[] lines)
+    {
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var line = lines[index].Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (IsInterestingBuildFailureLine(line))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool IsInterestingBuildFailureLine(string line)
+    {
+        return line.Contains(": error", StringComparison.OrdinalIgnoreCase)
+            || line.Contains(" error ", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("error:", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("failed", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("exception", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("undefined", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("unable to", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("could not", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("not found", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int FindBlockStart(string[] lines, int endIndex)
+    {
+        var startIndex = Math.Max(0, endIndex - 11);
+        for (var index = endIndex; index >= startIndex; index--)
+        {
+            if (string.IsNullOrWhiteSpace(lines[index]))
+            {
+                return Math.Min(endIndex, index + 1);
+            }
+        }
+
+        return startIndex;
+    }
+
+    private static string[] TrimBlock(string[] lines, int startIndex, int endExclusive)
+    {
+        var block = lines[startIndex..endExclusive]
+            .SkipWhile(string.IsNullOrWhiteSpace)
+            .ToArray();
+
+        var trimmedLength = block.Length;
+        while (trimmedLength > 0 && string.IsNullOrWhiteSpace(block[trimmedLength - 1]))
+        {
+            trimmedLength -= 1;
+        }
+
+        return trimmedLength == block.Length ? block : block[..trimmedLength];
+    }
+
+    private static string TakeTailBlock(string[] lines)
+    {
+        var tail = TrimBlock(lines, Math.Max(0, lines.Length - 12), lines.Length);
+        return tail.Length == 0
+            ? string.Empty
+            : string.Join(Environment.NewLine, tail);
     }
 }
 
@@ -2587,6 +3045,9 @@ public static class PluginDevProcessRunner
         {
             startInfo.ArgumentList.Add(argument);
         }
+
+        startInfo.Environment["DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION"] = "1";
+        startInfo.Environment["DOTNET_CLI_CONTEXT_ANSI_PASS_THRU"] = "true";
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();

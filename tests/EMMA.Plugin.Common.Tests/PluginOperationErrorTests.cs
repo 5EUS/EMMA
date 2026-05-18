@@ -26,4 +26,12 @@ public class PluginOperationErrorTests
         Assert.False(ok);
         Assert.Equal(default, parsed);
     }
+
+    [Fact]
+    public void OperationResult_HelperFactories_UseStablePrefixes()
+    {
+        Assert.Equal("unsupported-operation:search", OperationResult.UnsupportedOperation(" search ").error);
+        Assert.Equal("invalid-arguments:mediaId is required", OperationResult.InvalidArguments(" mediaId is required ").error);
+        Assert.Equal("failed:network down", OperationResult.Failed(" network down ").error);
+    }
 }

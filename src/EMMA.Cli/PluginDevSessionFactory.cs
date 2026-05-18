@@ -23,6 +23,7 @@ public sealed class PluginDevSessionFactory
     private readonly PluginDevDoctor _doctor = new();
     private readonly PluginDevBuildService _buildService = new();
     private readonly PluginDevScenarioRunner _scenarioRunner = new();
+    private readonly PluginDevDesignTimeBuildProfileSync _designTimeBuildProfileSync = new();
 
     public PluginDevSession Create(string workingDirectory, string? requestedProfileName = null)
     {
@@ -56,7 +57,7 @@ public sealed class PluginDevSessionFactory
             metadataCache: new InMemoryCachePort());
 
         var api = new EmbeddedPagedMediaApi(runtime);
-        var runtimeAdapter = CreateRuntimeAdapter(profile, runtime, api, discovery, availableProfiles);
+        var runtimeAdapter = CreateRuntimeAdapter(profile, runtime, api, discovery, availableProfiles, hostAuthToken);
 
         var session = new PluginDevSession(
             workingDirectory,
@@ -75,6 +76,8 @@ public sealed class PluginDevSessionFactory
         session.AddDiagnostic(
             "session.profile.resolved",
             $"Resolved profile '{profile.Name}' for plugin '{profile.PluginId}' using host '{profile.HostUrl}'.");
+
+        TrySyncDesignTimeBuildProfile(session, profile, discovery.RootDirectory);
 
         if (!string.IsNullOrWhiteSpace(profile.ConfigPath))
         {
@@ -124,12 +127,34 @@ public sealed class PluginDevSessionFactory
         return session;
     }
 
+    private void TrySyncDesignTimeBuildProfile(PluginDevSession session, PluginDevProfile profile, string rootDirectory)
+    {
+        try
+        {
+            var result = _designTimeBuildProfileSync.Sync(rootDirectory, profile);
+            session.AddDiagnostic(
+                "session.design_time_profile.synced",
+                $"Saved design-time PluginTransport='{result.PluginTransport}' for profile '{profile.Name}' to '{result.FilePath}'. VS Code linting and IntelliSense will follow that transport after the workspace reloads its project state.",
+                PluginDevDiagnosticSeverity.Info,
+                "profile");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            session.AddDiagnostic(
+                "session.design_time_profile.sync_failed",
+                $"Failed to save the design-time build profile for '{profile.Name}': {ex.Message}",
+                PluginDevDiagnosticSeverity.Warning,
+                "profile");
+        }
+    }
+
     private static IPluginDevRuntimeAdapter CreateRuntimeAdapter(
         PluginDevProfile profile,
         EmbeddedRuntime runtime,
         EmbeddedPagedMediaApi api,
         PluginDevDiscoveryResult discovery,
-        IReadOnlyList<PluginDevProfile> availableProfiles)
+        IReadOnlyList<PluginDevProfile> availableProfiles,
+        string? hostAuthToken)
     {
         if (profile.ExecutionMode == PluginExecutionMode.Direct && profile.RuntimeTarget == PluginRuntimeTarget.Wasm)
         {
@@ -194,7 +219,7 @@ public sealed class PluginDevSessionFactory
                 profile.Logging);
         }
 
-        return new HostBridgeRuntimeAdapter(runtime, api);
+        return new HostBridgeRuntimeAdapter(runtime, api, new Uri(profile.HostUrl, UriKind.Absolute), hostAuthToken);
     }
 
     private static bool IsNativeTargetRunnable(PluginRuntimeTarget target)
@@ -584,33 +609,33 @@ public sealed class PluginDevSessionFactory
         switch (noWarn.Value.ValueKind)
         {
             case JsonValueKind.String:
-            {
-                var value = noWarn.Value.GetString();
-                if (!string.IsNullOrWhiteSpace(value))
                 {
-                    values.Add(value.Trim());
-                }
-
-                break;
-            }
-            case JsonValueKind.Array:
-            {
-                foreach (var item in noWarn.Value.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.String)
-                    {
-                        continue;
-                    }
-
-                    var value = item.GetString();
+                    var value = noWarn.Value.GetString();
                     if (!string.IsNullOrWhiteSpace(value))
                     {
                         values.Add(value.Trim());
                     }
-                }
 
-                break;
-            }
+                    break;
+                }
+            case JsonValueKind.Array:
+                {
+                    foreach (var item in noWarn.Value.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.String)
+                        {
+                            continue;
+                        }
+
+                        var value = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            values.Add(value.Trim());
+                        }
+                    }
+
+                    break;
+                }
         }
 
         return values;

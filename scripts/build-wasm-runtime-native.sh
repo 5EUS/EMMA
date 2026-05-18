@@ -7,6 +7,122 @@ RID="${1:-}"
 OUTPUT_DIR="${2:-}"
 CARGO_PROFILE="${WASM_RUNTIME_CARGO_PROFILE:-release}"
 
+resolve_android_ndk_root() {
+  local candidate=""
+  local sdk_root=""
+
+  for candidate in "${ANDROID_NDK_ROOT:-}" "${ANDROID_NDK_HOME:-}"; do
+    if [[ -n "$candidate" && -d "$candidate/toolchains/llvm/prebuilt" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  for sdk_root in "${ANDROID_SDK_ROOT:-}" "${ANDROID_HOME:-}" "$HOME/Android/Sdk"; do
+    if [[ -z "$sdk_root" || ! -d "$sdk_root/ndk" ]]; then
+      continue
+    fi
+
+    candidate="$(find "$sdk_root/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+    if [[ -n "$candidate" && -d "$candidate/toolchains/llvm/prebuilt" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+resolve_android_ndk_host_tag() {
+  local host_os="$(uname -s 2>/dev/null || echo unknown)"
+  local host_arch="$(uname -m 2>/dev/null || echo unknown)"
+
+  case "$host_os" in
+    Linux)
+      printf '%s\n' "linux-x86_64"
+      ;;
+    Darwin)
+      if [[ "$host_arch" == "arm64" ]]; then
+        printf '%s\n' "darwin-arm64"
+      else
+        printf '%s\n' "darwin-x86_64"
+      fi
+      ;;
+    CYGWIN*|MINGW*|MSYS*)
+      printf '%s\n' "windows-x86_64"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+configure_android_toolchain() {
+  local android_api_level="${WASM_RUNTIME_ANDROID_API_LEVEL:-21}"
+  local ndk_root=""
+  local host_tag=""
+  local toolchain_bin=""
+  local linker_basename=""
+  local linker_path=""
+  local cargo_target_env=""
+  local target_env_suffix=""
+
+  ndk_root="$(resolve_android_ndk_root || true)"
+  if [[ -z "$ndk_root" ]]; then
+    echo "Android runtime builds require an Android NDK installation."
+    echo "Set ANDROID_NDK_ROOT or ANDROID_NDK_HOME, or install the NDK under ANDROID_SDK_ROOT/ndk."
+    exit 1
+  fi
+
+  host_tag="$(resolve_android_ndk_host_tag || true)"
+  if [[ -z "$host_tag" ]]; then
+    echo "Unsupported host OS for Android runtime builds: $(uname -s 2>/dev/null || echo unknown)"
+    exit 1
+  fi
+
+  toolchain_bin="$ndk_root/toolchains/llvm/prebuilt/$host_tag/bin"
+  if [[ ! -d "$toolchain_bin" ]]; then
+    echo "Android NDK toolchain directory not found: $toolchain_bin"
+    exit 1
+  fi
+
+  linker_basename="$TARGET_TRIPLE${android_api_level}-clang"
+  linker_path="$toolchain_bin/$linker_basename"
+  if [[ ! -x "$linker_path" ]]; then
+    echo "Android linker not found or not executable: $linker_path"
+    echo "Set WASM_RUNTIME_ANDROID_API_LEVEL if your NDK only provides a different API level toolchain."
+    exit 1
+  fi
+
+  cargo_target_env="${TARGET_TRIPLE^^}"
+  cargo_target_env="${cargo_target_env//-/_}"
+  target_env_suffix="${TARGET_TRIPLE//-/_}"
+
+  export "CARGO_TARGET_${cargo_target_env}_LINKER=$linker_path"
+  export "CC_${target_env_suffix}=$linker_path"
+  export "CXX_${target_env_suffix}=$toolchain_bin/${TARGET_TRIPLE}${android_api_level}-clang++"
+  export "AR_${target_env_suffix}=$toolchain_bin/llvm-ar"
+
+  echo "Using Android NDK toolchain: $ndk_root"
+  echo "Using Android linker: $linker_path"
+}
+
+ensure_rust_target_installed() {
+  local target_triple="$1"
+
+  if ! command -v rustup >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if rustup target list --installed | grep -Fxq "$target_triple"; then
+    return 0
+  fi
+
+  echo "Rust target '$target_triple' is not installed."
+  echo "Install it with: rustup target add $target_triple"
+  exit 1
+}
+
 if [[ -z "$RID" ]]; then
   echo "Usage: $0 <rid> [output-dir]"
   echo "Example: $0 linux-x64"
@@ -46,6 +162,14 @@ case "$RID" in
     TARGET_TRIPLE="x86_64-apple-ios"
     LIB_FILE="libemma_wasm_runtime.a"
     ;;
+  android-arm64)
+    TARGET_TRIPLE="aarch64-linux-android"
+    LIB_FILE="libemma_wasm_runtime.so"
+    ;;
+  android-x64)
+    TARGET_TRIPLE="x86_64-linux-android"
+    LIB_FILE="libemma_wasm_runtime.so"
+    ;;    
   *)
     echo "Unsupported RID: $RID"
     exit 1
@@ -159,6 +283,13 @@ if [[ "$CARGO_PROFILE" == "release" ]]; then
 else
   PROFILE_ARGS=(--profile "$CARGO_PROFILE")
 fi
+
+case "$RID" in
+  android-arm64|android-x64)
+    configure_android_toolchain
+    ensure_rust_target_installed "$TARGET_TRIPLE"
+    ;;
+esac
 
 if [[ "$BUILD_SUBCOMMAND" == "xwin build" ]]; then
   cargo xwin build \

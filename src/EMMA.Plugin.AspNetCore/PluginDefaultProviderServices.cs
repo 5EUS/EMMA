@@ -6,11 +6,44 @@ using EMMA.Plugin.Common;
 
 namespace EMMA.Plugin.AspNetCore;
 
+/// <summary>
+/// Defines the paged-media runtime operations required by the default gRPC services.
+/// </summary>
 public interface IPluginPagedMediaRuntime
 {
+    /// <summary>
+    /// Searches the upstream source for media that matches the provided query.
+    /// </summary>
+    /// <param name="query">The user query to search for.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>A list of matching media summaries.</returns>
     Task<IReadOnlyList<MediaSummary>> SearchAsync(string query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads the chapter list for a specific media item.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to resolve chapters for.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The chapters exposed by the runtime for the media item.</returns>
     Task<IReadOnlyList<MediaChapter>> GetChaptersAsync(string mediaId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads a single page from a chapter.
+    /// </summary>
+    /// <param name="chapterId">The chapter identifier that owns the page.</param>
+    /// <param name="pageIndex">The zero-based page index to load.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The page when available; otherwise <see langword="null"/>.</returns>
     Task<MediaPage?> GetPageAsync(string chapterId, int pageIndex, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads a range of pages from a chapter.
+    /// </summary>
+    /// <param name="chapterId">The chapter identifier that owns the requested pages.</param>
+    /// <param name="startIndex">The zero-based page index to start from.</param>
+    /// <param name="count">The maximum number of pages to load.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>A page batch and a flag indicating whether the chapter was exhausted.</returns>
     Task<(IReadOnlyList<MediaPage> Pages, bool ReachedEnd)> GetPagesAsync(
         string chapterId,
         int startIndex,
@@ -18,19 +51,68 @@ public interface IPluginPagedMediaRuntime
         CancellationToken cancellationToken);
 }
 
-    public interface IPluginSearchMetadataRuntime
-    {
-        Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
+/// <summary>
+/// Defines search-result metadata enrichment operations.
+/// </summary>
+public interface IPluginSearchMetadataRuntime
+{
+    /// <summary>
+    /// Enriches search results with additional metadata before they are returned to the host.
+    /// </summary>
+    /// <param name="items">The search items to enrich.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The enriched search items.</returns>
+    Task<IReadOnlyList<SearchItem>> EnrichSearchItemsAsync(
         IReadOnlyList<SearchItem> items,
         CancellationToken cancellationToken);
-    }
+}
 
+/// <summary>
+/// Defines lookup-backed search suggestion operations.
+/// </summary>
+public interface IPluginSearchSuggestionsRuntime
+{
+    /// <summary>
+    /// Resolves suggestions for a lookup-backed search control.
+    /// </summary>
+    /// <param name="request">The suggestion request.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The matching suggestions.</returns>
+    Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+        SearchSuggestionRequest request,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Defines the video runtime operations required by the default gRPC services.
+/// </summary>
 public interface IPluginVideoRuntime
 {
+    /// <summary>
+    /// Loads the playable streams for a video media item.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to resolve streams for.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The stream response returned by the runtime.</returns>
     Task<StreamResponse> GetStreamsAsync(string mediaId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads a single stream segment for a video media item.
+    /// </summary>
+    /// <param name="mediaId">The media identifier that owns the segment.</param>
+    /// <param name="streamId">The stream identifier that owns the segment.</param>
+    /// <param name="sequence">The segment sequence number to fetch.</param>
+    /// <param name="cancellationToken">Cancels the in-flight runtime operation.</param>
+    /// <returns>The segment response returned by the runtime.</returns>
     Task<SegmentResponse> GetSegmentAsync(string mediaId, string streamId, int sequence, CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Implements the default search gRPC service by delegating requests to a paged-media runtime.
+/// </summary>
+/// <param name="runtime">The runtime that executes search operations.</param>
+/// <param name="metrics">The metrics recorder used for RPC instrumentation.</param>
+/// <param name="logger">The logger used for request diagnostics.</param>
 public sealed class PluginDefaultSearchProviderService<TRuntime>(
     TRuntime runtime,
     IPluginSdkMetrics metrics,
@@ -42,6 +124,12 @@ public sealed class PluginDefaultSearchProviderService<TRuntime>(
     private readonly IPluginSdkMetrics _metrics = metrics;
     private readonly ILogger<PluginDefaultSearchProviderService<TRuntime>> _logger = logger;
 
+    /// <summary>
+    /// Handles a gRPC search request by delegating to the runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming search request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A search response containing any matching results.</returns>
     public override async Task<SearchResponse> Search(SearchRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -80,8 +168,169 @@ public sealed class PluginDefaultSearchProviderService<TRuntime>(
                     $"Search request failed: {ex.GetType().Name}: {ex.Message}"));
         }
     }
+
+    /// <summary>
+    /// Handles a gRPC search-enrichment request by delegating to the runtime when supported.
+    /// </summary>
+    /// <param name="request">The incoming enrichment request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing enriched search items.</returns>
+    public override async Task<EnrichSearchItemsResponse> EnrichSearchItems(EnrichSearchItemsRequest request, ServerCallContext context)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var correlationId = PluginRequestContext.GetCorrelationId(context, request.Context?.CorrelationId);
+
+        try
+        {
+            var response = new EnrichSearchItemsResponse();
+            var items = request.Items.Select(MapContractSearchItem).ToArray();
+
+            IReadOnlyList<SearchItem> enriched = items;
+            if (_runtime is IPluginSearchMetadataRuntime metadataRuntime)
+            {
+                enriched = await metadataRuntime.EnrichSearchItemsAsync(items, context.CancellationToken);
+            }
+
+            response.Results.AddRange(enriched.Select(MapRuntimeSearchItem));
+            _metrics.RecordRpc("search", "EnrichSearchItems", EmmaTelemetry.Outcomes.Ok, stopwatch.Elapsed.TotalMilliseconds);
+            return response;
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            _metrics.RecordRpc("search", "EnrichSearchItems", EmmaTelemetry.Outcomes.Cancelled, stopwatch.Elapsed.TotalMilliseconds);
+            throw new RpcException(new Status(StatusCode.Cancelled, "Search enrichment request was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            _metrics.RecordRpc("search", "EnrichSearchItems", EmmaTelemetry.Outcomes.Error, stopwatch.Elapsed.TotalMilliseconds);
+            _logger.LogError(ex, "Search enrichment request {CorrelationId} failed.", correlationId);
+            throw new RpcException(
+                new Status(
+                    StatusCode.Internal,
+                    $"Search enrichment failed: {ex.GetType().Name}: {ex.Message}"));
+        }
+    }
+
+    /// <summary>
+    /// Handles a gRPC search-suggestions request by delegating to the runtime when supported.
+    /// </summary>
+    public override async Task<SearchSuggestionsResponse> SearchSuggestions(SearchSuggestionsRequest request, ServerCallContext context)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var correlationId = PluginRequestContext.GetCorrelationId(context, request.Context?.CorrelationId);
+
+        try
+        {
+            if (_runtime is not IPluginSearchSuggestionsRuntime suggestionsRuntime)
+            {
+                return new SearchSuggestionsResponse();
+            }
+
+            var suggestionRequest = new EMMA.Plugin.Common.SearchSuggestionRequest(
+                request.ControlId ?? string.Empty,
+                request.Query ?? string.Empty,
+                request.Search is null ? null : MapContractSearchQuery(request.Search),
+                request.Limit > 0 ? request.Limit : null);
+
+            var suggestions = await suggestionsRuntime.GetSearchSuggestionsAsync(
+                suggestionRequest,
+                context.CancellationToken);
+
+            var response = new SearchSuggestionsResponse();
+            response.Suggestions.AddRange(suggestions.Select(static suggestion => new SearchSuggestion
+            {
+                Value = suggestion.Value,
+                Label = suggestion.Label,
+                Description = suggestion.Description ?? string.Empty
+            }));
+
+            _metrics.RecordRpc("search", "SearchSuggestions", EmmaTelemetry.Outcomes.Ok, stopwatch.Elapsed.TotalMilliseconds);
+            return response;
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            _metrics.RecordRpc("search", "SearchSuggestions", EmmaTelemetry.Outcomes.Cancelled, stopwatch.Elapsed.TotalMilliseconds);
+            throw new RpcException(new Status(StatusCode.Cancelled, "Search suggestions request was cancelled."));
+        }
+        catch (Exception ex)
+        {
+            _metrics.RecordRpc("search", "SearchSuggestions", EmmaTelemetry.Outcomes.Error, stopwatch.Elapsed.TotalMilliseconds);
+            _logger.LogError(ex, "Search suggestions request {CorrelationId} failed for control={ControlId}.", correlationId, request.ControlId);
+            throw new RpcException(
+                new Status(
+                    StatusCode.Internal,
+                    $"Search suggestions failed: {ex.GetType().Name}: {ex.Message}"));
+        }
+    }
+
+    private static SearchItem MapContractSearchItem(MediaSummary item)
+    {
+        var metadata = item.Metadata.Count == 0
+            ? null
+            : item.Metadata.Select(static entry => new MetadataItem(entry.Key, entry.Value)).ToArray();
+
+        return new SearchItem(
+            item.Id,
+            item.Source,
+            item.Title,
+            item.MediaType,
+            string.IsNullOrWhiteSpace(item.ThumbnailUrl) ? null : item.ThumbnailUrl,
+            string.IsNullOrWhiteSpace(item.Description) ? null : item.Description,
+            metadata);
+    }
+
+    private static MediaSummary MapRuntimeSearchItem(SearchItem item)
+    {
+        var metadata = item.metadata?.Count > 0
+            ? item.metadata.Select(static entry => new KeyValue { Key = entry.key, Value = entry.value }).ToArray()
+            : [];
+
+        var summary = new MediaSummary
+        {
+            Id = item.id,
+            Source = item.source,
+            Title = item.title,
+            MediaType = item.mediaType,
+            ThumbnailUrl = item.thumbnailUrl ?? string.Empty,
+            Description = item.description ?? string.Empty
+        };
+        summary.Metadata.AddRange(metadata);
+        return summary;
+    }
+
+    private static PluginSearchQuery MapContractSearchQuery(SearchRequest request)
+    {
+        var filters = request.Filters
+            .Select(static filter => new PluginSearchFilter(
+                filter.Id ?? string.Empty,
+                [.. filter.Values.Where(static value => !string.IsNullOrWhiteSpace(value))],
+                string.IsNullOrWhiteSpace(filter.Operation) ? null : filter.Operation))
+            .ToArray();
+
+        var additions = request.QueryAdditions
+            .Select(static addition => new PluginSearchQueryAddition(
+                addition.Id ?? string.Empty,
+                addition.Value ?? string.Empty,
+                string.IsNullOrWhiteSpace(addition.Type) ? null : addition.Type))
+            .ToArray();
+
+        return new PluginSearchQuery(
+            request.Query ?? string.Empty,
+            [.. request.MediaTypes.Where(static value => !string.IsNullOrWhiteSpace(value))],
+            filters,
+            additions,
+            string.IsNullOrWhiteSpace(request.Sort) ? null : request.Sort,
+            request.Page > 0 ? request.Page : (request.Page == 0 ? 0 : null),
+            request.PageSize > 0 ? request.PageSize : null);
+    }
 }
 
+/// <summary>
+/// Implements the default page gRPC service by delegating requests to a paged-media runtime.
+/// </summary>
+/// <param name="runtime">The runtime that executes page operations.</param>
+/// <param name="metrics">The metrics recorder used for RPC instrumentation.</param>
+/// <param name="logger">The logger used for request diagnostics.</param>
 public sealed class PluginDefaultPageProviderService<TRuntime>(
     TRuntime runtime,
     IPluginSdkMetrics metrics,
@@ -93,6 +342,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
     private readonly IPluginSdkMetrics _metrics = metrics;
     private readonly ILogger<PluginDefaultPageProviderService<TRuntime>> _logger = logger;
 
+    /// <summary>
+    /// Handles a gRPC chapter request by delegating to the paged runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming chapters request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the chapter list for the requested media item.</returns>
     public override async Task<ChaptersResponse> GetChapters(ChaptersRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -123,6 +378,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
         }
     }
 
+    /// <summary>
+    /// Handles a gRPC single-page request by delegating to the paged runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming page request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the requested page when one is available.</returns>
     public override async Task<PageResponse> GetPage(PageRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -159,6 +420,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
         }
     }
 
+    /// <summary>
+    /// Handles a gRPC paged batch request by delegating to the paged runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming pages request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the requested page range.</returns>
     public override async Task<PagesResponse> GetPages(PagesRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -201,6 +468,12 @@ public sealed class PluginDefaultPageProviderService<TRuntime>(
     }
 }
 
+/// <summary>
+/// Implements the default video gRPC service by delegating requests to a video runtime.
+/// </summary>
+/// <param name="runtime">The runtime that executes video operations.</param>
+/// <param name="metrics">The metrics recorder used for RPC instrumentation.</param>
+/// <param name="logger">The logger used for request diagnostics.</param>
 public sealed class PluginDefaultVideoProviderService<TRuntime>(
     TRuntime runtime,
     IPluginSdkMetrics metrics,
@@ -212,6 +485,12 @@ public sealed class PluginDefaultVideoProviderService<TRuntime>(
     private readonly IPluginSdkMetrics _metrics = metrics;
     private readonly ILogger<PluginDefaultVideoProviderService<TRuntime>> _logger = logger;
 
+    /// <summary>
+    /// Handles a gRPC video streams request by delegating to the runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming stream request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the available streams for the requested media item.</returns>
     public override Task<StreamResponse> GetStreams(StreamRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -229,6 +508,12 @@ public sealed class PluginDefaultVideoProviderService<TRuntime>(
             () => _runtime.GetStreamsAsync(request.MediaId, context.CancellationToken));
     }
 
+    /// <summary>
+    /// Handles a gRPC video segment request by delegating to the runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming segment request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the requested stream segment.</returns>
     public override Task<SegmentResponse> GetSegment(SegmentRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();

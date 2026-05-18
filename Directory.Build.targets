@@ -1,0 +1,18 @@
+<Project>
+  <Target
+    Name="CopyXmlDocsToReferenceAssemblyPaths"
+    AfterTargets="Compile"
+    Condition="'$(GenerateDocumentationFile)' == 'true' and Exists('$(DocumentationFile)')">
+    <Copy
+      SourceFiles="$(DocumentationFile)"
+      DestinationFiles="$(IntermediateOutputPath)ref/$(AssemblyName).xml"
+      SkipUnchangedFiles="true"
+      Condition="Exists('$(IntermediateOutputPath)ref')" />
+
+    <Copy
+      SourceFiles="$(DocumentationFile)"
+      DestinationFiles="$(IntermediateOutputPath)refint/$(AssemblyName).xml"
+      SkipUnchangedFiles="true"
+      Condition="Exists('$(IntermediateOutputPath)refint')" />
+  </Target>
+</Project>

@@ -21,6 +21,7 @@ Environment:
 - `EMMA_PLUGIN_TARGET` overrides the resolved runtime target for session metadata.
 - `EMMA_PLUGIN_EXECUTION_MODE` overrides the resolved execution mode.
 - `EMMA_PLUGIN_DEV_MODE` defaults to `1` inside the CLI unless the active profile disables plugin logging.
+- The CLI writes `obj/EMMA.PluginDev.props` under the discovered plugin root so design-time builds can mirror the active profile's `PluginTransport` for VS Code linting and IntelliSense.
 
 ## Session bootstrap
 
@@ -65,6 +66,8 @@ Environment:
 - `build-pack all` iterates over every resolved profile, builds it, packages
 	it, and then restores the original active profile.
 - `reload` reports the reload semantics for the active runtime adapter.
+- `video-streams <mediaId>` inspects the playable streams exposed for a video media item.
+- `video-segment <mediaId> <streamId> <sequence>` inspects one fetched video segment payload.
 - `watch start` begins recursive file watching rooted at the discovered plugin
 	project directory. Matching changes are batched before reload is requested.
 - `watch status` reports the current watch state, last observed change, and
@@ -82,9 +85,12 @@ Environment:
 ## Native development commands
 
 - `linux-dev` and `windows-dev` reuse the same command surface as `wasm-dev`
-	for search, chapters, page, reload, and `scenario paged-smoke`.
+	for search, chapters, page, video inspection, reload, and `scenario paged-smoke`.
 - Native direct execution launches the published plugin executable locally and
 	reuses the host-bridge API against the configured `HostUrl`.
+- `host-bridge` profiles now reuse the authenticated plugin dev endpoints for
+	search metadata enrichment and video inspection, so scenarios can exercise the
+	finalized paged/video workflow surface without switching execution modes.
 - `reload` restarts the managed native plugin process for native direct
 	profiles.
 - `watch start` is most useful for direct native profiles because reload can

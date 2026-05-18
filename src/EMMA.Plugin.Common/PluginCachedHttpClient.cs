@@ -16,6 +16,11 @@ public sealed class PluginCachedHttpClient
 
     private sealed record CachedResponse(string Content, DateTimeOffset FetchedAtUtc);
 
+    /// <summary>
+    /// Creates a cached HTTP client wrapper with the specified HTTP client and caching options.
+    /// </summary>
+    /// <param name="httpClient">The underlying HTTP client used to make requests.</param>
+    /// <param name="options">The caching and rate-limiting options to apply, or <see langword="null"/> to use the default options.</param>
     public PluginCachedHttpClient(HttpClient httpClient, PluginCachedHttpClientOptions? options = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
@@ -28,6 +33,9 @@ public sealed class PluginCachedHttpClient
     /// Gets or fetches a URL, using cache if available and not expired.
     /// Applies rate limiting to respect provider API rate limits.
     /// </summary>
+    /// <param name="absoluteUrl">The absolute URL to fetch.</param>
+    /// <param name="cancellationToken">The cancellation token for the request.</param>
+    /// <returns>The fetched response content, or <see langword="null"/> when the request fails or returns no content.</returns>
     public async Task<string?> GetAsync(
         string absoluteUrl,
         CancellationToken cancellationToken = default)
@@ -86,6 +94,10 @@ public sealed class PluginCachedHttpClient
     /// Gets or fetches a URL with a fallback fetch function.
     /// Useful when the URL might not be immediately available.
     /// </summary>
+    /// <param name="cacheKey">The cache key to use for the fetched content.</param>
+    /// <param name="fetchAsync">The callback that fetches the content when the cache misses.</param>
+    /// <param name="cancellationToken">The cancellation token for the request.</param>
+    /// <returns>The fetched response content, or <see langword="null"/> when the request fails or returns no content.</returns>
     public async Task<string?> GetAsync(
         string cacheKey,
         Func<Task<string?>> fetchAsync,
@@ -134,6 +146,7 @@ public sealed class PluginCachedHttpClient
     /// Invalidates cache entries by key prefix.
     /// Useful for clearing related cache entries when data is updated.
     /// </summary>
+    /// <param name="keyPrefix">The cache key prefix to invalidate.</param>
     public void InvalidateByPrefix(string keyPrefix)
     {
         if (string.IsNullOrWhiteSpace(keyPrefix))
@@ -162,6 +175,7 @@ public sealed class PluginCachedHttpClient
     /// <summary>
     /// Gets the current cache size.
     /// </summary>
+    /// <returns>The number of cached responses.</returns>
     public int GetCacheSize() => _cache.Count;
 
     /// <summary>

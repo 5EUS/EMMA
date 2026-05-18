@@ -1,7 +1,15 @@
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Normalizes payload strings into plain JSON content.
+/// </summary>
 public static class PluginJsonPayload
 {
+    /// <summary>
+    /// Normalizes a payload string by trimming it and stripping any non-JSON prefix before the first object or array token.
+    /// </summary>
+    /// <param name="payload">The payload text to normalize.</param>
+    /// <returns>The normalized JSON payload, or an empty string when no JSON content can be found.</returns>
     public static string Normalize(string? payload)
     {
         if (string.IsNullOrWhiteSpace(payload))

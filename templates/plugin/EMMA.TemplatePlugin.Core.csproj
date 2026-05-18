@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="EMMA.TemplatePlugin.Shared.props" />
+
+  <PropertyGroup>
+    <AssemblyName>EMMA.TemplatePlugin.Core</AssemblyName>
+    <RootNamespace>EMMA.TemplatePlugin</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Core/CoreAssemblyInfo.cs" />
+    <Compile Include="Core/CoreClient.cs" />
+    <Compile Include="Core/SourceFeatures.cs" />
+  </ItemGroup>
+</Project>

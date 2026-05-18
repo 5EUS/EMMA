@@ -9,6 +9,17 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Downloads, validates, and installs plugin releases from configured repositories.
+/// </summary>
+/// <param name="repositoryService">The repository service.</param>
+/// <param name="catalogClient">The repository catalog client.</param>
+/// <param name="processManager">The plugin process manager.</param>
+/// <param name="handshakeService">The handshake service.</param>
+/// <param name="signatureVerifier">The signature verifier.</param>
+/// <param name="signatureOptions">The plugin signature options.</param>
+/// <param name="hostOptions">The plugin host options.</param>
+/// <param name="logger">The logger used for installation diagnostics.</param>
 public sealed class PluginRepositoryInstallOrchestrator(
     PluginRepositoryService repositoryService,
     PluginRepositoryCatalogClient catalogClient,
@@ -44,6 +55,12 @@ public sealed class PluginRepositoryInstallOrchestrator(
     private readonly ILogger<PluginRepositoryInstallOrchestrator> _logger = logger;
     private readonly SemaphoreSlim _installGate = new(1, 1);
 
+    /// <summary>
+    /// Installs a plugin release from a configured repository.
+    /// </summary>
+    /// <param name="request">The installation request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The installation result.</returns>
     public async Task<PluginRepositoryInstallResult> InstallFromRepositoryAsync(
         InstallPluginFromRepositoryRequest request,
         CancellationToken cancellationToken)

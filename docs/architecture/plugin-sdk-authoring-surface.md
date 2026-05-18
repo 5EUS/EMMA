@@ -3,6 +3,11 @@
 This document describes the current authoring surface for simple EMMA plugins
 after the first round of SDK extraction work.
 
+For the frozen `v0.7.0` release target, see
+`plugin-sdk-v0.7.0-release-contract.md`. This document describes the current
+surface; the release-contract document defines which parts of that surface must
+be stabilized before the SDK is considered ready.
+
 The goal is not to hide plugin behavior behind magic. The goal is to move
 repeatable transport/bootstrap glue into documented framework surfaces so plugin
 authors spend time in provider logic instead of assembly code.
@@ -63,20 +68,24 @@ operation host signatures.
 
 ## 4. WASM host presets
 
-Use `PluginWasmHostBuilderPresets` to register standard CLI operations instead
-of repeating the same `AddCliJson(...)` and `AddCliHandler(...)` calls in every
-plugin host.
+Use `PluginBasicPagedWasmOperationHost<TChapterOperationItem>` when a plugin
+needs the standard paged-media WASM path, and use
+`PluginBasicPagedVideoWasmOperationHost<TChapterOperationItem>` when a plugin
+needs the standard paged + video path.
 
-The current presets cover:
+These shared hosts own:
 
 - standard health operations
 - standard paged-media CLI operations
+- standard paged-media invoke operations
+- standard video CLI and invoke operations for the paged + video host
+- capability-profile driven default capability declarations
 
 Plugins still own:
 
-- invoke dispatcher policy
-- custom operations such as benchmark or diagnostics
-- media-type specific mapping logic
+- provider-specific payload fetching and mapping
+- any custom invoke handlers beyond the standard operation surface
+- custom benchmark/diagnostic behavior when the defaults are insufficient
 
 ## 5. JSON context generation
 
@@ -108,9 +117,20 @@ mapping decisions.
 - WASM exports are generator-backed when the local EMMA workspace is present
 - WASM JSON context attributes are generator-backed on the same path
 - payload mapping uses the new collection helpers for repeated parse loops
+- the ASP.NET and WASM transports now stay aligned on the same paged-first
+  golden path instead of claiming video support they do not implement
 
-The sample project still carries compatibility shims for non-local SDK use so
-the repository can transition incrementally while package publishing catches up.
+`emma-video-test` now demonstrates the intended reusable video-focused WASM
+path:
+
+- the plugin uses the shared paged + video WASM host abstraction
+- the plugin keeps fixture-specific search and benchmark behavior in plugin code
+- the plugin no longer needs a plugin-local custom host builder just to wire the
+  standard video operations
+
+The sample/template repositories continue to support both local-workspace and
+package-based SDK consumption so the same public surface can be exercised in
+source and package mode during the `v0.7.0` hardening pass.
 
 ## What remains out of scope
 
@@ -118,7 +138,7 @@ the repository can transition incrementally while package publishing catches up.
 - packaging the source generator into the published SDK package
 - a single declarative plugin-definition object that replaces all remaining
   transport composition
-- richer preset coverage for video/audio-specific WASM hosts
 
 Those are the next logical steps once the current surface has been exercised
-across more than one sample plugin.
+across more than one sample plugin, but they are not part of the `v0.7.0`
+release contract unless that contract is updated explicitly.

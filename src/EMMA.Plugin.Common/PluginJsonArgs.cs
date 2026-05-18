@@ -2,8 +2,17 @@ using System.Text.Json;
 
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Reads typed values from operation argument JSON payloads.
+/// </summary>
 public static class PluginJsonArgs
 {
+    /// <summary>
+    /// Reads a string property from an argument JSON object.
+    /// </summary>
+    /// <param name="argsJson">The JSON object that contains operation arguments.</param>
+    /// <param name="key">The property name to read.</param>
+    /// <returns>The string value when present and valid; otherwise, an empty string.</returns>
     public static string GetString(string? argsJson, string key)
     {
         return ReadProperty(
@@ -15,6 +24,12 @@ public static class PluginJsonArgs
             string.Empty);
     }
 
+    /// <summary>
+    /// Reads an unsigned 32-bit integer property from an argument JSON object.
+    /// </summary>
+    /// <param name="argsJson">The JSON object that contains operation arguments.</param>
+    /// <param name="key">The property name to read.</param>
+    /// <returns>The parsed unsigned integer when present and valid; otherwise, <see langword="null"/>.</returns>
     public static uint? GetUInt32(string? argsJson, string key)
     {
         return ReadProperty<uint?>(
@@ -38,6 +53,12 @@ public static class PluginJsonArgs
             null);
     }
 
+    /// <summary>
+    /// Reads a signed 32-bit integer property from an argument JSON object.
+    /// </summary>
+    /// <param name="argsJson">The JSON object that contains operation arguments.</param>
+    /// <param name="key">The property name to read.</param>
+    /// <returns>The parsed integer when present and valid; otherwise, <see langword="null"/>.</returns>
     public static int? GetInt32(string? argsJson, string key)
     {
         return ReadProperty<int?>(
@@ -61,6 +82,12 @@ public static class PluginJsonArgs
             null);
     }
 
+    /// <summary>
+    /// Reads a Boolean property from an argument JSON object.
+    /// </summary>
+    /// <param name="argsJson">The JSON object that contains operation arguments.</param>
+    /// <param name="key">The property name to read.</param>
+    /// <returns>The parsed Boolean when present and valid; otherwise, <see langword="null"/>.</returns>
     public static bool? GetBool(string? argsJson, string key)
     {
         return ReadProperty<bool?>(
@@ -84,6 +111,12 @@ public static class PluginJsonArgs
             null);
     }
 
+    /// <summary>
+    /// Reads a string array property from an argument JSON object.
+    /// </summary>
+    /// <param name="argsJson">The JSON object that contains operation arguments.</param>
+    /// <param name="key">The property name to read.</param>
+    /// <returns>The trimmed string values found in the array, or an empty list when the property is missing or invalid.</returns>
     public static IReadOnlyList<string> GetStringArray(string? argsJson, string key)
     {
         return ReadProperty<IReadOnlyList<string>>(

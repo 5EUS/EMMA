@@ -6,37 +6,65 @@ option csharp_namespace = "EMMA.Contracts.Plugins";
 
 import "request_context.proto";
 
+// Exposes health and capability metadata for a plugin instance.
 service PluginControl {
+  // Returns the current plugin health payload.
   rpc GetHealth (HealthRequest) returns (HealthResponse);
+
+  // Returns the plugin capability and permission declarations.
   rpc GetCapabilities (CapabilitiesRequest) returns (CapabilitiesResponse);
 }
 
+// Requests the current health payload for a plugin.
 message HealthRequest {
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Describes the plugin's current health state.
 message HealthResponse {
+  // Indicates the plugin's high-level status.
   string status = 1;
+
+  // Reports the plugin version presented by the runtime.
   string version = 2;
+
+  // Supplies a human-readable health message.
   string message = 3;
 }
 
+// Requests the capability payload for a plugin.
 message CapabilitiesRequest {
+  // Carries correlation and deadline metadata for the request.
   RequestContext context = 100;
 }
 
+// Describes supported operations, budgets, and permissions for a plugin.
 message CapabilitiesResponse {
+  // Lists the capabilities exposed by the plugin.
   repeated string capabilities = 1;
+
+  // Declares the compute and memory budgets for the plugin.
   CapabilityBudgets budgets = 2;
+
+  // Declares the external permissions granted to the plugin.
   CapabilityPermissions permissions = 3;
 }
 
+// Declares resource budgets advertised by a plugin.
 message CapabilityBudgets {
+  // The CPU budget in milliseconds expected for a request.
   int32 cpu_budget_ms = 1;
+
+  // The memory budget in megabytes allocated to the plugin.
   int32 memory_mb = 2;
 }
 
+// Declares outbound permissions advertised by a plugin.
 message CapabilityPermissions {
+  // The allowed outbound domains.
   repeated string domains = 1;
+
+  // The allowed filesystem paths.
   repeated string paths = 2;
 }

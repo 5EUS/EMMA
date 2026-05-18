@@ -2,10 +2,32 @@ using System.Text.Json;
 
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Represents a search filter and its requested values.
+/// </summary>
+/// <param name="Id">The filter identifier.</param>
+/// <param name="Values">The requested filter values.</param>
+/// <param name="Operation">The optional filter operation.</param>
 public sealed record PluginSearchFilter(string Id, IReadOnlyList<string> Values, string? Operation);
 
+/// <summary>
+/// Represents an additional named query value used by provider-specific search logic.
+/// </summary>
+/// <param name="Id">The addition identifier.</param>
+/// <param name="Value">The addition value.</param>
+/// <param name="Type">The optional addition type.</param>
 public sealed record PluginSearchQueryAddition(string Id, string Value, string? Type);
 
+/// <summary>
+/// Represents a parsed plugin search request.
+/// </summary>
+/// <param name="Query">The search text.</param>
+/// <param name="MediaTypes">The requested media types.</param>
+/// <param name="Filters">The requested structured filters.</param>
+/// <param name="QueryAdditions">The provider-specific query additions.</param>
+/// <param name="Sort">The optional sort identifier.</param>
+/// <param name="Page">The optional requested page number.</param>
+/// <param name="PageSize">The optional requested page size.</param>
 public sealed record PluginSearchQuery(
     string Query,
     IReadOnlyList<string> MediaTypes,
@@ -15,18 +37,34 @@ public sealed record PluginSearchQuery(
     int? Page,
     int? PageSize)
 {
+    /// <summary>
+    /// Gets the values for a search filter by identifier.
+    /// </summary>
+    /// <param name="filterId">The filter identifier to look up.</param>
+    /// <returns>The matching filter values, or an empty list when the filter is absent.</returns>
     public IReadOnlyList<string> GetFilterValues(string filterId)
     {
         var match = Filters.FirstOrDefault(filter => string.Equals(filter.Id, filterId, StringComparison.OrdinalIgnoreCase));
         return match?.Values ?? [];
     }
 
+    /// <summary>
+    /// Gets the value for a query addition by identifier.
+    /// </summary>
+    /// <param name="additionId">The query addition identifier to look up.</param>
+    /// <returns>The query addition value, or an empty string when the addition is absent.</returns>
     public string GetQueryAddition(string additionId)
     {
         var match = QueryAdditions.FirstOrDefault(addition => string.Equals(addition.Id, additionId, StringComparison.OrdinalIgnoreCase));
         return match?.Value ?? string.Empty;
     }
 
+    /// <summary>
+    /// Parses a search query object from operation argument JSON.
+    /// </summary>
+    /// <param name="argsJson">The argument JSON to parse.</param>
+    /// <param name="fallbackQuery">An optional fallback query string to use when the JSON does not provide one.</param>
+    /// <returns>The parsed search query, or a default query when parsing fails.</returns>
     public static PluginSearchQuery Parse(string? argsJson, string? fallbackQuery = null)
     {
         var defaultQuery = fallbackQuery ?? string.Empty;
@@ -35,10 +73,23 @@ public sealed record PluginSearchQuery(
             return new PluginSearchQuery(defaultQuery, [], [], [], null, null, null);
         }
 
+        var trimmed = argsJson.Trim();
+        if (!LooksLikeJson(trimmed))
+        {
+            return new PluginSearchQuery(trimmed, [], [], [], null, null, null);
+        }
+
         try
         {
-            using var doc = JsonDocument.Parse(argsJson);
+            using var doc = JsonDocument.Parse(trimmed);
             var root = doc.RootElement;
+
+            if (root.ValueKind == JsonValueKind.String)
+            {
+                var rawQuery = root.GetString();
+                return new PluginSearchQuery(rawQuery ?? defaultQuery, [], [], [], null, null, null);
+            }
+
             if (root.ValueKind != JsonValueKind.Object)
             {
                 return new PluginSearchQuery(defaultQuery, [], [], [], null, null, null);
@@ -62,7 +113,7 @@ public sealed record PluginSearchQuery(
 
     private static IReadOnlyList<string> ReadStringArray(JsonElement root, string property)
     {
-        if (!root.TryGetProperty(property, out var element) || element.ValueKind != JsonValueKind.Array)
+        if (!TryGetPropertyCaseInsensitive(root, property, out var element) || element.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -76,7 +127,7 @@ public sealed record PluginSearchQuery(
 
     private static IReadOnlyList<PluginSearchFilter> ReadFilters(JsonElement root)
     {
-        if (!root.TryGetProperty("filters", out var element) || element.ValueKind != JsonValueKind.Array)
+        if (!TryGetPropertyCaseInsensitive(root, "filters", out var element) || element.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -105,7 +156,7 @@ public sealed record PluginSearchQuery(
 
     private static IReadOnlyList<PluginSearchQueryAddition> ReadQueryAdditions(JsonElement root)
     {
-        if (!root.TryGetProperty("queryAdditions", out var element) || element.ValueKind != JsonValueKind.Array)
+        if (!TryGetPropertyCaseInsensitive(root, "queryAdditions", out var element) || element.ValueKind != JsonValueKind.Array)
         {
             return [];
         }
@@ -134,7 +185,7 @@ public sealed record PluginSearchQuery(
 
     private static string? ReadString(JsonElement element, string property)
     {
-        if (element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+        if (TryGetPropertyCaseInsensitive(element, property, out var value) && value.ValueKind == JsonValueKind.String)
         {
             return value.GetString();
         }
@@ -144,7 +195,7 @@ public sealed record PluginSearchQuery(
 
     private static int? ReadInt32(JsonElement element, string property)
     {
-        if (!element.TryGetProperty(property, out var value))
+        if (!TryGetPropertyCaseInsensitive(element, property, out var value))
         {
             return null;
         }
@@ -160,5 +211,34 @@ public sealed record PluginSearchQuery(
         }
 
         return null;
+    }
+
+    private static bool LooksLikeJson(string value)
+    {
+        return value.Length > 0
+            && (value[0] == '{'
+                || value[0] == '['
+                || value[0] == '"');
+    }
+
+    private static bool TryGetPropertyCaseInsensitive(JsonElement element, string property, out JsonElement value)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            value = default;
+            return false;
+        }
+
+        foreach (var candidate in element.EnumerateObject())
+        {
+            if (string.Equals(candidate.Name, property, StringComparison.OrdinalIgnoreCase))
+            {
+                value = candidate.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 }

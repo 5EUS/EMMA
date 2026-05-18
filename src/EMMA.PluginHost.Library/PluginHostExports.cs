@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -23,11 +24,28 @@ using EMMA.Domain;
 namespace EMMA.PluginHost.Library;
 
 /// <summary>
+/// Request payload forwarded to ASP.NET plugin search enrichment endpoints.
+/// </summary>
+/// <param name="Items">The search items to enrich.</param>
+public sealed record PluginDevEnrichSearchItemsRequest(IReadOnlyList<SearchItem> Items);
+
+/// <summary>
 /// Native FFI exports for embedding the PluginHost in-process.
 /// This provides both a managed C# API and a thin FFI marshalling layer.
 /// </summary>
 public static class PluginHostExports
 {
+    /// <summary>
+    /// Represents a media summary enriched for host-library consumers.
+    /// </summary>
+    /// <param name="Id">The media identifier.</param>
+    /// <param name="SourceId">The provider-specific source identifier.</param>
+    /// <param name="Source">The source name.</param>
+    /// <param name="Title">The display title.</param>
+    /// <param name="MediaType">The media type.</param>
+    /// <param name="ThumbnailUrl">The optional thumbnail URL.</param>
+    /// <param name="Description">The optional description.</param>
+    /// <param name="Metadata">Optional metadata entries.</param>
     public sealed record EnrichedMediaSummaryResponse(
         string Id,
         string SourceId,
@@ -53,6 +71,8 @@ public static class PluginHostExports
     private const string DevModeEnvVar = "EMMA_PLUGIN_DEV_MODE";
     private const string PluginHostConsoleLogsEnvVar = "EMMA_PLUGINHOST_CONSOLE_LOGS";
     private const string PluginHostLogLevelEnvVar = "EMMA_PLUGINHOST_LOG_LEVEL";
+    private const string DownloadMaxConcurrentEnvVar = "EMMA_DOWNLOAD_MAX_CONCURRENT";
+    private const string DownloadMaxConcurrentConfigEnvVar = "Download__MaxConcurrent";
     private const string HostAuthHeader = "x-emma-plugin-host-auth";
     private static ServiceProvider? _serviceProvider;
     private static PluginRegistry? _registry;
@@ -60,6 +80,10 @@ public static class PluginHostExports
     private static PluginResolutionService? _pluginResolution;
     private static IWasmPluginRuntimeHost? _wasmRuntime;
     private static DownloadOrchestrator? _downloadOrchestrator;
+    private static readonly DownloadExecutionOptions _downloadExecutionOptions = new()
+    {
+        MaxConcurrentDownloads = ResolveMaxConcurrentDownloads()
+    };
     private static bool _initialized = false;
     private static readonly Lock _initLock = new();
     private static readonly Lock _errorLock = new();
@@ -74,9 +98,11 @@ public static class PluginHostExports
     // ==================== Managed API (callable from C#) ====================
 
     /// <summary>
-    /// Initialize the plugin host with the specified directories.
-    /// Returns 0 on success, non-zero on failure.
+    /// Initializes the embedded plugin host using the supplied manifest and sandbox directories.
     /// </summary>
+    /// <param name="manifestsDir">The directory that contains plugin manifest files.</param>
+    /// <param name="sandboxDir">The directory used for plugin sandbox state and extracted assets.</param>
+    /// <returns><c>0</c> when initialization succeeds; otherwise <c>-1</c>.</returns>
     public static int InitializeManaged(string manifestsDir, string sandboxDir)
     {
         ClearLastError();
@@ -89,6 +115,8 @@ public static class PluginHostExports
                 {
                     return 0; // Already initialized
                 }
+
+                AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
                 InitializeSqliteForEmbeddedHost();
 
@@ -104,8 +132,12 @@ public static class PluginHostExports
                             .SetValue(options, sandboxDir);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.HandshakeOnStartup))!
                             .SetValue(options, ResolveHandshakeOnStartupEnabled());
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.HandshakeTimeoutSeconds))!
+                            .SetValue(options, 20);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.WasmOperationTimeoutSeconds))!
                              .SetValue(options, 15);
+                        typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.StartupTimeoutSeconds))!
+                            .SetValue(options, 20);
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.NativeWasmLibraryMode))!
                             .SetValue(options, ResolveNativeWasmLibraryMode());
                         typeof(PluginHostOptions).GetProperty(nameof(PluginHostOptions.SandboxEnabled))!
@@ -219,6 +251,7 @@ public static class PluginHostExports
                 _downloadOrchestrator = new DownloadOrchestrator(
                     downloadPort,
                     ExecuteDownloadJobAsync,
+                    _downloadExecutionOptions,
                     downloadLogger);
 
                 // Load plugins via handshake service
@@ -363,6 +396,20 @@ public static class PluginHostExports
         return LogLevel.Warning;
     }
 
+    private static int ResolveMaxConcurrentDownloads()
+    {
+        var value = Environment.GetEnvironmentVariable(DownloadMaxConcurrentEnvVar)
+            ?? Environment.GetEnvironmentVariable(DownloadMaxConcurrentConfigEnvVar);
+
+        if (!string.IsNullOrWhiteSpace(value)
+            && int.TryParse(value.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+        {
+            return DownloadExecutionOptions.ClampMaxConcurrentDownloads(parsed);
+        }
+
+        return DownloadExecutionOptions.DefaultMaxConcurrentDownloads;
+    }
+
     private static string ResolvePluginBuildType(PluginManifest manifest)
     {
         if (_serviceProvider?.GetService<IPluginEntrypointResolver>() is { } entrypointResolver
@@ -377,7 +424,7 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Shutdown the plugin host and release resources.
+    /// Shuts down the embedded plugin host and releases cached runtime resources.
     /// </summary>
     public static void ShutdownManaged()
     {
@@ -386,6 +433,19 @@ public static class PluginHostExports
             if (!_initialized)
             {
                 return;
+            }
+
+            try
+            {
+                _serviceProvider?
+                    .GetService<PluginProcessManager>()?
+                    .StopAllAsync(CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+            }
+            catch (Exception ex)
+            {
+                SetLastError(ex);
             }
 
             _serviceProvider?.Dispose();
@@ -407,9 +467,9 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// List all available plugins as JSON.
-    /// Returns null on error, check GetLastErrorManaged().
+    /// Lists all discovered plugins as a JSON payload.
     /// </summary>
+    /// <returns>A JSON array of plugin summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListPluginsJsonManaged()
     {
         ClearLastError();
@@ -442,9 +502,9 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Reload plugin manifests and refresh runtime/handshake state without recreating the host.
-    /// Returns 0 on success, non-zero on failure.
+    /// Reloads plugin manifests and refreshes handshake state without recreating the host.
     /// </summary>
+    /// <returns><c>0</c> when the rescan succeeds; otherwise <c>-1</c>.</returns>
     public static int RescanManaged()
     {
         ClearLastError();
@@ -486,6 +546,10 @@ public static class PluginHostExports
         return null;
     }
 
+    /// <summary>
+    /// Lists configured plugin repositories as JSON.
+    /// </summary>
+    /// <returns>A JSON array of repository records, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListPluginRepositoriesJsonManaged()
     {
         ClearLastError();
@@ -509,6 +573,14 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Adds a plugin repository to the local repository store.
+    /// </summary>
+    /// <param name="catalogUrl">The repository catalog URL.</param>
+    /// <param name="repositoryId">An optional explicit repository identifier.</param>
+    /// <param name="name">An optional display name for the repository.</param>
+    /// <param name="sourceRepositoryUrl">An optional source code repository URL.</param>
+    /// <returns><c>1</c> when the repository is added; otherwise <c>0</c>.</returns>
     public static int AddPluginRepositoryManaged(
         string catalogUrl,
         string? repositoryId,
@@ -540,6 +612,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Removes a configured plugin repository.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier to remove.</param>
+    /// <returns><c>1</c> when the repository is removed; otherwise <c>0</c>.</returns>
     public static int RemovePluginRepositoryManaged(string repositoryId)
     {
         ClearLastError();
@@ -567,6 +644,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists the plugins published by a specific repository as JSON.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier to inspect.</param>
+    /// <param name="refreshCatalog">When set, refreshes the repository catalog before listing plugins.</param>
+    /// <returns>A JSON payload describing the repository plugins, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListRepositoryPluginsJsonManaged(string repositoryId, bool refreshCatalog)
     {
         ClearLastError();
@@ -588,6 +671,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists plugins across all configured repositories as JSON.
+    /// </summary>
+    /// <param name="refreshCatalog">When set, refreshes repository catalogs before listing plugins.</param>
+    /// <returns>A JSON array of repository plugin views, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListAllRepositoryPluginsJsonManaged(bool refreshCatalog)
     {
         ClearLastError();
@@ -611,6 +699,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Installs a plugin release from a configured repository.
+    /// </summary>
+    /// <param name="repositoryId">The repository identifier to install from.</param>
+    /// <param name="pluginId">The plugin identifier to install.</param>
+    /// <param name="version">An optional version to install; when omitted, the latest applicable release is used.</param>
+    /// <param name="refreshCatalog">When set, refreshes the repository catalog before installation.</param>
+    /// <param name="rescanAfterInstall">When set, rescans plugin manifests after installation completes.</param>
+    /// <returns>A JSON installation result payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? InstallFromRepositoryJsonManaged(
         string repositoryId,
         string pluginId,
@@ -644,6 +741,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Enqueues a media download job and returns the created job as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin that can resolve the media asset.</param>
+    /// <param name="mediaId">The media identifier to download.</param>
+    /// <param name="mediaType">The media type associated with the download.</param>
+    /// <param name="chapterId">An optional chapter identifier for paged media downloads.</param>
+    /// <param name="streamId">An optional stream identifier for video downloads.</param>
+    /// <returns>A JSON download job payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? EnqueueDownloadJsonManaged(
         string pluginId,
         string mediaId,
@@ -681,6 +787,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists download jobs as JSON.
+    /// </summary>
+    /// <param name="limit">The maximum number of jobs to return.</param>
+    /// <returns>A JSON array of download jobs, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListDownloadsJsonManaged(int limit = 200)
     {
         ClearLastError();
@@ -707,6 +818,42 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Gets the configured maximum number of concurrent downloads.
+    /// </summary>
+    /// <returns>The current maximum concurrent download count.</returns>
+    public static int GetMaxConcurrentDownloadsManaged()
+    {
+        return _downloadExecutionOptions.MaxConcurrentDownloads;
+    }
+
+    /// <summary>
+    /// Updates the configured maximum number of concurrent downloads.
+    /// </summary>
+    /// <param name="maxConcurrentDownloads">The requested maximum concurrent download count.</param>
+    /// <returns><see langword="true"/> when the update succeeds; otherwise <see langword="false"/>.</returns>
+    public static bool SetMaxConcurrentDownloadsManaged(int maxConcurrentDownloads)
+    {
+        ClearLastError();
+
+        try
+        {
+            _downloadExecutionOptions.MaxConcurrentDownloads = maxConcurrentDownloads;
+            _downloadOrchestrator?.NotifyCapacityChanged();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Gets a single download job as JSON.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns>A JSON download job payload, or <see langword="null"/> when the job is missing or the operation fails.</returns>
     public static string? GetDownloadJsonManaged(string jobId)
     {
         ClearLastError();
@@ -738,21 +885,51 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Pauses a download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
     public static int PauseDownloadManaged(string jobId)
     {
         return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.PauseAsync(id, CancellationToken.None));
     }
 
+    /// <summary>
+    /// Resumes a paused download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
     public static int ResumeDownloadManaged(string jobId)
     {
         return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.ResumeAsync(id, CancellationToken.None));
     }
 
+    /// <summary>
+    /// Retries a failed download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
+    public static int RetryDownloadManaged(string jobId)
+    {
+        return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.RetryAsync(id, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Cancels a download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is updated; otherwise <c>0</c>.</returns>
     public static int CancelDownloadManaged(string jobId)
     {
         return ChangeDownloadStateManaged(jobId, static (orchestrator, id) => orchestrator.CancelAsync(id, CancellationToken.None));
     }
 
+    /// <summary>
+    /// Deletes a download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <returns><c>1</c> when the job is deleted; otherwise <c>0</c>.</returns>
     public static int DeleteDownloadManaged(string jobId)
     {
         ClearLastError();
@@ -792,14 +969,43 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Search for media using the specified plugin.
-    /// Returns JSON array of MediaSummary, or null on error.
+    /// Searches a plugin and returns the results as JSON.
     /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? SearchJsonManaged(string pluginId, string query)
     {
         return SearchJsonManaged(pluginId, query, null);
     }
 
+    /// <summary>
+    /// Resolves a plugin and verifies that it is available for use.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier to resolve.</param>
+    /// <returns><c>1</c> when the plugin resolves successfully; otherwise <c>0</c>.</returns>
+    public static int OpenPluginManaged(string pluginId)
+    {
+        ClearLastError();
+
+        try
+        {
+            return TryResolvePlugin(pluginId, out _, out _) ? 1 : 0;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Searches a plugin and returns the results as JSON using an optional correlation identifier.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <param name="correlationId">An optional correlation identifier forwarded to the plugin runtime.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? SearchJsonManaged(string pluginId, string query, string? correlationId)
     {
         ClearLastError();
@@ -880,6 +1086,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Runs the WASM benchmark path for a plugin.
+    /// </summary>
+    /// <param name="pluginId">The WASM plugin identifier to benchmark.</param>
+    /// <param name="iterations">The requested benchmark iteration count.</param>
+    /// <returns>A JSON benchmark payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? BenchmarkJsonManaged(string pluginId, int iterations)
     {
         ClearLastError();
@@ -922,10 +1134,12 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Enrich a selected media item with extra metadata for the active plugin.
-    /// For WASM plugins this calls the on-demand enrichment path; for other plugins
-    /// it returns the original media summary unchanged.
+    /// Enriches a selected media item with additional metadata for the active plugin.
     /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaJson">The selected media summary serialized as JSON.</param>
+    /// <param name="correlationId">An optional correlation identifier for the enrichment request.</param>
+    /// <returns>An enriched media summary as JSON, or <see langword="null"/> when the operation fails.</returns>
     public static string? EnrichMediaJsonManaged(string pluginId, string mediaJson, string? correlationId = null)
     {
         ClearLastError();
@@ -991,6 +1205,34 @@ public static class PluginHostExports
                     PluginHostExportsJsonContext.Default.EnrichedMediaSummaryResponse);
             }
 
+            if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+                return null;
+            }
+
+            if (address is null)
+            {
+                SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+                return null;
+            }
+
+            var enrichedMedia = EnrichGrpcPluginSearchMedia(record.Manifest.Id, address, media);
+            if (enrichedMedia is not null)
+            {
+                return JsonSerializer.Serialize(
+                    new EnrichedMediaSummaryResponse(
+                        enrichedMedia.Id.Value,
+                        enrichedMedia.SourceId,
+                        enrichedMedia.SourceId,
+                        enrichedMedia.Title,
+                        enrichedMedia.MediaType.ToString().ToLowerInvariant(),
+                        enrichedMedia.ThumbnailUrl,
+                        enrichedMedia.Description,
+                        enrichedMedia.Metadata),
+                    PluginHostExportsJsonContext.Default.EnrichedMediaSummaryResponse);
+            }
+
             return JsonSerializer.Serialize(
                 new EnrichedMediaSummaryResponse(
                     media.Id.Value,
@@ -1010,6 +1252,68 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Resolves suggestions for a lookup-backed search control.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the search control.</param>
+    /// <param name="requestJson">The serialized suggestion request.</param>
+    /// <param name="correlationId">An optional correlation identifier for the request.</param>
+    /// <returns>A JSON array of suggestions, or <see langword="null"/> when the operation fails.</returns>
+    public static string? SearchSuggestionsJsonManaged(string pluginId, string requestJson, string? correlationId = null)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (!TryResolvePlugin(pluginId, out var record, out var address))
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Search suggestion payload is required.");
+                return null;
+            }
+
+            var request = JsonSerializer.Deserialize(
+                requestJson,
+                PluginHostExportsJsonContext.Default.SearchSuggestionRequest);
+            if (request is null)
+            {
+                SetLastError("Invalid search suggestion payload.");
+                return null;
+            }
+
+            var suggestions = _wasmRuntime!.IsWasmPlugin(record!.Manifest)
+                ? _wasmRuntime.GetSearchSuggestionsAsync(record, request, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+                : SearchGrpcPluginSuggestions(
+                    record.Manifest.Id,
+                    address,
+                    request,
+                    correlationId);
+
+            return JsonSerializer.Serialize(
+                suggestions,
+                PluginHostExportsJsonContext.Default.IReadOnlyListSearchSuggestionItem);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Runs the WASM network benchmark path for a plugin.
+    /// </summary>
+    /// <param name="pluginId">The WASM plugin identifier to benchmark.</param>
+    /// <param name="query">The query payload used by the benchmark.</param>
+    /// <returns>A JSON benchmark payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? BenchmarkNetworkJsonManaged(string pluginId, string query)
     {
         ClearLastError();
@@ -1055,14 +1359,23 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Search for media using the specified plugin and return typed results.
-    /// Returns null on error, check GetLastErrorManaged().
+    /// Searches a plugin and returns typed media results.
     /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <returns>The matching media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static IReadOnlyList<MediaSummary>? SearchMediaManaged(string pluginId, string query)
     {
         return SearchMediaManaged(pluginId, query, null);
     }
 
+    /// <summary>
+    /// Searches a plugin and returns typed media results using an optional correlation identifier.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier to query.</param>
+    /// <param name="query">The search query to execute.</param>
+    /// <param name="correlationId">An optional correlation identifier forwarded to the plugin runtime.</param>
+    /// <returns>The matching media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static IReadOnlyList<MediaSummary>? SearchMediaManaged(string pluginId, string query, string? correlationId)
     {
         ClearLastError();
@@ -1251,6 +1564,10 @@ public static class PluginHostExports
         return true;
     }
 
+    /// <summary>
+    /// Returns and clears the last captured search timing payload.
+    /// </summary>
+    /// <returns>The last timing payload, or <see langword="null"/> when no timing is cached.</returns>
     public static string? TakeLastSearchTimingManaged()
     {
         lock (_searchTimingLock)
@@ -1261,6 +1578,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Loads chapters for a media item and returns them as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier to resolve chapters for.</param>
+    /// <returns>A JSON array of chapters, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetChaptersJsonManaged(string pluginId, string mediaId)
     {
         ClearLastError();
@@ -1401,6 +1724,14 @@ public static class PluginHostExports
         return chapters;
     }
 
+    /// <summary>
+    /// Loads a single page for a chapter and returns it as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the chapter.</param>
+    /// <param name="chapterId">The chapter identifier that owns the page.</param>
+    /// <param name="pageIndex">The zero-based page index to load.</param>
+    /// <returns>A JSON page payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetPageJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
         ClearLastError();
@@ -1434,6 +1765,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Loads a range of pages for a chapter and returns them as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the chapter.</param>
+    /// <param name="chapterId">The chapter identifier to page through.</param>
+    /// <param name="startIndex">The zero-based page index to start from.</param>
+    /// <param name="count">The maximum number of pages to load.</param>
+    /// <returns>A JSON page batch payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetPagesJsonManaged(string pluginId, string mediaId, string chapterId, int startIndex, int count)
     {
         ClearLastError();
@@ -1468,6 +1808,14 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Resolves the asset payload for a single paged-media page and returns it as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the chapter.</param>
+    /// <param name="chapterId">The chapter identifier that owns the page.</param>
+    /// <param name="pageIndex">The zero-based page index to resolve.</param>
+    /// <returns>A JSON page asset payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetPageAssetJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
         ClearLastError();
@@ -1489,6 +1837,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Loads video streams for a media item and returns them as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier to resolve streams for.</param>
+    /// <returns>A JSON stream payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetVideoStreamsJsonManaged(string pluginId, string mediaId)
     {
         ClearLastError();
@@ -3918,6 +4272,14 @@ public static class PluginHostExports
         return string.IsNullOrWhiteSpace(sanitized) ? "unknown" : sanitized;
     }
 
+    /// <summary>
+    /// Loads a single video segment and returns it as JSON.
+    /// </summary>
+    /// <param name="pluginId">The plugin identifier that owns the media item.</param>
+    /// <param name="mediaId">The media identifier that owns the stream.</param>
+    /// <param name="streamId">The stream identifier that owns the segment.</param>
+    /// <param name="sequence">The segment sequence number to load.</param>
+    /// <returns>A JSON segment payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetVideoSegmentJsonManaged(string pluginId, string mediaId, string streamId, int sequence)
     {
         ClearLastError();
@@ -3940,8 +4302,9 @@ public static class PluginHostExports
     }
 
     /// <summary>
-    /// Get the last error message, or null if no error.
+    /// Gets the last host error message.
     /// </summary>
+    /// <returns>The last error message, or <see langword="null"/> when no error is stored.</returns>
     public static string? GetLastErrorManaged()
     {
         lock (_errorLock)
@@ -3950,6 +4313,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists cached catalog media items as JSON.
+    /// </summary>
+    /// <param name="limit">The maximum number of catalog items to return.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListCatalogMediaJsonManaged(int limit = 500)
     {
         ClearLastError();
@@ -3982,6 +4350,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists media items stored in a library as JSON.
+    /// </summary>
+    /// <param name="userId">The library identifier or display name to read from.</param>
+    /// <returns>A JSON array of media summaries, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListLibraryMediaJsonManaged(string userId = "Library")
     {
         ClearLastError();
@@ -4067,6 +4440,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Refreshes library media metadata and chapter discovery state.
+    /// </summary>
+    /// <param name="libraryName">The library display name to refresh.</param>
+    /// <returns>A JSON refresh summary payload, or <see langword="null"/> when the operation fails.</returns>
     public static string? RefreshLibraryMediaJsonManaged(string libraryName = "Library")
     {
         ClearLastError();
@@ -4213,6 +4591,10 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists available libraries as JSON.
+    /// </summary>
+    /// <returns>A JSON array of library names, or <see langword="null"/> when the operation fails.</returns>
     public static string? ListLibrariesJsonManaged()
     {
         ClearLastError();
@@ -4242,6 +4624,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Creates a new library.
+    /// </summary>
+    /// <param name="libraryName">The display name for the new library.</param>
+    /// <returns><c>1</c> when the library is created; otherwise <c>0</c>.</returns>
     public static int CreateLibraryManaged(string libraryName)
     {
         ClearLastError();
@@ -4268,6 +4655,11 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Deletes an existing library.
+    /// </summary>
+    /// <param name="libraryName">The display name of the library to delete.</param>
+    /// <returns><c>1</c> when the library is deleted; otherwise <c>0</c>.</returns>
     public static int DeleteLibraryManaged(string libraryName)
     {
         ClearLastError();
@@ -4298,6 +4690,10 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Recreates the embedded host database and default library state.
+    /// </summary>
+    /// <returns><c>1</c> when the database is reset; otherwise <c>0</c>.</returns>
     public static int ResetDatabaseManaged()
     {
         ClearLastError();
@@ -4339,6 +4735,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Checks whether a media item exists in one library or any library.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to look up.</param>
+    /// <param name="userId">The target library identifier, or <c>*</c> to search every library.</param>
+    /// <returns><see langword="true"/> when the media item exists in the requested scope; otherwise <see langword="false"/>.</returns>
     public static bool IsMediaInLibraryManaged(string mediaId, string userId = "*")
     {
         ClearLastError();
@@ -4388,6 +4790,17 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Adds a media item to a library and upserts its catalog metadata.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to add.</param>
+    /// <param name="sourceId">The source or plugin identifier that owns the media item.</param>
+    /// <param name="title">The media title to persist.</param>
+    /// <param name="mediaType">The media type to persist.</param>
+    /// <param name="userId">The target library identifier or display name.</param>
+    /// <param name="description">An optional description string or JSON metadata payload.</param>
+    /// <param name="thumbnailUrl">An optional thumbnail URL to persist.</param>
+    /// <returns><c>1</c> when the media item is added; otherwise <c>0</c>.</returns>
     public static int AddMediaToLibraryManaged(
         string mediaId,
         string sourceId,
@@ -4499,6 +4912,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Removes a media item from a library.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to remove.</param>
+    /// <param name="userId">The target library identifier or display name.</param>
+    /// <returns><c>1</c> when the media item is removed; otherwise <c>0</c>.</returns>
     public static int RemoveMediaFromLibraryManaged(string mediaId, string userId = "Library")
     {
         ClearLastError();
@@ -4528,6 +4947,14 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Gets persisted reading or playback progress as JSON.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to read progress for.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="mediaType">The media type that determines which progress store is queried.</param>
+    /// <param name="userId">The user or library scope to read progress from.</param>
+    /// <returns>A JSON progress payload, <c>"null"</c> when no progress exists, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetMediaProgressJsonManaged(
         string mediaId,
         string pluginId,
@@ -4607,6 +5034,16 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Persists paged-media progress for a user.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to update.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="chapterId">The active chapter identifier.</param>
+    /// <param name="pageIndex">The zero-based page index reached by the user.</param>
+    /// <param name="completed">Whether the chapter or item is considered completed.</param>
+    /// <param name="userId">The user or library scope to store progress under.</param>
+    /// <returns><c>1</c> when progress is stored; otherwise <c>0</c>.</returns>
     public static int SetPagedProgressManaged(
         string mediaId,
         string pluginId,
@@ -4657,6 +5094,15 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Persists video playback progress for a user.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to update.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="positionSeconds">The playback position in seconds.</param>
+    /// <param name="completed">Whether playback is considered completed.</param>
+    /// <param name="userId">The user or library scope to store progress under.</param>
+    /// <returns><c>1</c> when progress is stored; otherwise <c>0</c>.</returns>
     public static int SetVideoProgressManaged(
         string mediaId,
         string pluginId,
@@ -4699,6 +5145,13 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists read chapter identifiers for a media item as JSON.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to inspect.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON array of chapter identifiers, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetReadChapterIdsJsonManaged(
         string mediaId,
         string pluginId,
@@ -4744,6 +5197,12 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists history entries as JSON.
+    /// </summary>
+    /// <param name="limit">The maximum number of history entries to return.</param>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON array of history entries, or <see langword="null"/> when the operation fails.</returns>
     public static string? GetHistoryJsonManaged(
         int limit = 200,
         string userId = DefaultProgressUserId)
@@ -4786,6 +5245,13 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Deletes history entries for a media item and plugin combination.
+    /// </summary>
+    /// <param name="mediaId">The media identifier to clear history for.</param>
+    /// <param name="pluginId">The plugin identifier associated with the media item.</param>
+    /// <param name="userId">The user or library scope to clear history from.</param>
+    /// <returns><c>1</c> when history is deleted; otherwise <c>0</c>.</returns>
     public static int DeleteHistoryForMediaManaged(
         string mediaId,
         string pluginId,
@@ -4824,8 +5290,219 @@ public static class PluginHostExports
         }
     }
 
+    /// <summary>
+    /// Lists orphaned media items that no longer resolve to a healthy source plugin.
+    /// </summary>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON array of orphaned media items, or <see langword="null"/> when the operation fails.</returns>
+    public static string? GetMigrationOrphanedMediaJsonManaged(string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            var serviceProvider = _serviceProvider!;
+
+            var normalizedUserId = string.IsNullOrWhiteSpace(userId)
+                ? DefaultProgressUserId
+                : userId;
+
+            var library = serviceProvider.GetRequiredService<ILibraryPort>();
+            var catalog = serviceProvider.GetRequiredService<IMediaCatalogPort>();
+            var history = serviceProvider.GetRequiredService<IHistoryPort>();
+            var progress = serviceProvider.GetRequiredService<IProgressPort>();
+
+            var libraryKeys = library.ListLibrariesAsync(CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            var historyEntries = history.GetHistoryAsync(normalizedUserId, 10000, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            var availabilityCache = new Dictionary<string, MigrationPluginAvailability>(StringComparer.OrdinalIgnoreCase);
+            var accumulators = new Dictionary<string, MigrationOrphanAccumulator>(StringComparer.Ordinal);
+
+            foreach (var libraryKey in libraryKeys)
+            {
+                var entries = library.GetLibraryAsync(libraryKey, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                var displayLibrary = FromLibraryStorageKey(libraryKey);
+
+                foreach (var entry in entries)
+                {
+                    var metadata = catalog.GetMediaAsync(entry.MediaId, CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
+                    var sourceId = !string.IsNullOrWhiteSpace(metadata?.SourceId)
+                        ? metadata!.SourceId
+                        : entry.SourceId;
+
+                    var availability = ResolveMigrationPluginAvailability(sourceId, availabilityCache);
+                    if (!availability.IsOrphaned)
+                    {
+                        continue;
+                    }
+
+                    var accumulator = GetOrCreateMigrationAccumulator(
+                        accumulators,
+                        entry.MediaId.Value,
+                        sourceId,
+                        metadata,
+                        availability.Reason);
+                    accumulator.Libraries.Add(displayLibrary);
+                    accumulator.ApplyMetadata(metadata);
+                }
+            }
+
+            foreach (var entry in historyEntries)
+            {
+                var availability = ResolveMigrationPluginAvailability(entry.PluginId, availabilityCache);
+                if (!availability.IsOrphaned)
+                {
+                    continue;
+                }
+
+                var mediaId = entry.MediaId.Value;
+                var metadata = catalog.GetMediaAsync(entry.MediaId, CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                var accumulator = GetOrCreateMigrationAccumulator(
+                    accumulators,
+                    mediaId,
+                    entry.PluginId,
+                    metadata,
+                    availability.Reason);
+                accumulator.ApplyMetadata(metadata);
+                accumulator.ConsiderHistory(entry);
+            }
+
+            var results = accumulators.Values
+                .Select(accumulator => BuildMigrationOrphanResponse(accumulator, progress, normalizedUserId))
+                .OrderByDescending(static item => item.LatestHistory?.LastViewedAtUtc ?? item.Progress?.LastViewedAtUtc ?? string.Empty, StringComparer.Ordinal)
+                .ThenBy(static item => item.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            IReadOnlyList<MigrationOrphanedItemResponse> payload = results;
+            return JsonSerializer.Serialize(
+                payload,
+                PluginHostExportsJsonContext.Default.IReadOnlyListMigrationOrphanedItemResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Checks whether an orphaned media item can migrate to a target plugin.
+    /// </summary>
+    /// <param name="requestJson">The serialized migration check request.</param>
+    /// <param name="userId">The user or library scope to inspect.</param>
+    /// <returns>A JSON migration check payload, or <see langword="null"/> when the operation fails.</returns>
+    public static string? CheckMigrationJsonManaged(
+        string requestJson,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Migration check payload is required.");
+                return null;
+            }
+
+            var request = JsonSerializer.Deserialize(
+                requestJson,
+                PluginHostExportsJsonContext.Default.MigrationCheckRequest);
+            if (request is null)
+            {
+                SetLastError("Invalid migration check payload.");
+                return null;
+            }
+
+            var response = BuildMigrationCheckResponse(
+                request.MediaId,
+                request.OrphanedPluginId,
+                request.Title,
+                request.MediaType,
+                request.TargetPluginId,
+                request.QueryOverride,
+                request.TargetMediaId,
+                string.IsNullOrWhiteSpace(userId) ? DefaultProgressUserId : userId);
+
+            return JsonSerializer.Serialize(
+                response,
+                PluginHostExportsJsonContext.Default.MigrationCheckResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Executes a migration from an orphaned media item to a target plugin.
+    /// </summary>
+    /// <param name="requestJson">The serialized migration execution request.</param>
+    /// <param name="userId">The user or library scope to mutate.</param>
+    /// <returns>A JSON execution payload, or <see langword="null"/> when the operation fails.</returns>
+    public static string? ExecuteMigrationJsonManaged(
+        string requestJson,
+        string userId = DefaultProgressUserId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+
+            if (string.IsNullOrWhiteSpace(requestJson))
+            {
+                SetLastError("Migration execution payload is required.");
+                return null;
+            }
+
+            var request = JsonSerializer.Deserialize(
+                requestJson,
+                PluginHostExportsJsonContext.Default.MigrationExecutionRequest);
+            if (request is null)
+            {
+                SetLastError("Invalid migration execution payload.");
+                return null;
+            }
+
+            var response = ExecuteMigrationInternal(
+                request,
+                string.IsNullOrWhiteSpace(userId) ? DefaultProgressUserId : userId);
+
+            return JsonSerializer.Serialize(
+                response,
+                PluginHostExportsJsonContext.Default.MigrationExecutionResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
     // ==================== FFI Boundary (UnmanagedCallersOnly) ====================
 
+    /// <summary>
+    /// Initializes the embedded plugin host from unmanaged code.
+    /// </summary>
+    /// <param name="manifestsDirUtf8">A UTF-8 pointer to the manifest directory path.</param>
+    /// <param name="sandboxDirUtf8">A UTF-8 pointer to the sandbox directory path.</param>
+    /// <returns><c>0</c> when initialization succeeds; otherwise <c>-1</c>.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_initialize")]
     public static int Initialize(IntPtr manifestsDirUtf8, IntPtr sandboxDirUtf8)
     {
@@ -4834,12 +5511,19 @@ public static class PluginHostExports
         return InitializeManaged(manifestsDir, sandboxDir);
     }
 
+    /// <summary>
+    /// Shuts down the embedded plugin host from unmanaged code.
+    /// </summary>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_shutdown")]
     public static void Shutdown()
     {
         ShutdownManaged();
     }
 
+    /// <summary>
+    /// Lists discovered plugins for unmanaged callers.
+    /// </summary>
+    /// <returns>A UTF-8 string pointer containing plugin JSON, or <see cref="IntPtr.Zero"/> on failure.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_list_plugins_json")]
     public static IntPtr ListPluginsJson()
     {
@@ -4847,6 +5531,12 @@ public static class PluginHostExports
         return json != null ? AllocUtf8(json) : IntPtr.Zero;
     }
 
+    /// <summary>
+    /// Executes a plugin search for unmanaged callers.
+    /// </summary>
+    /// <param name="pluginIdUtf8">A UTF-8 pointer to the plugin identifier.</param>
+    /// <param name="queryUtf8">A UTF-8 pointer to the search query.</param>
+    /// <returns>A UTF-8 string pointer containing search JSON, or <see cref="IntPtr.Zero"/> on failure.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_search_json")]
     public static IntPtr SearchJson(IntPtr pluginIdUtf8, IntPtr queryUtf8)
     {
@@ -4856,6 +5546,10 @@ public static class PluginHostExports
         return json != null ? AllocUtf8(json) : IntPtr.Zero;
     }
 
+    /// <summary>
+    /// Gets the last host error for unmanaged callers.
+    /// </summary>
+    /// <returns>A UTF-8 string pointer containing the last error, or <see cref="IntPtr.Zero"/> when no error is available.</returns>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_last_error")]
     public static IntPtr LastError()
     {
@@ -4863,6 +5557,10 @@ public static class PluginHostExports
         return error != null ? AllocUtf8(error) : IntPtr.Zero;
     }
 
+    /// <summary>
+    /// Frees a UTF-8 string allocated by the unmanaged host boundary.
+    /// </summary>
+    /// <param name="value">The pointer previously returned by a host export.</param>
     [UnmanagedCallersOnly(EntryPoint = "plugin_host_string_free")]
     public static void StringFree(IntPtr value)
     {
@@ -5358,6 +6056,179 @@ public static class PluginHostExports
             metadata);
     }
 
+    private static MediaSummary? EnrichGrpcPluginSearchMedia(string pluginId, Uri address, MediaSummary media)
+    {
+        var correlationId = Guid.NewGuid().ToString("n");
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+        var headers = BuildGrpcHeaders(pluginId, correlationId);
+
+        var request = new PluginContracts.EnrichSearchItemsRequest
+        {
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        };
+
+        request.Items.Add(MapPluginSearchContract(media));
+        var response = client.EnrichSearchItemsAsync(request, headers: headers, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        var enriched = response.Results.FirstOrDefault();
+        return enriched is null ? media : MapPluginSearchSummary(enriched);
+    }
+
+    private static IReadOnlyList<SearchSuggestionItem> SearchGrpcPluginSuggestions(
+        string pluginId,
+        Uri? address,
+        SearchSuggestionRequest request,
+        string? correlationId)
+    {
+        if (address is null)
+        {
+            SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+            return [];
+        }
+
+        var resolvedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+            ? Guid.NewGuid().ToString("n")
+            : correlationId;
+        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+        var channel = GetOrCreateChannel(address);
+        var client = new PluginContracts.SearchProvider.SearchProviderClient(channel);
+        var headers = BuildGrpcHeaders(pluginId, resolvedCorrelationId!);
+
+        var grpcRequest = new PluginContracts.SearchSuggestionsRequest
+        {
+            ControlId = request.ControlId,
+            Query = request.Query,
+            Limit = request.Limit ?? 0,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = resolvedCorrelationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        };
+
+        if (request.SearchQuery is { } searchQuery)
+        {
+            grpcRequest.Search = BuildGrpcSearchRequest(searchQuery, resolvedCorrelationId!, deadlineUtc);
+        }
+
+        var response = client.SearchSuggestionsAsync(grpcRequest, headers: headers, cancellationToken: CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+
+        return [.. response.Suggestions.Select(static suggestion => new SearchSuggestionItem(
+            suggestion.Value ?? string.Empty,
+            suggestion.Label ?? string.Empty,
+            string.IsNullOrWhiteSpace(suggestion.Description) ? null : suggestion.Description))];
+    }
+
+    private static PluginContracts.SearchRequest BuildGrpcSearchRequest(
+        PluginSearchQuery query,
+        string correlationId,
+        DateTimeOffset deadlineUtc)
+    {
+        var request = new PluginContracts.SearchRequest
+        {
+            Query = query.Query ?? string.Empty,
+            Context = new PluginContracts.RequestContext
+            {
+                CorrelationId = correlationId,
+                DeadlineUtc = deadlineUtc.ToString("O")
+            }
+        };
+
+        if (query.MediaTypes.Count > 0)
+        {
+            request.MediaTypes.AddRange(query.MediaTypes);
+        }
+
+        foreach (var filter in query.Filters)
+        {
+            var grpcFilter = new PluginContracts.SearchFilter
+            {
+                Id = filter.Id,
+                Operation = filter.Operation ?? string.Empty
+            };
+            grpcFilter.Values.AddRange(filter.Values);
+            request.Filters.Add(grpcFilter);
+        }
+
+        foreach (var addition in query.QueryAdditions)
+        {
+            request.QueryAdditions.Add(new PluginContracts.SearchQueryAddition
+            {
+                Id = addition.Id,
+                Value = addition.Value,
+                Type = addition.Type ?? string.Empty
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Sort))
+        {
+            request.Sort = query.Sort;
+        }
+
+        if (query.Page is int page && page >= 0)
+        {
+            request.Page = page;
+        }
+
+        if (query.PageSize is int pageSize && pageSize > 0)
+        {
+            request.PageSize = pageSize;
+        }
+
+        return request;
+    }
+
+    private static PluginContracts.MediaSummary MapPluginSearchContract(MediaSummary media)
+    {
+        var result = new PluginContracts.MediaSummary
+        {
+            Id = media.Id.Value,
+            Source = media.SourceId,
+            Title = media.Title,
+            MediaType = ToMediaTypeString(media.MediaType),
+            ThumbnailUrl = media.ThumbnailUrl ?? string.Empty,
+            Description = media.Description ?? string.Empty
+        };
+
+        if (media.Metadata is { Count: > 0 })
+        {
+            result.Metadata.AddRange(media.Metadata.Select(static entry => new PluginContracts.KeyValue
+            {
+                Key = entry.Key,
+                Value = entry.Value
+            }));
+        }
+
+        return result;
+    }
+
+    private static Uri BuildPluginHostUri(Uri baseUri, string path)
+    {
+        var combinedPath = $"{baseUri.AbsolutePath.TrimEnd('/')}/{path.TrimStart('/')}";
+        if (!combinedPath.StartsWith('/'))
+        {
+            combinedPath = "/" + combinedPath;
+        }
+
+        var builder = new UriBuilder(baseUri)
+        {
+            Path = combinedPath,
+            Query = string.Empty,
+            Fragment = string.Empty
+        };
+
+        return builder.Uri;
+    }
+
     private static MediaType ParseMediaType(string? value)
     {
         var normalized = (value ?? string.Empty).Trim();
@@ -5528,6 +6399,807 @@ public static class PluginHostExports
 
         return Encoding.UTF8.GetString(stream.ToArray());
     }
+
+    private static MigrationCheckResponse BuildMigrationCheckResponse(
+        string mediaId,
+        string orphanedPluginId,
+        string title,
+        string mediaType,
+        string targetPluginId,
+        string? queryOverride,
+        string? targetMediaId,
+        string userId)
+    {
+        if (string.IsNullOrWhiteSpace(mediaId))
+        {
+            throw new InvalidOperationException("Media ID is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(targetPluginId))
+        {
+            throw new InvalidOperationException("Target plugin ID is required.");
+        }
+
+        if (!TryResolvePlugin(targetPluginId, out _, out _))
+        {
+            throw new InvalidOperationException(GetLastErrorManaged() ?? "Target plugin could not be opened.");
+        }
+
+        var sourceState = LoadMigrationSourceState(mediaId, orphanedPluginId, mediaType, userId);
+        var matchQuery = string.IsNullOrWhiteSpace(queryOverride)
+            ? (!string.IsNullOrWhiteSpace(title) ? title : mediaId)
+            : queryOverride.Trim();
+
+        var searchResults = SearchMediaManaged(targetPluginId, matchQuery) ?? [];
+        var matches = searchResults
+            .Where(result => IsMigrationMatchCandidate(result, title, mediaType, targetMediaId))
+            .Select(result => new
+            {
+                Media = result,
+                Score = ScoreMigrationMatch(result, title, mediaType, targetMediaId)
+            })
+            .OrderByDescending(static item => item.Score)
+            .ThenBy(static item => item.Media.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+        var payloadMatches = matches
+            .Select(item => new MigrationMatchResponse(
+                item.Media.Id.Value,
+                item.Media.Title,
+                ToMediaTypeString(item.Media.MediaType),
+                item.Media.ThumbnailUrl,
+                item.Score,
+                string.Equals(NormalizeMigrationText(item.Media.Title), NormalizeMigrationText(title), StringComparison.Ordinal)))
+            .ToList();
+
+        var selected = matches
+            .Select(static item => item.Media)
+            .FirstOrDefault(media => !string.IsNullOrWhiteSpace(targetMediaId)
+                ? string.Equals(media.Id.Value, targetMediaId, StringComparison.Ordinal)
+                : true);
+
+        var blockers = new List<string>();
+        var warnings = new List<string>();
+
+        if (selected is null)
+        {
+            blockers.Add("No sufficiently similar media item was found in the selected target plugin.");
+            return new MigrationCheckResponse(
+                false,
+                null,
+                null,
+                null,
+                null,
+                sourceState.Libraries.Count > 0,
+                false,
+                false,
+                sourceState.Libraries,
+                warnings,
+                blockers,
+                payloadMatches);
+        }
+
+        var canMigrateLibrary = sourceState.Libraries.Count > 0;
+        var canMigrateHistory = false;
+        var canMigrateProgress = false;
+
+        if (sourceState.HistoryEntries.Count == 0)
+        {
+            warnings.Add("No persisted history entries were found for this orphaned media item.");
+        }
+
+        if (IsVideoLikeMediaType(mediaType))
+        {
+            canMigrateHistory = sourceState.HistoryEntries.Count > 0;
+            canMigrateProgress = sourceState.Progress is not null || sourceState.HistoryEntries.Count > 0;
+        }
+        else
+        {
+            var targetChapters = GetChaptersManagedInternal(targetPluginId, selected.Id.Value, forceRefresh: false) ?? [];
+            var targetChapterIds = targetChapters
+                .Select(static chapter => chapter.ChapterId)
+                .Where(static chapterId => !string.IsNullOrWhiteSpace(chapterId))
+                .ToHashSet(StringComparer.Ordinal);
+
+            var sourceChapterIds = sourceState.HistoryEntries
+                .Where(static entry => entry.EntryId.StartsWith("paged::", StringComparison.Ordinal))
+                .Select(static entry => entry.ExternalId)
+                .Where(static externalId => !string.IsNullOrWhiteSpace(externalId))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var mappedHistoryCount = sourceChapterIds.Count(chapterId => targetChapterIds.Contains(chapterId));
+            canMigrateHistory = mappedHistoryCount > 0;
+            if (sourceChapterIds.Count > 0 && mappedHistoryCount < sourceChapterIds.Count)
+            {
+                warnings.Add($"Only {mappedHistoryCount} of {sourceChapterIds.Count} chapter history entries matched exact chapter IDs in the target plugin.");
+            }
+
+            if (sourceState.Progress is null)
+            {
+                warnings.Add("No persisted paged progress was found for this orphaned media item.");
+            }
+            else if (!string.IsNullOrWhiteSpace(sourceState.Progress.ChapterId)
+                     && targetChapterIds.Contains(sourceState.Progress.ChapterId))
+            {
+                canMigrateProgress = true;
+            }
+            else if (!string.IsNullOrWhiteSpace(sourceState.Progress.ChapterId))
+            {
+                blockers.Add("Current paged progress chapter ID does not exist in the target plugin.");
+            }
+        }
+
+        return new MigrationCheckResponse(
+            true,
+            selected.Id.Value,
+            selected.Title,
+            ToMediaTypeString(selected.MediaType),
+            selected.ThumbnailUrl,
+            canMigrateLibrary,
+            canMigrateProgress,
+            canMigrateHistory,
+            sourceState.Libraries,
+            warnings,
+            blockers,
+            payloadMatches);
+    }
+
+    private static MigrationExecutionResponse ExecuteMigrationInternal(
+        MigrationExecutionRequest request,
+        string userId)
+    {
+        var check = BuildMigrationCheckResponse(
+            request.MediaId,
+            request.OrphanedPluginId,
+            request.Title,
+            request.MediaType,
+            request.TargetPluginId,
+            request.QueryOverride,
+            request.TargetMediaId,
+            userId);
+
+        if (!check.HasMatch || string.IsNullOrWhiteSpace(check.SelectedTargetMediaId))
+        {
+            return new MigrationExecutionResponse(
+                false,
+                null,
+                0,
+                0,
+                0,
+                false,
+                check.Warnings,
+                check.Blockers.Count > 0 ? check.Blockers : ["No target media match was selected."]);
+        }
+
+        var matchQuery = string.IsNullOrWhiteSpace(request.QueryOverride)
+            ? (!string.IsNullOrWhiteSpace(request.Title) ? request.Title : request.MediaId)
+            : request.QueryOverride.Trim();
+        var targetMedia = (SearchMediaManaged(request.TargetPluginId, matchQuery) ?? [])
+            .FirstOrDefault(media => string.Equals(media.Id.Value, check.SelectedTargetMediaId, StringComparison.Ordinal));
+        if (targetMedia is null)
+        {
+            return new MigrationExecutionResponse(
+                false,
+                check.SelectedTargetMediaId,
+                0,
+                0,
+                0,
+                false,
+                check.Warnings,
+                ["Target media could not be resolved before migration was executed."]);
+        }
+
+        var sourceState = LoadMigrationSourceState(request.MediaId, request.OrphanedPluginId, request.MediaType, userId);
+        var warnings = new List<string>(check.Warnings);
+        var errors = new List<string>();
+        var librariesAdded = 0;
+        var historyEntriesMigrated = 0;
+        var historyEntriesSkipped = 0;
+
+        foreach (var libraryName in sourceState.Libraries)
+        {
+            var added = AddMediaToLibraryManaged(
+                targetMedia.Id.Value,
+                request.TargetPluginId,
+                targetMedia.Title,
+                ToMediaTypeString(targetMedia.MediaType),
+                libraryName,
+                BuildMigrationDescriptionPayload(targetMedia.Description, targetMedia.Metadata),
+                targetMedia.ThumbnailUrl);
+            if (added == 0)
+            {
+                errors.Add($"Failed to add target media to library '{libraryName}': {GetLastErrorManaged() ?? "unknown error"}");
+            }
+            else
+            {
+                librariesAdded++;
+            }
+        }
+
+        var history = _serviceProvider!.GetRequiredService<IHistoryPort>();
+        IReadOnlyDictionary<string, string> pagedChapterMap = new Dictionary<string, string>();
+        if (!IsVideoLikeMediaType(request.MediaType))
+        {
+            var targetChapters = GetChaptersManagedInternal(request.TargetPluginId, targetMedia.Id.Value, forceRefresh: false) ?? [];
+            pagedChapterMap = targetChapters
+                .Where(static chapter => !string.IsNullOrWhiteSpace(chapter.ChapterId))
+                .ToDictionary(static chapter => chapter.ChapterId, static chapter => chapter.ChapterId, StringComparer.Ordinal);
+        }
+
+        foreach (var entry in sourceState.HistoryEntries)
+        {
+            string targetExternalId;
+            string targetEntryId;
+
+            if (IsVideoLikeMediaType(request.MediaType))
+            {
+                targetExternalId = targetMedia.Id.Value;
+                targetEntryId = BuildMigrationHistoryEntryId(
+                    isVideoLike: true,
+                    userId: userId,
+                    pluginId: request.TargetPluginId,
+                    mediaId: targetMedia.Id.Value,
+                    externalId: targetExternalId);
+            }
+            else
+            {
+                if (!pagedChapterMap.TryGetValue(entry.ExternalId, out targetExternalId!))
+                {
+                    historyEntriesSkipped++;
+                    continue;
+                }
+
+                targetEntryId = BuildMigrationHistoryEntryId(
+                    isVideoLike: false,
+                    userId: userId,
+                    pluginId: request.TargetPluginId,
+                    mediaId: targetMedia.Id.Value,
+                    externalId: targetExternalId);
+            }
+
+            history.UpsertAsync(
+                    new MediaHistoryEntry(
+                        targetEntryId,
+                        MediaId.Create(targetMedia.Id.Value),
+                        request.TargetPluginId,
+                        targetExternalId,
+                        userId,
+                        entry.Position,
+                        entry.Completed,
+                        entry.LastViewedAtUtc),
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            historyEntriesMigrated++;
+        }
+
+        var canRemoveSource = request.RemoveOrphanedEntriesAfterSuccess
+            && errors.Count == 0
+            && historyEntriesSkipped == 0;
+        var sourceEntriesRemoved = false;
+
+        if (request.RemoveOrphanedEntriesAfterSuccess && !canRemoveSource)
+        {
+            warnings.Add("Source cleanup was skipped because the migration completed only partially.");
+        }
+
+        if (canRemoveSource)
+        {
+            foreach (var libraryName in sourceState.Libraries)
+            {
+                RemoveMediaFromLibraryManaged(request.MediaId, libraryName);
+            }
+
+            DeleteHistoryForMediaManaged(request.MediaId, request.OrphanedPluginId, userId);
+            sourceEntriesRemoved = true;
+        }
+
+        return new MigrationExecutionResponse(
+            errors.Count == 0,
+            targetMedia.Id.Value,
+            librariesAdded,
+            historyEntriesMigrated,
+            historyEntriesSkipped,
+            sourceEntriesRemoved,
+            warnings,
+            errors);
+    }
+
+    private static MigrationSourceState LoadMigrationSourceState(
+        string mediaId,
+        string orphanedPluginId,
+        string mediaType,
+        string userId)
+    {
+        var serviceProvider = _serviceProvider!;
+        var library = serviceProvider.GetRequiredService<ILibraryPort>();
+        var history = serviceProvider.GetRequiredService<IHistoryPort>();
+        var progress = serviceProvider.GetRequiredService<IProgressPort>();
+
+        var libraries = library.ListLibrariesAsync(CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
+            .Select(FromLibraryStorageKey)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Where(name => library.GetLibraryAsync(ToLibraryStorageKey(name), CancellationToken.None)
+                .GetAwaiter()
+                .GetResult()
+                .Any(entry => string.Equals(entry.MediaId.Value, mediaId, StringComparison.Ordinal)
+                              && string.Equals(entry.SourceId, orphanedPluginId ?? string.Empty, StringComparison.Ordinal)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var historyEntries = history.GetHistoryAsync(userId, 10000, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult()
+            .Where(entry => string.Equals(entry.MediaId.Value, mediaId, StringComparison.Ordinal))
+            .Where(entry => string.Equals(entry.PluginId, orphanedPluginId ?? string.Empty, StringComparison.Ordinal))
+            .OrderByDescending(static entry => entry.LastViewedAtUtc)
+            .ToList();
+
+        var resolvedMediaType = NormalizeMigrationMediaType(mediaType, historyEntries.FirstOrDefault()?.EntryId);
+        MediaProgressResponse? progressPayload = null;
+        if (IsVideoLikeMediaType(resolvedMediaType))
+        {
+            var video = progress.GetVideoProgressAsync(
+                    MediaId.Create(mediaId),
+                    orphanedPluginId ?? string.Empty,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (video is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    ToVideoLikeMediaTypeString(resolvedMediaType),
+                    null,
+                    null,
+                    video.PositionSeconds,
+                    video.Completed,
+                    video.LastViewedAtUtc.ToString("O"));
+            }
+        }
+        else
+        {
+            var paged = progress.GetPagedProgressAsync(
+                    MediaId.Create(mediaId),
+                    orphanedPluginId ?? string.Empty,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (paged is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    "paged",
+                    paged.ChapterId,
+                    paged.PageIndex,
+                    null,
+                    paged.Completed,
+                    paged.LastViewedAtUtc.ToString("O"));
+            }
+        }
+
+        return new MigrationSourceState(libraries, historyEntries, progressPayload, resolvedMediaType);
+    }
+
+    private static MigrationOrphanedItemResponse BuildMigrationOrphanResponse(
+        MigrationOrphanAccumulator accumulator,
+        IProgressPort progress,
+        string userId)
+    {
+        var resolvedMediaType = NormalizeMigrationMediaType(accumulator.MediaType, accumulator.LatestHistory?.EntryId);
+        MediaProgressResponse? progressPayload = null;
+
+        if (IsVideoLikeMediaType(resolvedMediaType))
+        {
+            var video = progress.GetVideoProgressAsync(
+                    MediaId.Create(accumulator.MediaId),
+                    accumulator.OrphanedPluginId,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (video is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    ToVideoLikeMediaTypeString(resolvedMediaType),
+                    null,
+                    null,
+                    video.PositionSeconds,
+                    video.Completed,
+                    video.LastViewedAtUtc.ToString("O"));
+            }
+        }
+        else
+        {
+            var paged = progress.GetPagedProgressAsync(
+                    MediaId.Create(accumulator.MediaId),
+                    accumulator.OrphanedPluginId,
+                    userId,
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            if (paged is not null)
+            {
+                progressPayload = new MediaProgressResponse(
+                    "paged",
+                    paged.ChapterId,
+                    paged.PageIndex,
+                    null,
+                    paged.Completed,
+                    paged.LastViewedAtUtc.ToString("O"));
+            }
+        }
+
+        return new MigrationOrphanedItemResponse(
+            accumulator.MediaId,
+            accumulator.OrphanedPluginId,
+            string.IsNullOrWhiteSpace(accumulator.Title) ? accumulator.MediaId : accumulator.Title,
+            resolvedMediaType,
+            accumulator.ThumbnailUrl,
+            accumulator.Description,
+            accumulator.Metadata.Count == 0 ? null : accumulator.Metadata,
+            accumulator.Libraries.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList(),
+            progressPayload,
+            accumulator.LatestHistory is null ? null : new HistoryEntryResponse(
+                accumulator.LatestHistory.EntryId,
+                accumulator.LatestHistory.MediaId.Value,
+                accumulator.LatestHistory.PluginId,
+                accumulator.LatestHistory.ExternalId,
+                accumulator.LatestHistory.UserId,
+                accumulator.LatestHistory.Position,
+                accumulator.LatestHistory.Completed,
+                accumulator.LatestHistory.LastViewedAtUtc.ToString("O")),
+            accumulator.OrphanReason);
+    }
+
+    private static MigrationOrphanAccumulator GetOrCreateMigrationAccumulator(
+        IDictionary<string, MigrationOrphanAccumulator> accumulators,
+        string mediaId,
+        string orphanedPluginId,
+        MediaMetadata? metadata,
+        string orphanReason)
+    {
+        var key = $"{orphanedPluginId}\u001f{mediaId}";
+        if (accumulators.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        var created = new MigrationOrphanAccumulator(
+            mediaId,
+            orphanedPluginId ?? string.Empty,
+            metadata?.Title ?? mediaId,
+            metadata is null ? null : ToMediaTypeString(metadata.MediaType),
+            metadata?.ThumbnailUrl,
+            metadata?.Synopsis,
+            ParseMetadataAttributes(metadata?.Attributes),
+            orphanReason);
+        accumulators[key] = created;
+        return created;
+    }
+
+    private static MigrationPluginAvailability ResolveMigrationPluginAvailability(
+        string pluginId,
+        IDictionary<string, MigrationPluginAvailability> cache)
+    {
+        var key = pluginId ?? string.Empty;
+        if (cache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        MigrationPluginAvailability resolved;
+        if (string.IsNullOrWhiteSpace(pluginId))
+        {
+            resolved = new MigrationPluginAvailability(true, "Missing source/plugin ID.");
+        }
+        else
+        {
+            ClearLastError();
+            var isHealthy = TryResolvePlugin(pluginId, out _, out _);
+            var error = GetLastErrorManaged();
+            ClearLastError();
+
+            resolved = isHealthy
+                ? new MigrationPluginAvailability(false, string.Empty)
+                : new MigrationPluginAvailability(
+                    true,
+                    string.IsNullOrWhiteSpace(error)
+                        ? $"Plugin '{pluginId}' is unavailable."
+                        : error);
+        }
+
+        cache[key] = resolved;
+        return resolved;
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseMetadataAttributes(string? attributes)
+    {
+        if (string.IsNullOrWhiteSpace(attributes))
+        {
+            return new Dictionary<string, string>();
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(attributes);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return new Dictionary<string, string>();
+            }
+
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (string.IsNullOrWhiteSpace(property.Name))
+                {
+                    continue;
+                }
+
+                var value = property.Value.ValueKind switch
+                {
+                    JsonValueKind.String => property.Value.GetString(),
+                    JsonValueKind.Array => string.Join(", ", property.Value.EnumerateArray().Select(static item => item.ToString())),
+                    _ => property.Value.ToString(),
+                };
+
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    result[property.Name] = value;
+                }
+            }
+
+            return result;
+        }
+        catch
+        {
+            return new Dictionary<string, string>();
+        }
+    }
+
+    private static string NormalizeMigrationMediaType(string? mediaType, string? entryId)
+    {
+        if (IsVideoLikeMediaType(mediaType))
+        {
+            return ToVideoLikeMediaTypeString(mediaType);
+        }
+
+        if (string.Equals(mediaType, "paged", StringComparison.OrdinalIgnoreCase))
+        {
+            return "paged";
+        }
+
+        if (!string.IsNullOrWhiteSpace(entryId) && entryId.StartsWith("video::", StringComparison.Ordinal))
+        {
+            return "video";
+        }
+
+        return "paged";
+    }
+
+    private static int ScoreMigrationMatch(
+        MediaSummary candidate,
+        string sourceTitle,
+        string sourceMediaType,
+        string? requestedTargetMediaId)
+    {
+        var score = 0;
+
+        if (!string.IsNullOrWhiteSpace(requestedTargetMediaId)
+            && string.Equals(candidate.Id.Value, requestedTargetMediaId, StringComparison.Ordinal))
+        {
+            score += 1000;
+        }
+
+        var normalizedSourceTitle = NormalizeMigrationText(sourceTitle);
+        var normalizedCandidateTitle = NormalizeMigrationText(candidate.Title);
+        if (!string.IsNullOrWhiteSpace(normalizedSourceTitle)
+            && string.Equals(normalizedSourceTitle, normalizedCandidateTitle, StringComparison.Ordinal))
+        {
+            score += 500;
+        }
+        else if (!string.IsNullOrWhiteSpace(normalizedSourceTitle)
+                 && !string.IsNullOrWhiteSpace(normalizedCandidateTitle)
+                 && (normalizedCandidateTitle.Contains(normalizedSourceTitle, StringComparison.Ordinal)
+                     || normalizedSourceTitle.Contains(normalizedCandidateTitle, StringComparison.Ordinal)))
+        {
+            score += 250;
+        }
+
+        var sourceTokens = normalizedSourceTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        var candidateTokens = normalizedCandidateTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        score += candidateTokens.Count(sourceTokens.Contains) * 25;
+
+        if (string.Equals(ToMediaTypeString(candidate.MediaType), NormalizeMigrationMediaType(sourceMediaType, null), StringComparison.OrdinalIgnoreCase))
+        {
+            score += 60;
+        }
+
+        return score;
+    }
+
+    private static bool IsMigrationMatchCandidate(
+        MediaSummary candidate,
+        string sourceTitle,
+        string sourceMediaType,
+        string? requestedTargetMediaId)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedTargetMediaId)
+            && string.Equals(candidate.Id.Value, requestedTargetMediaId, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var normalizedSourceTitle = NormalizeMigrationText(sourceTitle);
+        var normalizedCandidateTitle = NormalizeMigrationText(candidate.Title);
+        if (string.IsNullOrWhiteSpace(normalizedSourceTitle)
+            || string.IsNullOrWhiteSpace(normalizedCandidateTitle))
+        {
+            return false;
+        }
+
+        if (string.Equals(normalizedSourceTitle, normalizedCandidateTitle, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (normalizedCandidateTitle.Contains(normalizedSourceTitle, StringComparison.Ordinal)
+            || normalizedSourceTitle.Contains(normalizedCandidateTitle, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var sourceTokens = normalizedSourceTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        var candidateTokens = normalizedCandidateTitle
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        if (sourceTokens.Count == 0 || candidateTokens.Count == 0)
+        {
+            return false;
+        }
+
+        var sharedTokenCount = sourceTokens.Intersect(candidateTokens, StringComparer.Ordinal).Count();
+        if (sharedTokenCount == 0)
+        {
+            return false;
+        }
+
+        var smallerTokenCount = Math.Min(sourceTokens.Count, candidateTokens.Count);
+        var largerTokenCount = Math.Max(sourceTokens.Count, candidateTokens.Count);
+        var sharedCoverage = (double)sharedTokenCount / smallerTokenCount;
+        var overlapRatio = (double)sharedTokenCount / largerTokenCount;
+        if (smallerTokenCount == 1)
+        {
+            return sharedCoverage >= 1d;
+        }
+
+        if (sharedTokenCount >= 2 && (sharedCoverage >= 0.6d || overlapRatio >= 0.5d))
+        {
+            return true;
+        }
+
+        var candidateMediaType = ToMediaTypeString(candidate.MediaType);
+        return string.Equals(candidateMediaType, NormalizeMigrationMediaType(sourceMediaType, null), StringComparison.OrdinalIgnoreCase)
+               && sharedCoverage >= 0.75d;
+    }
+
+    private static string NormalizeMigrationText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var chars = value.Trim().ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ')
+            .ToArray();
+        return string.Join(
+            ' ',
+            new string(chars)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    private static string BuildMigrationDescriptionPayload(
+        string? description,
+        IReadOnlyDictionary<string, string>? metadata)
+    {
+        var payload = new Dictionary<string, object?>();
+        if (!string.IsNullOrWhiteSpace(description))
+        {
+            payload["description"] = description;
+        }
+
+        if (metadata is not null)
+        {
+            foreach (var entry in metadata)
+            {
+                payload[entry.Key] = entry.Value;
+            }
+        }
+
+        return payload.Count == 0 ? string.Empty : SerializeMetadataAttributes(payload);
+    }
+
+    private static string BuildMigrationHistoryEntryId(
+        bool isVideoLike,
+        string userId,
+        string pluginId,
+        string mediaId,
+        string externalId)
+    {
+        return isVideoLike
+            ? $"video::{userId}::{pluginId}::{mediaId}"
+            : $"paged::{userId}::{pluginId}::{mediaId}::{externalId}";
+    }
+
+    private sealed record MigrationPluginAvailability(bool IsOrphaned, string Reason);
+
+    private sealed class MigrationOrphanAccumulator(
+        string mediaId,
+        string orphanedPluginId,
+        string title,
+        string? mediaType,
+        string? thumbnailUrl,
+        string? description,
+        IReadOnlyDictionary<string, string> metadata,
+        string orphanReason)
+    {
+        public string MediaId { get; } = mediaId;
+        public string OrphanedPluginId { get; } = orphanedPluginId;
+        public string Title { get; private set; } = title;
+        public string? MediaType { get; private set; } = mediaType;
+        public string? ThumbnailUrl { get; private set; } = thumbnailUrl;
+        public string? Description { get; private set; } = description;
+        public Dictionary<string, string> Metadata { get; } = new(metadata, StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> Libraries { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public MediaHistoryEntry? LatestHistory { get; private set; }
+        public string OrphanReason { get; } = orphanReason;
+
+        public void ApplyMetadata(MediaMetadata? metadata)
+        {
+            if (metadata is null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(Title) || string.Equals(Title, MediaId, StringComparison.Ordinal))
+            {
+                Title = metadata.Title;
+            }
+
+            MediaType ??= ToMediaTypeString(metadata.MediaType);
+            ThumbnailUrl ??= metadata.ThumbnailUrl;
+            Description ??= metadata.Synopsis;
+            foreach (var entry in ParseMetadataAttributes(metadata.Attributes))
+            {
+                Metadata[entry.Key] = entry.Value;
+            }
+        }
+
+        public void ConsiderHistory(MediaHistoryEntry entry)
+        {
+            if (LatestHistory is null || entry.LastViewedAtUtc > LatestHistory.LastViewedAtUtc)
+            {
+                LatestHistory = entry;
+            }
+        }
+    }
+
+    private sealed record MigrationSourceState(
+        IReadOnlyList<string> Libraries,
+        IReadOnlyList<MediaHistoryEntry> HistoryEntries,
+        MediaProgressResponse? Progress,
+        string MediaType);
 
     private static void WriteJsonValue(Utf8JsonWriter writer, string propertyName, object? value)
     {

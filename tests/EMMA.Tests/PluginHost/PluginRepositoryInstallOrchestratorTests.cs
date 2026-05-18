@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using EMMA.Domain;
+using EMMA.Plugin.Common;
 using EMMA.PluginHost.Configuration;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
@@ -666,6 +667,14 @@ public sealed class PluginRepositoryInstallOrchestratorTests
         }
 
         public Task<IReadOnlyList<MediaSummary>> SearchAsync(PluginRecord record, string query, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<SearchSuggestionItem>> GetSearchSuggestionsAsync(
+            PluginRecord record,
+            SearchSuggestionRequest request,
+            CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
         }

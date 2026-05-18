@@ -3,8 +3,23 @@ using EMMA.PluginHost.Sandboxing;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Represents an error encountered while resolving a plugin runtime endpoint.
+/// </summary>
+/// <param name="Message">The error message.</param>
+/// <param name="StatusCode">The HTTP-style status code associated with the error.</param>
 public sealed record PluginResolutionError(string Message, int StatusCode);
 
+/// <summary>
+/// Resolves plugin manifests to active runtime records and endpoints.
+/// </summary>
+/// <param name="registry">The plugin registry.</param>
+/// <param name="manifestLoader">The manifest loader.</param>
+/// <param name="sandboxManager">The sandbox manager.</param>
+/// <param name="processManager">The plugin process manager.</param>
+/// <param name="handshakeService">The handshake service.</param>
+/// <param name="wasmRuntimeHost">The WASM runtime host.</param>
+/// <param name="endpointAllocator">The endpoint allocator.</param>
 public sealed class PluginResolutionService(
     PluginRegistry registry,
     PluginManifestLoader manifestLoader,
@@ -22,6 +37,12 @@ public sealed class PluginResolutionService(
     private readonly IWasmPluginRuntimeHost _wasmRuntimeHost = wasmRuntimeHost;
     private readonly Plugins.PluginEndpointAllocator _endpointAllocator = endpointAllocator;
 
+    /// <summary>
+    /// Resolves a plugin identifier to its current record, runtime address, or an error result.
+    /// </summary>
+    /// <param name="pluginId">The optional plugin identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A tuple containing the plugin record, resolved address, and any resolution error.</returns>
     public async Task<(PluginRecord? Record, Uri? Address, PluginResolutionError? Error)> ResolveAsync(
         string? pluginId,
         CancellationToken cancellationToken)
@@ -160,7 +181,7 @@ public sealed class PluginResolutionService(
                     503));
         }
 
-        if (record.Runtime.State != PluginRuntimeState.External && !record.Status.Success)
+        if (!record.Status.Success)
         {
             return (
                 record,

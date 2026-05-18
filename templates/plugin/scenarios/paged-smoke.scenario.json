@@ -1,0 +1,23 @@
+{
+  "name": "paged-smoke",
+  "displayName": "Paged Smoke",
+  "description": "Verifies that a freshly scaffolded plugin can execute a search without errors while its provider hooks still return empty stub results.",
+  "defaultQuery": "template",
+  "queryLabel": "Paged query",
+  "steps": [
+    {
+      "op": "search",
+      "query": "$query",
+      "save": "results"
+    },
+    {
+      "op": "requireCount",
+      "from": "$results",
+      "max": 0
+    },
+    {
+      "op": "log",
+      "message": "Template scaffold returned no results, which is expected until Search, GetChapters, and GetPage are implemented."
+    }
+  ]
+}

@@ -116,5 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_media_source ON media(source_id);
 CREATE INDEX IF NOT EXISTS idx_media_type ON media(media_type);
 CREATE INDEX IF NOT EXISTS idx_media_pages_media_chapter ON media_pages(media_id, chapter_id, page_index);
 CREATE INDEX IF NOT EXISTS idx_history_user ON history(user_id, last_viewed_at);
+CREATE INDEX IF NOT EXISTS idx_history_progress_lookup
+    ON history(user_id, plugin_id, media_id, id, last_viewed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_plugins_status ON plugins(status);
 CREATE INDEX IF NOT EXISTS idx_library_user_media ON library(user_id, media_id);

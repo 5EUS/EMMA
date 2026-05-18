@@ -1,7 +1,17 @@
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Provides helpers for parsing CLI operation names and arguments.
+/// </summary>
 public static class PluginCliOperations
 {
+    /// <summary>
+    /// Finds the first recognized operation in the CLI argument list and returns the remaining arguments for that operation.
+    /// </summary>
+    /// <param name="args">The raw CLI arguments to inspect.</param>
+    /// <param name="knownOperations">The operation names that can be matched from the argument list.</param>
+    /// <param name="maxProbe">The maximum number of leading arguments to probe for an operation name.</param>
+    /// <returns>A tuple containing the normalized operation name and the remaining operation-specific arguments.</returns>
     public static (string Operation, string[] Args) NormalizeOperationArgs(
         string[] args,
         IReadOnlySet<string> knownOperations,

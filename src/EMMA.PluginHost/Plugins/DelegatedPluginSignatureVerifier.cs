@@ -7,6 +7,9 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Plugins;
 
+/// <summary>
+/// Verifies plugin manifest signatures against repository delegation metadata and trusted root keys.
+/// </summary>
 public sealed class DelegatedPluginSignatureVerifier(
     IOptions<PluginSignatureOptions> options,
     IOptions<PluginHostOptions> hostOptions,
@@ -18,6 +21,12 @@ public sealed class DelegatedPluginSignatureVerifier(
     private readonly PluginHostOptions _hostOptions = hostOptions.Value;
     private readonly ILogger<DelegatedPluginSignatureVerifier> _logger = logger;
 
+    /// <summary>
+    /// Verifies that the supplied plugin manifest contains a valid delegated signature.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest to verify.</param>
+    /// <param name="reason">When verification fails, receives a descriptive failure reason.</param>
+    /// <returns><see langword="true"/> when the manifest signature is valid; otherwise, <see langword="false"/>.</returns>
     public bool Verify(PluginManifest manifest, out string? reason)
     {
         reason = null;

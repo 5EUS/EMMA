@@ -1,7 +1,20 @@
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Registers common paged and video operation combinations on a dispatcher.
+/// </summary>
 public static class PluginOperationDispatcherPresets
 {
+    /// <summary>
+    /// Registers the standard paged-media operation handlers on a dispatcher.
+    /// </summary>
+    /// <param name="dispatcher">The dispatcher to configure.</param>
+    /// <param name="search">The handler for search requests.</param>
+    /// <param name="chapters">The handler for chapter listing requests.</param>
+    /// <param name="page">The handler for single-page requests.</param>
+    /// <param name="pages">The handler for page-range requests.</param>
+    /// <param name="supportsChapterRequests">An optional predicate that determines whether the current request supports paged chapter operations.</param>
+    /// <returns>The configured dispatcher.</returns>
     public static PluginOperationDispatcher RegisterPagedOperations(
         this PluginOperationDispatcher dispatcher,
         Func<OperationRequest, OperationResult> search,
@@ -28,6 +41,14 @@ public static class PluginOperationDispatcherPresets
                     : OperationResult.UnsupportedOperation(request.NormalizedOperation()));
     }
 
+    /// <summary>
+    /// Registers the standard video-media operation handlers on a dispatcher.
+    /// </summary>
+    /// <param name="dispatcher">The dispatcher to configure.</param>
+    /// <param name="videoStreams">The handler for video stream listing requests.</param>
+    /// <param name="videoSegment">The handler for video segment requests.</param>
+    /// <param name="supportsVideoRequests">An optional predicate that determines whether the current request supports video operations.</param>
+    /// <returns>The configured dispatcher.</returns>
     public static PluginOperationDispatcher RegisterVideoOperations(
         this PluginOperationDispatcher dispatcher,
         Func<OperationRequest, OperationResult> videoStreams,

@@ -7,6 +7,9 @@ using Microsoft.Extensions.Options;
 
 namespace EMMA.PluginHost.Services;
 
+/// <summary>
+/// Invokes WASM components through the native in-process runtime helper library.
+/// </summary>
 public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker, IDisposable
 {
     private const int NativeSuccess = 0;
@@ -22,11 +25,24 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
         DateTime LastWriteTimeUtc,
         long Length);
 
+    /// <summary>
+    /// Initializes a new invoker using the configured plugin host options.
+    /// </summary>
+    /// <param name="options">The plugin host options.</param>
     public NativeInProcessWasmComponentInvoker(IOptions<PluginHostOptions> options)
     {
         _pluginHostOptions = options.Value;
     }
 
+    /// <summary>
+    /// Invokes an operation on a WASM component using the native runtime bridge.
+    /// </summary>
+    /// <param name="componentPath">The component path.</param>
+    /// <param name="operation">The operation name.</param>
+    /// <param name="operationArgs">The operation arguments.</param>
+    /// <param name="permittedDomains">The permitted network domains.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The raw JSON response from the component.</returns>
     public Task<string> InvokeAsync(
         string componentPath,
         string operation,
@@ -142,6 +158,9 @@ public sealed class NativeInProcessWasmComponentInvoker : IWasmComponentInvoker,
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
+    /// <summary>
+    /// Releases cached native plugin handles.
+    /// </summary>
     public void Dispose()
     {
         if (_disposed)

@@ -4,13 +4,32 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EMMA.Plugin.AspNetCore;
 
+/// <summary>
+/// Records SDK-side metrics for plugin RPC activity.
+/// </summary>
 public interface IPluginSdkMetrics
 {
+    /// <summary>
+    /// Records a plugin RPC invocation outcome and duration.
+    /// </summary>
+    /// <param name="service">The logical service name being measured.</param>
+    /// <param name="method">The RPC method name being measured.</param>
+    /// <param name="outcome">The outcome label to associate with the request.</param>
+    /// <param name="durationMs">The request duration in milliseconds.</param>
     void RecordRpc(string service, string method, string outcome, double durationMs);
 }
 
+/// <summary>
+/// Adds SDK metrics services to an ASP.NET Core service collection.
+/// </summary>
 public static class PluginSdkMetricsServiceCollectionExtensions
 {
+    /// <summary>
+    /// Registers the default EMMA plugin metrics implementation for the current plugin.
+    /// </summary>
+    /// <param name="services">The service collection to add metrics services to.</param>
+    /// <param name="pluginId">The plugin identifier used on emitted telemetry tags.</param>
+    /// <returns>The same service collection for further configuration.</returns>
     public static IServiceCollection AddEmmaPluginMetrics(this IServiceCollection services, string pluginId)
     {
         ArgumentNullException.ThrowIfNull(services);

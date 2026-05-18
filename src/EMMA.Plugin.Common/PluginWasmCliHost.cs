@@ -1,7 +1,21 @@
 namespace EMMA.Plugin.Common;
 
+/// <summary>
+/// Hosts a single-operation WASM CLI execution loop.
+/// </summary>
 public static class PluginWasmCliHost
 {
+    /// <summary>
+    /// Runs the WASM CLI host loop for a single operation invocation.
+    /// </summary>
+    /// <param name="args">The raw CLI arguments.</param>
+    /// <param name="knownOperations">The set of supported operation names.</param>
+    /// <param name="executeOperation">The callback that executes the normalized operation.</param>
+    /// <param name="readPayload">An optional callback that reads input payload text.</param>
+    /// <param name="emitPayloadDiagnostics">An optional callback that emits payload diagnostics.</param>
+    /// <param name="output">An optional writer for normal output.</param>
+    /// <param name="error">An optional writer for error output.</param>
+    /// <returns><c>0</c> on success, <c>1</c> on host failure, or <c>2</c> when the operation is unsupported or invalid.</returns>
     public static int Run(
         string[] args,
         IReadOnlySet<string> knownOperations,

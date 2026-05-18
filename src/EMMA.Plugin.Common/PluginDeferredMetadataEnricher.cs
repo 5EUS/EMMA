@@ -11,6 +11,10 @@ public abstract class PluginDeferredMetadataEnricher<TItem, TMetadata>
     /// <summary>
     /// Enrich items with metadata on-demand.
     /// </summary>
+    /// <param name="items">The items to enrich.</param>
+    /// <param name="fetchMetadataAsync">The callback that fetches metadata keyed by item identifier.</param>
+    /// <param name="cancellationToken">The cancellation token for the enrichment flow.</param>
+    /// <returns>The original or enriched items in input order.</returns>
     public async Task<IReadOnlyList<TItem>> EnrichAsync(
         IEnumerable<TItem> items,
         Func<IReadOnlyList<string>, CancellationToken, Task<IReadOnlyDictionary<string, TMetadata>>> fetchMetadataAsync,
@@ -64,6 +68,10 @@ public abstract class PluginDeferredMetadataEnricher<TItem, TMetadata>
     /// <summary>
     /// Merge multiple metadata sources into item.
     /// </summary>
+    /// <param name="item">The item to enrich.</param>
+    /// <param name="metadataList">The metadata instances to merge into the item.</param>
+    /// <param name="cancellationToken">The cancellation token for the enrichment flow.</param>
+    /// <returns>The item after all metadata entries have been merged.</returns>
     protected async Task<TItem> EnrichItemAsync(
         TItem item,
         IReadOnlyList<TMetadata> metadataList,
@@ -87,6 +95,8 @@ public static class PluginDeferredMetadataEnricherHelpers
     /// <summary>
     /// Merge multiple source dictionaries into target dictionary.
     /// </summary>
+    /// <param name="target">The target dictionary to populate.</param>
+    /// <param name="sources">The source dictionaries to merge from.</param>
     public static void MergeDictionaries<TKey, TValue>(
         IDictionary<TKey, TValue> target,
         params IReadOnlyDictionary<TKey, TValue>[] sources)
@@ -112,6 +122,10 @@ public static class PluginDeferredMetadataEnricherHelpers
     /// <summary>
     /// Merge metadata lists, avoiding duplicates by key.
     /// </summary>
+    /// <param name="target">The existing target list.</param>
+    /// <param name="source">The new source list to append.</param>
+    /// <param name="keySelector">The callback that selects the deduplication key for each item.</param>
+    /// <returns>A merged list containing the target items followed by the source items.</returns>
     public static List<TItem> MergeLists<TItem, TKey>(
         IReadOnlyList<TItem> target,
         IReadOnlyList<TItem> source,

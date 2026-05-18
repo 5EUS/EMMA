@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using EMMA.Plugin.Common;
 
 namespace EMMA.Cli;
@@ -41,4 +42,6 @@ internal static class PluginDevJsonContexts
     public static readonly PluginDevJsonContext Config = new(ConfigOptions);
 
     public static readonly PluginDevJsonContext Runtime = new(RuntimeOptions);
+
+    public static JsonTypeInfo<PluginDevVideoStream[]> PluginDevVideoStreamArray => Runtime.PluginDevVideoStreamArray;
 }

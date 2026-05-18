@@ -7,14 +7,31 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EMMA.Plugin.AspNetCore;
 
+/// <summary>
+/// Describes the port and root-endpoint configuration for an ASP.NET Core plugin host.
+/// </summary>
+/// <param name="DefaultPort">The fallback port used when no override is present.</param>
+/// <param name="PortEnvironmentVariables">The environment variables inspected for port overrides.</param>
+/// <param name="PortArgumentName">The command-line argument name used for port overrides.</param>
+/// <param name="RootMessage">The message returned from the informational root endpoint.</param>
 public sealed record PluginAspNetHostOptions(
     int DefaultPort,
     IReadOnlyList<string> PortEnvironmentVariables,
     string PortArgumentName = "--port",
     string RootMessage = "EMMA plugin is running.");
 
+/// <summary>
+/// Creates and configures an ASP.NET Core host for EMMA plugin transports.
+/// </summary>
 public static class PluginAspNetHost
 {
+    /// <summary>
+    /// Creates a Kestrel-backed plugin host configured for EMMA gRPC traffic.
+    /// </summary>
+    /// <param name="args">The command-line arguments provided to the plugin process.</param>
+    /// <param name="options">The host port and root endpoint configuration.</param>
+    /// <param name="configureServices">Registers services required by the plugin host.</param>
+    /// <returns>A built web application configured to listen on the resolved loopback port.</returns>
     public static WebApplication Create(
         string[] args,
         PluginAspNetHostOptions options,
@@ -46,6 +63,11 @@ public static class PluginAspNetHost
         return builder.Build();
     }
 
+    /// <summary>
+    /// Maps the default informational root endpoint for the plugin host.
+    /// </summary>
+    /// <param name="app">The application to attach the endpoint to.</param>
+    /// <param name="options">The host options that provide the root response message.</param>
     public static void MapDefaultEndpoints(WebApplication app, PluginAspNetHostOptions options)
     {
         app.MapGet("/", () => options.RootMessage);
