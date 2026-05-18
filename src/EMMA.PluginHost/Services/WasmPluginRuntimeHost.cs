@@ -215,12 +215,12 @@ public sealed class WasmPluginRuntimeHost(
         }
     }
 
-        /// <summary>
-        /// Performs handshake for a WASM plugin.
-        /// </summary>
-        /// <param name="manifest">The plugin manifest.</param>
-        /// <param name="cancellationToken">The cancellation token.</param>
-        /// <returns>The handshake status.</returns>
+    /// <summary>
+    /// Performs handshake for a WASM plugin.
+    /// </summary>
+    /// <param name="manifest">The plugin manifest.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The handshake status.</returns>
     public async Task<PluginHandshakeStatus> HandshakeAsync(PluginManifest manifest, CancellationToken cancellationToken)
     {
         if (!_entrypointResolver.TryResolveWasmComponent(manifest, out var componentPath))

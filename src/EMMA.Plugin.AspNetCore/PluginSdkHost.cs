@@ -857,11 +857,11 @@ public sealed class PluginBuilder
             .AddDefaultPageProvider<TRuntime>();
     }
 
-            /// <summary>
-            /// Registers a video provider service for endpoint mapping.
-            /// </summary>
-            /// <typeparam name="TService">The video provider implementation type.</typeparam>
-            /// <returns>The current plugin builder.</returns>
+    /// <summary>
+    /// Registers a video provider service for endpoint mapping.
+    /// </summary>
+    /// <typeparam name="TService">The video provider implementation type.</typeparam>
+    /// <returns>The current plugin builder.</returns>
     public PluginBuilder AddVideoProvider<TService>() where TService : class
     {
         _endpointRegistrations += endpoints => endpoints.AddVideoProvider<TService>();

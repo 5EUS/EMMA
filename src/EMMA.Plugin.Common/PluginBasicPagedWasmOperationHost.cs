@@ -308,82 +308,82 @@ public abstract class PluginBasicPagedWasmOperationHost<TChapterOperationItem>
             _options.NetworkBenchmarkTypeInfo);
     }
 
-            /// <summary>
-            /// Fetches or resolves the search payload for a parsed query when no payload was provided by the caller.
-            /// </summary>
-            /// <param name="parsedQuery">The parsed search query.</param>
-            /// <returns>The resolved payload text, or <see langword="null"/> when no payload could be produced.</returns>
+    /// <summary>
+    /// Fetches or resolves the search payload for a parsed query when no payload was provided by the caller.
+    /// </summary>
+    /// <param name="parsedQuery">The parsed search query.</param>
+    /// <returns>The resolved payload text, or <see langword="null"/> when no payload could be produced.</returns>
     protected abstract string? FetchSearchPayload(PluginSearchQuery parsedQuery);
 
-            /// <summary>
-            /// Parses provider search results from the supplied payload and returns timing information for diagnostics.
-            /// </summary>
-            /// <param name="payloadJson">The provider payload to parse.</param>
-            /// <returns>The parsed results with parse and map timing metrics.</returns>
+    /// <summary>
+    /// Parses provider search results from the supplied payload and returns timing information for diagnostics.
+    /// </summary>
+    /// <param name="payloadJson">The provider payload to parse.</param>
+    /// <returns>The parsed results with parse and map timing metrics.</returns>
     protected abstract (IReadOnlyList<SearchItem> Results, long ParseMs, long MapMs) SearchFromPayloadWithTimings(string payloadJson);
 
-            /// <summary>
-            /// Fetches the chapter payload for a media item when no payload was provided by the caller.
-            /// </summary>
-            /// <param name="mediaId">The media identifier whose chapters should be fetched.</param>
-            /// <returns>The resolved payload text, or <see langword="null"/> when no payload could be produced.</returns>
+    /// <summary>
+    /// Fetches the chapter payload for a media item when no payload was provided by the caller.
+    /// </summary>
+    /// <param name="mediaId">The media identifier whose chapters should be fetched.</param>
+    /// <returns>The resolved payload text, or <see langword="null"/> when no payload could be produced.</returns>
     protected abstract string? FetchChaptersPayload(string mediaId);
 
-            /// <summary>
-            /// Maps a provider chapter payload into standard chapter items.
-            /// </summary>
-            /// <param name="mediaId">The media identifier associated with the payload.</param>
-            /// <param name="payloadJson">The provider payload to map.</param>
-            /// <returns>The mapped chapter items.</returns>
+    /// <summary>
+    /// Maps a provider chapter payload into standard chapter items.
+    /// </summary>
+    /// <param name="mediaId">The media identifier associated with the payload.</param>
+    /// <param name="payloadJson">The provider payload to map.</param>
+    /// <returns>The mapped chapter items.</returns>
     protected abstract IReadOnlyList<ChapterItem> GetChaptersFromPayload(string mediaId, string payloadJson);
 
-            /// <summary>
-            /// Maps a provider chapter payload into chapter-operation items used by invoke responses.
-            /// </summary>
-            /// <param name="mediaId">The media identifier associated with the payload.</param>
-            /// <param name="payloadJson">The provider payload to map.</param>
-            /// <returns>The mapped chapter-operation items.</returns>
+    /// <summary>
+    /// Maps a provider chapter payload into chapter-operation items used by invoke responses.
+    /// </summary>
+    /// <param name="mediaId">The media identifier associated with the payload.</param>
+    /// <param name="payloadJson">The provider payload to map.</param>
+    /// <returns>The mapped chapter-operation items.</returns>
     protected abstract IReadOnlyList<ChapterOperationItem> GetChapterOperationItemsFromPayload(string mediaId, string payloadJson);
 
-            /// <summary>
-            /// Converts a standard chapter-operation item into the transport-specific serialized invoke shape.
-            /// </summary>
-            /// <param name="item">The standard chapter-operation item.</param>
-            /// <returns>The serialized chapter-operation item.</returns>
+    /// <summary>
+    /// Converts a standard chapter-operation item into the transport-specific serialized invoke shape.
+    /// </summary>
+    /// <param name="item">The standard chapter-operation item.</param>
+    /// <returns>The serialized chapter-operation item.</returns>
     protected abstract TChapterOperationItem MapChapterOperationItem(ChapterOperationItem item);
 
-            /// <summary>
-            /// Fetches the at-home page payload for a chapter when no payload was provided by the caller.
-            /// </summary>
-            /// <param name="chapterId">The chapter identifier whose at-home payload should be fetched.</param>
-            /// <returns>The resolved payload text, or <see langword="null"/> when no payload could be produced.</returns>
+    /// <summary>
+    /// Fetches the at-home page payload for a chapter when no payload was provided by the caller.
+    /// </summary>
+    /// <param name="chapterId">The chapter identifier whose at-home payload should be fetched.</param>
+    /// <returns>The resolved payload text, or <see langword="null"/> when no payload could be produced.</returns>
     protected abstract string? FetchAtHomePayload(string chapterId);
 
-            /// <summary>
-            /// Maps a provider page payload into a single page item.
-            /// </summary>
-            /// <param name="chapterId">The chapter identifier associated with the payload.</param>
-            /// <param name="pageIndex">The zero-based page index to resolve.</param>
-            /// <param name="payloadJson">The provider payload to map.</param>
-            /// <returns>The mapped page item, or <see langword="null"/> when no page could be produced.</returns>
+    /// <summary>
+    /// Maps a provider page payload into a single page item.
+    /// </summary>
+    /// <param name="chapterId">The chapter identifier associated with the payload.</param>
+    /// <param name="pageIndex">The zero-based page index to resolve.</param>
+    /// <param name="payloadJson">The provider payload to map.</param>
+    /// <returns>The mapped page item, or <see langword="null"/> when no page could be produced.</returns>
     protected abstract PageItem? GetPageFromPayload(string chapterId, int pageIndex, string payloadJson);
 
-            /// <summary>
-            /// Maps a provider page payload into a range of page items.
-            /// </summary>
-            /// <param name="chapterId">The chapter identifier associated with the payload.</param>
-            /// <param name="startIndex">The zero-based starting page index.</param>
-            /// <param name="count">The maximum number of pages to return.</param>
-            /// <param name="payloadJson">The provider payload to map.</param>
-            /// <returns>The mapped page items.</returns>
+    /// <summary>
+    /// Maps a provider page payload into a range of page items.
+    /// </summary>
+    /// <param name="chapterId">The chapter identifier associated with the payload.</param>
+    /// <param name="startIndex">The zero-based starting page index.</param>
+    /// <param name="count">The maximum number of pages to return.</param>
+    /// <param name="payloadJson">The provider payload to map.</param>
+    /// <returns>The mapped page items.</returns>
     protected abstract IReadOnlyList<PageItem> GetPagesFromPayload(string chapterId, int startIndex, int count, string payloadJson);
 
-            /// <summary>
-            /// Executes a parsed search request by resolving payloads, emitting diagnostics, and mapping provider results.
-            /// </summary>
-            /// <param name="parsedQuery">The parsed search query.</param>
-            /// <param name="payloadJson">The optional pre-fetched search payload.</param>
-            /// <returns>The mapped search results.</returns>
+    /// <summary>
+    /// Executes a parsed search request by resolving payloads, emitting diagnostics, and mapping provider results.
+    /// </summary>
+    /// <param name="parsedQuery">The parsed search query.</param>
+    /// <param name="payloadJson">The optional pre-fetched search payload.</param>
+    /// <returns>The mapped search results.</returns>
     protected virtual SearchItem[] Search(PluginSearchQuery parsedQuery, string payloadJson)
     {
         PluginWasmDiagnosticsScaffold.DevLog($"[SEARCH] Called with query='{parsedQuery.Query}' (empty={string.IsNullOrWhiteSpace(parsedQuery.Query)})");

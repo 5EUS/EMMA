@@ -12,15 +12,15 @@ namespace EMMA.Cli;
 
 public static class PluginDevLocalServer
 {
-  private static readonly object BackgroundGate = new();
-  private static readonly JsonSerializerOptions UiJsonOptions = new(JsonSerializerDefaults.Web)
-  {
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    WriteIndented = true
-  };
-  private static readonly IReadOnlyList<PluginDevConsoleCommand> ConsoleCommands =
-  [
-    new("build", "build", "Run the normalized build plan for the active profile."),
+    private static readonly object BackgroundGate = new();
+    private static readonly JsonSerializerOptions UiJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        WriteIndented = true
+    };
+    private static readonly IReadOnlyList<PluginDevConsoleCommand> ConsoleCommands =
+    [
+      new("build", "build", "Run the normalized build plan for the active profile."),
     new("build-pack", "build-pack", "Build and then pack the active profile."),
     new("chapters", "chapters -i <mediaId>", "List chapters for a media item."),
     new("doctor", "doctor", "Show discovery and pre-launch diagnostics."),
@@ -35,12 +35,12 @@ public static class PluginDevLocalServer
     new("video-segment", "video-segment -mi <mediaId> -si <streamId> -s <sequence>", "Get one video segment for a stream."),
     new("video-streams", "video-streams -i <mediaId>", "List video streams for a media item."),
     new("watch", "watch [start|stop|status]", "Manage file watching for the active profile.")
-  ];
-  private static Task? _backgroundTask;
-  private static CancellationTokenSource? _backgroundCancellation;
-  private static int? _backgroundPort;
+    ];
+    private static Task? _backgroundTask;
+    private static CancellationTokenSource? _backgroundCancellation;
+    private static int? _backgroundPort;
 
-  internal static string ConsoleCommandCatalogJson => JsonSerializer.Serialize(ConsoleCommands, UiJsonOptions);
+    internal static string ConsoleCommandCatalogJson => JsonSerializer.Serialize(ConsoleCommands, UiJsonOptions);
 
     public static async Task RunAsync(PluginDevApplication application, int port, CancellationToken cancellationToken)
     {
@@ -68,8 +68,8 @@ public static class PluginDevLocalServer
         app.MapPost("/api/logs/clear", async (PluginDevApplication backend) =>
           await ExecuteAsync(() =>
           {
-            backend.ClearLogs();
-            return Task.FromResult<object>(new MessageResponse("Console cleared."));
+              backend.ClearLogs();
+              return Task.FromResult<object>(new MessageResponse("Console cleared."));
           }, backend));
 
         app.MapPost("/api/profiles/select", async (SelectProfileRequest request, PluginDevApplication backend) =>
@@ -101,53 +101,53 @@ public static class PluginDevLocalServer
         await app.RunAsync();
     }
 
-      public static string StartInBackground(PluginDevApplication application, int port)
-      {
+    public static string StartInBackground(PluginDevApplication application, int port)
+    {
         lock (BackgroundGate)
         {
-          if (_backgroundTask is { IsCompleted: false })
-          {
-            if (_backgroundPort == port)
+            if (_backgroundTask is { IsCompleted: false })
             {
-              return $"Plugin dev UI already running at http://127.0.0.1:{port}.";
+                if (_backgroundPort == port)
+                {
+                    return $"Plugin dev UI already running at http://127.0.0.1:{port}.";
+                }
+
+                throw new InvalidOperationException($"Plugin dev UI is already running at http://127.0.0.1:{_backgroundPort}. Stop that session before starting another port.");
             }
 
-            throw new InvalidOperationException($"Plugin dev UI is already running at http://127.0.0.1:{_backgroundPort}. Stop that session before starting another port.");
-          }
+            _backgroundCancellation?.Dispose();
+            _backgroundCancellation = new CancellationTokenSource();
+            _backgroundPort = port;
 
-          _backgroundCancellation?.Dispose();
-          _backgroundCancellation = new CancellationTokenSource();
-          _backgroundPort = port;
+            var cancellationToken = _backgroundCancellation.Token;
+            _backgroundTask = Task.Run(async () =>
+            {
+                try
+                {
+                    await RunAsync(application, port, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    application.RecordError($"Local session API stopped unexpectedly: {ex.Message}");
+                }
+                finally
+                {
+                    lock (BackgroundGate)
+                    {
+                        _backgroundCancellation?.Dispose();
+                        _backgroundCancellation = null;
+                        _backgroundTask = null;
+                        _backgroundPort = null;
+                    }
+                }
+            }, cancellationToken);
 
-          var cancellationToken = _backgroundCancellation.Token;
-          _backgroundTask = Task.Run(async () =>
-          {
-            try
-            {
-              await RunAsync(application, port, cancellationToken);
-            }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (Exception ex)
-            {
-              application.RecordError($"Local session API stopped unexpectedly: {ex.Message}");
-            }
-            finally
-            {
-              lock (BackgroundGate)
-              {
-                _backgroundCancellation?.Dispose();
-                _backgroundCancellation = null;
-                _backgroundTask = null;
-                _backgroundPort = null;
-              }
-            }
-          }, cancellationToken);
-
-          return $"Serving plugin dev UI at http://127.0.0.1:{port} in the background.";
+            return $"Serving plugin dev UI at http://127.0.0.1:{port} in the background.";
         }
-      }
+    }
 
     private static async Task<IResult> ExecuteAsync(Func<Task<object>> action, PluginDevApplication backend)
     {
@@ -162,457 +162,457 @@ public static class PluginDevLocalServer
         }
     }
 
-        private static async Task<string> ExecuteConsoleCommandAsync(string commandLine, PluginDevApplication backend)
+    private static async Task<string> ExecuteConsoleCommandAsync(string commandLine, PluginDevApplication backend)
+    {
+        var trimmed = commandLine.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
         {
-          var trimmed = commandLine.Trim();
-          if (string.IsNullOrWhiteSpace(trimmed))
-          {
             throw new InvalidOperationException("Enter a command before running the browser console.");
-          }
-
-          var tokens = TokenizeCommandLine(trimmed);
-          if (tokens.Count == 0)
-          {
-            throw new InvalidOperationException("Enter a command before running the browser console.");
-          }
-
-          backend.RecordInfo($"> {trimmed}");
-
-          var command = tokens[0].ToLowerInvariant();
-          var args = tokens.Skip(1).ToArray();
-
-          switch (command)
-          {
-            case "help":
-              EnsureNoArguments(command, args);
-              backend.RecordInfo(BuildHelpText());
-              return $"Executed '{trimmed}'.";
-
-            case "session":
-              EnsureNoArguments(command, args);
-              backend.RecordInfo(FormatSessionSnapshot(backend.GetSessionSnapshot()));
-              return $"Executed '{trimmed}'.";
-
-            case "doctor":
-              EnsureNoArguments(command, args);
-              backend.RecordInfo(FormatDoctorSnapshot(backend.GetSessionSnapshot()));
-              return $"Executed '{trimmed}'.";
-
-            case "build":
-              RejectAllScope(command, args);
-              EnsureNoArguments(command, args);
-              await backend.BuildAsync(CancellationToken.None);
-              return $"Executed '{trimmed}'.";
-
-            case "pack":
-              RejectAllScope(command, args);
-              EnsureNoArguments(command, args);
-              backend.RecordInfo(FormatPackResult(null, backend.Pack()));
-              return $"Executed '{trimmed}'.";
-
-            case "build-pack":
-              RejectAllScope(command, args);
-              EnsureNoArguments(command, args);
-              await backend.BuildAsync(CancellationToken.None);
-              backend.RecordInfo(FormatPackResult(null, backend.Pack()));
-              return $"Executed '{trimmed}'.";
-
-            case "reload":
-              EnsureNoArguments(command, args);
-              await backend.ReloadAsync(CancellationToken.None);
-              return $"Executed '{trimmed}'.";
-
-            case "watch":
-            {
-              var action = args.Length == 0 ? "start" : args[0].Trim().ToLowerInvariant();
-              if (args.Length > 1)
-              {
-                throw new InvalidOperationException("Usage: watch [start|stop|status]");
-              }
-
-              PluginDevWatchSnapshot snapshot = action switch
-              {
-                "start" => backend.StartWatch(),
-                "stop" => backend.StopWatch(),
-                "status" => backend.GetWatchSnapshot(),
-                _ => throw new InvalidOperationException($"Unknown watch action '{action}'. Use start, stop, or status.")
-              };
-
-              backend.RecordInfo(FormatWatchSnapshot(snapshot));
-              return $"Executed '{trimmed}'.";
-            }
-
-            case "scenario":
-            {
-              if (args.Length == 0)
-              {
-                throw new InvalidOperationException("Usage: scenario <name> [query]");
-              }
-
-              var scenarioName = args[0];
-              var query = args.Length > 1 ? string.Join(' ', args.Skip(1)) : null;
-              var result = await backend.RunScenarioAsync(scenarioName, query, CancellationToken.None);
-              backend.RecordInfo($"Scenario '{result.Name}' {(result.Succeeded ? "completed" : "failed")}.");
-              return $"Executed '{trimmed}'.";
-            }
-
-            case "search":
-            {
-              var query = ReadRequiredOption(command, args, "-q", "--query");
-              var results = await backend.SearchAsync(query, CancellationToken.None);
-              backend.RecordInfo(JsonSerializer.Serialize(results, UiJsonOptions));
-              return $"Executed '{trimmed}'.";
-            }
-
-            case "chapters":
-            {
-              var mediaId = ReadRequiredOption(command, args, "-i", "--mediaId");
-              var results = await backend.GetChaptersAsync(mediaId, CancellationToken.None);
-              backend.RecordInfo(JsonSerializer.Serialize(results, UiJsonOptions));
-              return $"Executed '{trimmed}'.";
-            }
-
-            case "page":
-            {
-              var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
-              var chapterId = ReadRequiredOption(command, args, "-ci", "--chapterId");
-              var indexText = ReadRequiredOption(command, args, "-i", "--index");
-              if (!int.TryParse(indexText, out var index))
-              {
-                throw new InvalidOperationException("Page index must be an integer.");
-              }
-
-              var result = await backend.GetPageAsync(mediaId, chapterId, index, CancellationToken.None);
-              backend.RecordInfo(result is null
-                ? "Page returned no content."
-                : JsonSerializer.Serialize(result, UiJsonOptions));
-              return $"Executed '{trimmed}'.";
-            }
-
-            case "page-asset":
-            {
-              var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
-              var chapterId = ReadRequiredOption(command, args, "-ci", "--chapterId");
-              var result = await backend.GetPageAssetAsync(mediaId, chapterId, CancellationToken.None);
-              backend.RecordInfo(result is null
-                ? "Page asset returned no payload."
-                : $"Page asset size: {result.Length} byte(s). Browser console output is summary-only for binary responses.");
-              return $"Executed '{trimmed}'.";
-            }
-
-            case "video-streams":
-            {
-              var mediaId = ReadRequiredOption(command, args, "-i", "--mediaId");
-              var result = await backend.GetVideoStreamsAsync(mediaId, CancellationToken.None);
-              backend.RecordInfo(JsonSerializer.Serialize(result, UiJsonOptions));
-              return $"Executed '{trimmed}'.";
-            }
-
-            case "video-segment":
-            {
-              var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
-              var streamId = ReadRequiredOption(command, args, "-si", "--streamId");
-              var sequenceText = ReadRequiredOption(command, args, "-s", "--sequence");
-              if (!int.TryParse(sequenceText, out var sequence))
-              {
-                throw new InvalidOperationException("Segment sequence must be an integer.");
-              }
-
-              var result = await backend.GetVideoSegmentAsync(mediaId, streamId, sequence, CancellationToken.None);
-              backend.RecordInfo(result is null
-                ? "Video segment returned no payload."
-                : JsonSerializer.Serialize(result, UiJsonOptions));
-              return $"Executed '{trimmed}'.";
-            }
-
-            default:
-              throw new InvalidOperationException($"Unknown browser console command '{command}'. Run 'help' to see supported commands.");
-          }
         }
 
-        private static IReadOnlyList<string> TokenizeCommandLine(string commandLine)
+        var tokens = TokenizeCommandLine(trimmed);
+        if (tokens.Count == 0)
         {
-          var tokens = new List<string>();
-          var buffer = new StringBuilder();
-          char? quote = null;
-          var escape = false;
+            throw new InvalidOperationException("Enter a command before running the browser console.");
+        }
 
-          foreach (var ch in commandLine)
-          {
+        backend.RecordInfo($"> {trimmed}");
+
+        var command = tokens[0].ToLowerInvariant();
+        var args = tokens.Skip(1).ToArray();
+
+        switch (command)
+        {
+            case "help":
+                EnsureNoArguments(command, args);
+                backend.RecordInfo(BuildHelpText());
+                return $"Executed '{trimmed}'.";
+
+            case "session":
+                EnsureNoArguments(command, args);
+                backend.RecordInfo(FormatSessionSnapshot(backend.GetSessionSnapshot()));
+                return $"Executed '{trimmed}'.";
+
+            case "doctor":
+                EnsureNoArguments(command, args);
+                backend.RecordInfo(FormatDoctorSnapshot(backend.GetSessionSnapshot()));
+                return $"Executed '{trimmed}'.";
+
+            case "build":
+                RejectAllScope(command, args);
+                EnsureNoArguments(command, args);
+                await backend.BuildAsync(CancellationToken.None);
+                return $"Executed '{trimmed}'.";
+
+            case "pack":
+                RejectAllScope(command, args);
+                EnsureNoArguments(command, args);
+                backend.RecordInfo(FormatPackResult(null, backend.Pack()));
+                return $"Executed '{trimmed}'.";
+
+            case "build-pack":
+                RejectAllScope(command, args);
+                EnsureNoArguments(command, args);
+                await backend.BuildAsync(CancellationToken.None);
+                backend.RecordInfo(FormatPackResult(null, backend.Pack()));
+                return $"Executed '{trimmed}'.";
+
+            case "reload":
+                EnsureNoArguments(command, args);
+                await backend.ReloadAsync(CancellationToken.None);
+                return $"Executed '{trimmed}'.";
+
+            case "watch":
+                {
+                    var action = args.Length == 0 ? "start" : args[0].Trim().ToLowerInvariant();
+                    if (args.Length > 1)
+                    {
+                        throw new InvalidOperationException("Usage: watch [start|stop|status]");
+                    }
+
+                    PluginDevWatchSnapshot snapshot = action switch
+                    {
+                        "start" => backend.StartWatch(),
+                        "stop" => backend.StopWatch(),
+                        "status" => backend.GetWatchSnapshot(),
+                        _ => throw new InvalidOperationException($"Unknown watch action '{action}'. Use start, stop, or status.")
+                    };
+
+                    backend.RecordInfo(FormatWatchSnapshot(snapshot));
+                    return $"Executed '{trimmed}'.";
+                }
+
+            case "scenario":
+                {
+                    if (args.Length == 0)
+                    {
+                        throw new InvalidOperationException("Usage: scenario <name> [query]");
+                    }
+
+                    var scenarioName = args[0];
+                    var query = args.Length > 1 ? string.Join(' ', args.Skip(1)) : null;
+                    var result = await backend.RunScenarioAsync(scenarioName, query, CancellationToken.None);
+                    backend.RecordInfo($"Scenario '{result.Name}' {(result.Succeeded ? "completed" : "failed")}.");
+                    return $"Executed '{trimmed}'.";
+                }
+
+            case "search":
+                {
+                    var query = ReadRequiredOption(command, args, "-q", "--query");
+                    var results = await backend.SearchAsync(query, CancellationToken.None);
+                    backend.RecordInfo(JsonSerializer.Serialize(results, UiJsonOptions));
+                    return $"Executed '{trimmed}'.";
+                }
+
+            case "chapters":
+                {
+                    var mediaId = ReadRequiredOption(command, args, "-i", "--mediaId");
+                    var results = await backend.GetChaptersAsync(mediaId, CancellationToken.None);
+                    backend.RecordInfo(JsonSerializer.Serialize(results, UiJsonOptions));
+                    return $"Executed '{trimmed}'.";
+                }
+
+            case "page":
+                {
+                    var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
+                    var chapterId = ReadRequiredOption(command, args, "-ci", "--chapterId");
+                    var indexText = ReadRequiredOption(command, args, "-i", "--index");
+                    if (!int.TryParse(indexText, out var index))
+                    {
+                        throw new InvalidOperationException("Page index must be an integer.");
+                    }
+
+                    var result = await backend.GetPageAsync(mediaId, chapterId, index, CancellationToken.None);
+                    backend.RecordInfo(result is null
+                      ? "Page returned no content."
+                      : JsonSerializer.Serialize(result, UiJsonOptions));
+                    return $"Executed '{trimmed}'.";
+                }
+
+            case "page-asset":
+                {
+                    var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
+                    var chapterId = ReadRequiredOption(command, args, "-ci", "--chapterId");
+                    var result = await backend.GetPageAssetAsync(mediaId, chapterId, CancellationToken.None);
+                    backend.RecordInfo(result is null
+                      ? "Page asset returned no payload."
+                      : $"Page asset size: {result.Length} byte(s). Browser console output is summary-only for binary responses.");
+                    return $"Executed '{trimmed}'.";
+                }
+
+            case "video-streams":
+                {
+                    var mediaId = ReadRequiredOption(command, args, "-i", "--mediaId");
+                    var result = await backend.GetVideoStreamsAsync(mediaId, CancellationToken.None);
+                    backend.RecordInfo(JsonSerializer.Serialize(result, UiJsonOptions));
+                    return $"Executed '{trimmed}'.";
+                }
+
+            case "video-segment":
+                {
+                    var mediaId = ReadRequiredOption(command, args, "-mi", "--mediaId");
+                    var streamId = ReadRequiredOption(command, args, "-si", "--streamId");
+                    var sequenceText = ReadRequiredOption(command, args, "-s", "--sequence");
+                    if (!int.TryParse(sequenceText, out var sequence))
+                    {
+                        throw new InvalidOperationException("Segment sequence must be an integer.");
+                    }
+
+                    var result = await backend.GetVideoSegmentAsync(mediaId, streamId, sequence, CancellationToken.None);
+                    backend.RecordInfo(result is null
+                      ? "Video segment returned no payload."
+                      : JsonSerializer.Serialize(result, UiJsonOptions));
+                    return $"Executed '{trimmed}'.";
+                }
+
+            default:
+                throw new InvalidOperationException($"Unknown browser console command '{command}'. Run 'help' to see supported commands.");
+        }
+    }
+
+    private static IReadOnlyList<string> TokenizeCommandLine(string commandLine)
+    {
+        var tokens = new List<string>();
+        var buffer = new StringBuilder();
+        char? quote = null;
+        var escape = false;
+
+        foreach (var ch in commandLine)
+        {
             if (escape)
             {
-              buffer.Append(ch);
-              escape = false;
-              continue;
+                buffer.Append(ch);
+                escape = false;
+                continue;
             }
 
             if (ch == '\\')
             {
-              escape = true;
-              continue;
+                escape = true;
+                continue;
             }
 
             if (quote is not null)
             {
-              if (ch == quote)
-              {
-                quote = null;
-              }
-              else
-              {
-                buffer.Append(ch);
-              }
+                if (ch == quote)
+                {
+                    quote = null;
+                }
+                else
+                {
+                    buffer.Append(ch);
+                }
 
-              continue;
+                continue;
             }
 
             if (ch == '\'' || ch == '"')
             {
-              quote = ch;
-              continue;
+                quote = ch;
+                continue;
             }
 
             if (char.IsWhiteSpace(ch))
             {
-              if (buffer.Length > 0)
-              {
-                tokens.Add(buffer.ToString());
-                buffer.Clear();
-              }
+                if (buffer.Length > 0)
+                {
+                    tokens.Add(buffer.ToString());
+                    buffer.Clear();
+                }
 
-              continue;
+                continue;
             }
 
             buffer.Append(ch);
-          }
+        }
 
-          if (escape)
-          {
+        if (escape)
+        {
             buffer.Append('\\');
-          }
+        }
 
-          if (quote is not null)
-          {
+        if (quote is not null)
+        {
             throw new InvalidOperationException("Unterminated quoted string in browser console command.");
-          }
+        }
 
-          if (buffer.Length > 0)
-          {
+        if (buffer.Length > 0)
+        {
             tokens.Add(buffer.ToString());
-          }
-
-          return tokens;
         }
 
-        private static void EnsureNoArguments(string command, IReadOnlyList<string> args)
+        return tokens;
+    }
+
+    private static void EnsureNoArguments(string command, IReadOnlyList<string> args)
+    {
+        if (args.Count == 0)
         {
-          if (args.Count == 0)
-          {
             return;
-          }
-
-          throw new InvalidOperationException($"Command '{command}' does not accept additional arguments in the browser console.");
         }
 
-        private static void RejectAllScope(string command, IReadOnlyList<string> args)
+        throw new InvalidOperationException($"Command '{command}' does not accept additional arguments in the browser console.");
+    }
+
+    private static void RejectAllScope(string command, IReadOnlyList<string> args)
+    {
+        if (args.Count == 1 && string.Equals(args[0], "all", StringComparison.OrdinalIgnoreCase))
         {
-          if (args.Count == 1 && string.Equals(args[0], "all", StringComparison.OrdinalIgnoreCase))
-          {
             throw new InvalidOperationException($"Command '{command} all' is not supported in the browser console. Use the terminal CLI when you need multi-profile execution.");
-          }
         }
+    }
 
-        private static string ReadRequiredOption(string command, IReadOnlyList<string> args, params string[] optionNames)
+    private static string ReadRequiredOption(string command, IReadOnlyList<string> args, params string[] optionNames)
+    {
+        var matches = new List<string>();
+
+        for (var index = 0; index < args.Count; index++)
         {
-          var matches = new List<string>();
-
-          for (var index = 0; index < args.Count; index++)
-          {
             var token = args[index];
             if (!optionNames.Contains(token, StringComparer.OrdinalIgnoreCase))
             {
-              continue;
+                continue;
             }
 
             if (index + 1 >= args.Count)
             {
-              throw new InvalidOperationException($"Option '{token}' requires a value.");
+                throw new InvalidOperationException($"Option '{token}' requires a value.");
             }
 
             matches.Add(args[index + 1]);
             index += 1;
-          }
-
-          if (matches.Count == 0)
-          {
-            throw new InvalidOperationException($"Usage: {ConsoleCommands.First(item => string.Equals(item.Name, command, StringComparison.OrdinalIgnoreCase)).Usage}");
-          }
-
-          if (matches.Count > 1)
-          {
-            throw new InvalidOperationException($"Option '{optionNames[0]}' was provided more than once.");
-          }
-
-          return matches[0];
         }
 
-        private static string BuildHelpText()
+        if (matches.Count == 0)
         {
-          var builder = new StringBuilder();
-          builder.AppendLine("Available browser console commands:");
-          foreach (var command in ConsoleCommands)
-          {
+            throw new InvalidOperationException($"Usage: {ConsoleCommands.First(item => string.Equals(item.Name, command, StringComparison.OrdinalIgnoreCase)).Usage}");
+        }
+
+        if (matches.Count > 1)
+        {
+            throw new InvalidOperationException($"Option '{optionNames[0]}' was provided more than once.");
+        }
+
+        return matches[0];
+    }
+
+    private static string BuildHelpText()
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("Available browser console commands:");
+        foreach (var command in ConsoleCommands)
+        {
             builder.Append("  ");
             builder.Append(command.Usage.PadRight(42));
             builder.AppendLine(command.Description);
-          }
-
-          builder.AppendLine();
-          builder.AppendLine("Arrow Up/Down recalls previous commands in the input field.");
-          builder.AppendLine("Quote values when they contain spaces, for example: search -q \"full metal\"");
-          return builder.ToString().TrimEnd();
         }
 
-        private static string FormatSessionSnapshot(PluginDevSessionSnapshot session)
+        builder.AppendLine();
+        builder.AppendLine("Arrow Up/Down recalls previous commands in the input field.");
+        builder.AppendLine("Quote values when they contain spaces, for example: search -q \"full metal\"");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatSessionSnapshot(PluginDevSessionSnapshot session)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Session ID: {session.Id}");
+        builder.AppendLine($"State: {session.State}");
+        builder.AppendLine($"Working Directory: {session.WorkingDirectory}");
+        builder.AppendLine($"Profile: {session.Profile.Name}");
+        builder.AppendLine($"Plugin ID: {session.Profile.PluginId}");
+        builder.AppendLine($"Host URL: {session.Profile.HostUrl}");
+        builder.AppendLine($"Runtime Target: {session.Profile.RuntimeTarget}");
+        builder.AppendLine($"Execution Mode: {session.Profile.ExecutionMode}");
+        builder.AppendLine($"Logging: plugin={(session.Profile.Logging.Plugin ? "on" : "off")}, aspNetHost={(session.Profile.Logging.AspNetHost ? "on" : "off")}, httpClient={(session.Profile.Logging.HttpClient ? "on" : "off")}");
+        if (session.Profile.Sync.Enabled)
         {
-          var builder = new StringBuilder();
-          builder.AppendLine($"Session ID: {session.Id}");
-          builder.AppendLine($"State: {session.State}");
-          builder.AppendLine($"Working Directory: {session.WorkingDirectory}");
-          builder.AppendLine($"Profile: {session.Profile.Name}");
-          builder.AppendLine($"Plugin ID: {session.Profile.PluginId}");
-          builder.AppendLine($"Host URL: {session.Profile.HostUrl}");
-          builder.AppendLine($"Runtime Target: {session.Profile.RuntimeTarget}");
-          builder.AppendLine($"Execution Mode: {session.Profile.ExecutionMode}");
-          builder.AppendLine($"Logging: plugin={(session.Profile.Logging.Plugin ? "on" : "off")}, aspNetHost={(session.Profile.Logging.AspNetHost ? "on" : "off")}, httpClient={(session.Profile.Logging.HttpClient ? "on" : "off")}");
-          if (session.Profile.Sync.Enabled)
-          {
             builder.AppendLine($"Sync: onBuild={(session.Profile.Sync.OnBuild ? "on" : "off")}, cleanDestination={(session.Profile.Sync.CleanDestination ? "on" : "off")}, destination={session.Profile.Sync.DestinationPath}");
-          }
+        }
 
-          if (!string.IsNullOrWhiteSpace(session.Profile.WasiSdkPath))
-          {
+        if (!string.IsNullOrWhiteSpace(session.Profile.WasiSdkPath))
+        {
             builder.AppendLine($"WASI SDK Path: {session.Profile.WasiSdkPath}");
-          }
+        }
 
-          builder.AppendLine($"Runtime Adapter: {session.RuntimeAdapterName}");
-          builder.AppendLine($"Profile Source: {(session.Profile.IsInferred ? "inferred" : "configured")}");
+        builder.AppendLine($"Runtime Adapter: {session.RuntimeAdapterName}");
+        builder.AppendLine($"Profile Source: {(session.Profile.IsInferred ? "inferred" : "configured")}");
 
-          if (!string.IsNullOrWhiteSpace(session.Profile.ArtifactPath))
-          {
+        if (!string.IsNullOrWhiteSpace(session.Profile.ArtifactPath))
+        {
             builder.AppendLine($"Artifact Path: {session.Profile.ArtifactPath}");
-          }
+        }
 
-          if (session.Profile.WatchGlobs.Count > 0)
-          {
+        if (session.Profile.WatchGlobs.Count > 0)
+        {
             builder.AppendLine($"Watch Globs: {string.Join(", ", session.Profile.WatchGlobs)}");
-          }
+        }
 
-          builder.AppendLine($"Watch Status: {session.Watch.Status}");
-          builder.AppendLine($"Watch Behavior: {session.Watch.Behavior}");
+        builder.AppendLine($"Watch Status: {session.Watch.Status}");
+        builder.AppendLine($"Watch Behavior: {session.Watch.Behavior}");
 
-          if (session.Watch.LastChangedUtc is not null)
-          {
+        if (session.Watch.LastChangedUtc is not null)
+        {
             builder.AppendLine($"Watch Last Change: {session.Watch.LastChangedUtc:O} ({session.Watch.LastChangedPath})");
-          }
+        }
 
-          if (session.Watch.LastReloadUtc is not null)
-          {
+        if (session.Watch.LastReloadUtc is not null)
+        {
             builder.AppendLine($"Watch Last Reload: {session.Watch.LastReloadUtc:O} ({session.Watch.LastReloadMessage})");
-          }
+        }
 
-          builder.AppendLine($"Discovery Root: {session.RootDirectory}");
-          builder.AppendLine($"Manifest: {session.ManifestPath ?? "<not found>"}");
-          builder.AppendLine($"Project: {session.ProjectFilePath ?? "<not found>"}");
+        builder.AppendLine($"Discovery Root: {session.RootDirectory}");
+        builder.AppendLine($"Manifest: {session.ManifestPath ?? "<not found>"}");
+        builder.AppendLine($"Project: {session.ProjectFilePath ?? "<not found>"}");
 
-          if (session.AvailableProfiles.Count > 0)
-          {
+        if (session.AvailableProfiles.Count > 0)
+        {
             builder.AppendLine("Available Profiles:");
             foreach (var profile in session.AvailableProfiles)
             {
-              var source = profile.IsInferred ? "inferred" : "configured";
-              var artifactSuffix = string.IsNullOrWhiteSpace(profile.ArtifactPath) ? string.Empty : $" artifact={profile.ArtifactPath}";
-              var syncSuffix = profile.Sync.Enabled ? $" sync={profile.Sync.DestinationPath}" : string.Empty;
-              builder.AppendLine($"  - {profile.Name} [{source}] target={profile.RuntimeTarget} mode={profile.ExecutionMode}{artifactSuffix}{syncSuffix}");
+                var source = profile.IsInferred ? "inferred" : "configured";
+                var artifactSuffix = string.IsNullOrWhiteSpace(profile.ArtifactPath) ? string.Empty : $" artifact={profile.ArtifactPath}";
+                var syncSuffix = profile.Sync.Enabled ? $" sync={profile.Sync.DestinationPath}" : string.Empty;
+                builder.AppendLine($"  - {profile.Name} [{source}] target={profile.RuntimeTarget} mode={profile.ExecutionMode}{artifactSuffix}{syncSuffix}");
             }
-          }
+        }
 
-          if (session.Diagnostics.Count > 0)
-          {
+        if (session.Diagnostics.Count > 0)
+        {
             builder.AppendLine("Diagnostics:");
             foreach (var diagnostic in session.Diagnostics)
             {
-              builder.AppendLine($"  - [{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message}");
+                builder.AppendLine($"  - [{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message}");
             }
-          }
-
-          return builder.ToString().TrimEnd();
         }
 
-        private static string FormatDoctorSnapshot(PluginDevSessionSnapshot session)
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatDoctorSnapshot(PluginDevSessionSnapshot session)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("Plugin development doctor");
+        builder.AppendLine($"  Root: {session.RootDirectory}");
+        builder.AppendLine($"  Manifest: {session.ManifestPath ?? "<not found>"}");
+        builder.AppendLine($"  Project: {session.ProjectFilePath ?? "<not found>"}");
+        builder.AppendLine($"  Plugin ID: {session.PluginId}");
+
+        if (!string.IsNullOrWhiteSpace(session.PluginName))
         {
-          var builder = new StringBuilder();
-          builder.AppendLine("Plugin development doctor");
-          builder.AppendLine($"  Root: {session.RootDirectory}");
-          builder.AppendLine($"  Manifest: {session.ManifestPath ?? "<not found>"}");
-          builder.AppendLine($"  Project: {session.ProjectFilePath ?? "<not found>"}");
-          builder.AppendLine($"  Plugin ID: {session.PluginId}");
-
-          if (!string.IsNullOrWhiteSpace(session.PluginName))
-          {
             builder.AppendLine($"  Plugin Name: {session.PluginName}");
-          }
+        }
 
-          if (session.MediaTypes.Count > 0)
-          {
+        if (session.MediaTypes.Count > 0)
+        {
             builder.AppendLine($"  Media Types: {string.Join(", ", session.MediaTypes)}");
-          }
+        }
 
-          if (session.SupportedTargets.Count > 0)
-          {
+        if (session.SupportedTargets.Count > 0)
+        {
             builder.AppendLine($"  Supported Targets: {string.Join(", ", session.SupportedTargets)}");
-          }
+        }
 
-          if (session.ArtifactCandidates.Count > 0)
-          {
+        if (session.ArtifactCandidates.Count > 0)
+        {
             builder.AppendLine("  Artifact Candidates:");
             foreach (var artifact in session.ArtifactCandidates)
             {
-              var status = artifact.Exists ? "present" : "missing";
-              builder.AppendLine($"    - {artifact.Target} [{artifact.Kind}] {status}: {artifact.Path}");
+                var status = artifact.Exists ? "present" : "missing";
+                builder.AppendLine($"    - {artifact.Target} [{artifact.Kind}] {status}: {artifact.Path}");
             }
-          }
-
-          if (session.Diagnostics.Count == 0)
-          {
-            builder.AppendLine("  No diagnostics.");
-            return builder.ToString().TrimEnd();
-          }
-
-          builder.AppendLine("  Diagnostics:");
-          foreach (var diagnostic in session.Diagnostics)
-          {
-            builder.AppendLine($"    - [{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message}");
-          }
-
-          return builder.ToString().TrimEnd();
         }
 
-        private static string FormatPackResult(string? profileName, PluginDevPackResult result)
+        if (session.Diagnostics.Count == 0)
         {
-          var prefix = string.IsNullOrWhiteSpace(profileName) ? string.Empty : $"[{profileName}] ";
-          return string.Join(Environment.NewLine,
-          [
-            $"{prefix}Package: {result.PackagePath}",
+            builder.AppendLine("  No diagnostics.");
+            return builder.ToString().TrimEnd();
+        }
+
+        builder.AppendLine("  Diagnostics:");
+        foreach (var diagnostic in session.Diagnostics)
+        {
+            builder.AppendLine($"    - [{diagnostic.Severity}] {diagnostic.Code}: {diagnostic.Message}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatPackResult(string? profileName, PluginDevPackResult result)
+    {
+        var prefix = string.IsNullOrWhiteSpace(profileName) ? string.Empty : $"[{profileName}] ";
+        return string.Join(Environment.NewLine,
+        [
+          $"{prefix}Package: {result.PackagePath}",
             $"{prefix}Pack Directory: {result.PackageDirectory}",
             $"{prefix}Manifest: {result.ManifestPath}",
             $"{prefix}Artifact: {result.ArtifactPath}"
-          ]);
-        }
+        ]);
+    }
 
-        private static string FormatWatchSnapshot(PluginDevWatchSnapshot snapshot)
-        {
-          var lines = new List<string>
+    private static string FormatWatchSnapshot(PluginDevWatchSnapshot snapshot)
+    {
+        var lines = new List<string>
           {
             $"Watch Enabled: {snapshot.IsEnabled}",
             $"Watch Status: {snapshot.Status}",
@@ -620,37 +620,37 @@ public static class PluginDevLocalServer
             $"Behavior: {snapshot.Behavior}"
           };
 
-          if (snapshot.WatchGlobs.Count > 0)
-          {
+        if (snapshot.WatchGlobs.Count > 0)
+        {
             lines.Add($"Watch Globs: {string.Join(", ", snapshot.WatchGlobs)}");
-          }
-
-          if (snapshot.LastChangedUtc is not null)
-          {
-            lines.Add($"Last Change: {snapshot.LastChangedUtc:O} ({snapshot.LastChangedPath})");
-          }
-
-          if (snapshot.LastReloadUtc is not null)
-          {
-            lines.Add($"Last Reload: {snapshot.LastReloadUtc:O} ({snapshot.LastReloadMessage})");
-          }
-
-          return string.Join(Environment.NewLine, lines);
         }
+
+        if (snapshot.LastChangedUtc is not null)
+        {
+            lines.Add($"Last Change: {snapshot.LastChangedUtc:O} ({snapshot.LastChangedPath})");
+        }
+
+        if (snapshot.LastReloadUtc is not null)
+        {
+            lines.Add($"Last Reload: {snapshot.LastReloadUtc:O} ({snapshot.LastReloadMessage})");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
 
     private sealed record SelectProfileRequest(string Name);
     private sealed record RunScenarioRequest(string Name, string? Query);
     private sealed record UpdateUiDiagnosticsLevelRequest(string DiagnosticsLevel);
-        private sealed record ConsoleExecuteRequest(string CommandLine);
+    private sealed record ConsoleExecuteRequest(string CommandLine);
     private sealed record MessageResponse(string Message);
     private sealed record OpenDirectoryResponse(string Directory);
     private sealed record ErrorResponse(string Error);
-        private sealed record PluginDevConsoleCommand(string Name, string Usage, string Description);
+    private sealed record PluginDevConsoleCommand(string Name, string Usage, string Description);
 }
 
 internal static class PluginDevLocalUi
 {
-        public static string Html => $$"""
+    public static string Html => $$"""
 <!doctype html>
 <html lang="en">
 <head>

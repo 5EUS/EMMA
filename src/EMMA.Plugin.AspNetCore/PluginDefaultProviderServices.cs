@@ -508,12 +508,12 @@ public sealed class PluginDefaultVideoProviderService<TRuntime>(
             () => _runtime.GetStreamsAsync(request.MediaId, context.CancellationToken));
     }
 
-            /// <summary>
-            /// Handles a gRPC video segment request by delegating to the runtime and recording metrics.
-            /// </summary>
-            /// <param name="request">The incoming segment request.</param>
-            /// <param name="context">The active gRPC server call context.</param>
-            /// <returns>A response containing the requested stream segment.</returns>
+    /// <summary>
+    /// Handles a gRPC video segment request by delegating to the runtime and recording metrics.
+    /// </summary>
+    /// <param name="request">The incoming segment request.</param>
+    /// <param name="context">The active gRPC server call context.</param>
+    /// <returns>A response containing the requested stream segment.</returns>
     public override Task<SegmentResponse> GetSegment(SegmentRequest request, ServerCallContext context)
     {
         var stopwatch = Stopwatch.StartNew();

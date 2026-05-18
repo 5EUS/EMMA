@@ -2268,161 +2268,161 @@ public sealed class PluginDevScenarioRunner
                 switch (op)
                 {
                     case "search":
-                    {
-                        var searchQuery = ResolveRequiredString(step, "query", variables);
-                        var result = await runtime.SearchAsync(searchQuery, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Search('{searchQuery}') returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var searchQuery = ResolveRequiredString(step, "query", variables);
+                            var result = await runtime.SearchAsync(searchQuery, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Search('{searchQuery}') returned {result.Count} item(s).");
+                            break;
+                        }
                     case "enrich":
-                    {
-                        var input = ResolveRequiredObject(step, "from", variables);
-                        var inputItems = CoerceSearchItems(input);
-                        var result = await runtime.EnrichSearchItemsAsync(inputItems, cancellationToken);
-                        object? savedValue = input is SearchItem ? result.FirstOrDefault() : result;
-                        SaveValue(variables, step.Save, savedValue);
-                        messages.Add($"Enrich resolved {result.Count} item(s) from '{ResolveRequiredString(step, "from", variables)}'.");
-                        break;
-                    }
+                        {
+                            var input = ResolveRequiredObject(step, "from", variables);
+                            var inputItems = CoerceSearchItems(input);
+                            var result = await runtime.EnrichSearchItemsAsync(inputItems, cancellationToken);
+                            object? savedValue = input is SearchItem ? result.FirstOrDefault() : result;
+                            SaveValue(variables, step.Save, savedValue);
+                            messages.Add($"Enrich resolved {result.Count} item(s) from '{ResolveRequiredString(step, "from", variables)}'.");
+                            break;
+                        }
                     case "chapters":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var result = await runtime.GetChaptersAsync(mediaId, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Chapters('{mediaId}') returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var result = await runtime.GetChaptersAsync(mediaId, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Chapters('{mediaId}') returned {result.Count} item(s).");
+                            break;
+                        }
                     case "page":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var chapterId = ResolveRequiredString(step, "chapterId", variables);
-                        var index = ResolveRequiredInt(step, "index", variables);
-                        var result = await runtime.GetPageAsync(mediaId, chapterId, index, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add(result is null
-                            ? $"Page('{mediaId}', '{chapterId}', {index}) returned no page."
-                            : $"Page('{mediaId}', '{chapterId}', {index}) resolved '{result.contentUri}'.");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var chapterId = ResolveRequiredString(step, "chapterId", variables);
+                            var index = ResolveRequiredInt(step, "index", variables);
+                            var result = await runtime.GetPageAsync(mediaId, chapterId, index, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add(result is null
+                                ? $"Page('{mediaId}', '{chapterId}', {index}) returned no page."
+                                : $"Page('{mediaId}', '{chapterId}', {index}) resolved '{result.contentUri}'.");
+                            break;
+                        }
                     case "pages":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var chapterId = ResolveRequiredString(step, "chapterId", variables);
-                        var startIndex = ResolveRequiredInt(step, "startIndex", variables);
-                        var count = ResolveRequiredInt(step, "count", variables);
-                        var result = await runtime.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Pages('{mediaId}', '{chapterId}', {startIndex}, {count}) returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var chapterId = ResolveRequiredString(step, "chapterId", variables);
+                            var startIndex = ResolveRequiredInt(step, "startIndex", variables);
+                            var count = ResolveRequiredInt(step, "count", variables);
+                            var result = await runtime.GetPagesAsync(mediaId, chapterId, startIndex, count, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Pages('{mediaId}', '{chapterId}', {startIndex}, {count}) returned {result.Count} item(s).");
+                            break;
+                        }
                     case "videostreams":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var result = await runtime.GetVideoStreamsAsync(mediaId, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"VideoStreams('{mediaId}') returned {result.Count} item(s).");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var result = await runtime.GetVideoStreamsAsync(mediaId, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"VideoStreams('{mediaId}') returned {result.Count} item(s).");
+                            break;
+                        }
                     case "videosegment":
-                    {
-                        var mediaId = ResolveRequiredString(step, "mediaId", variables);
-                        var streamId = ResolveRequiredString(step, "streamId", variables);
-                        var sequence = ResolveRequiredInt(step, "sequence", variables);
-                        var result = await runtime.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
-                        SaveValue(variables, step.Save, result);
-                        messages.Add(result is null
-                            ? $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned no payload."
-                            : $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned {result.SizeBytes} byte(s) as '{result.ContentType}'.");
-                        break;
-                    }
+                        {
+                            var mediaId = ResolveRequiredString(step, "mediaId", variables);
+                            var streamId = ResolveRequiredString(step, "streamId", variables);
+                            var sequence = ResolveRequiredInt(step, "sequence", variables);
+                            var result = await runtime.GetVideoSegmentAsync(mediaId, streamId, sequence, cancellationToken);
+                            SaveValue(variables, step.Save, result);
+                            messages.Add(result is null
+                                ? $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned no payload."
+                                : $"VideoSegment('{mediaId}', '{streamId}', {sequence}) returned {result.SizeBytes} byte(s) as '{result.ContentType}'.");
+                            break;
+                        }
                     case "selectfirst":
-                    {
-                        var collection = ResolveRequiredCollection(step, "from", variables);
-                        if (collection.Count == 0)
                         {
-                            messages.Add($"SelectFirst from '{ResolveRequiredString(step, "from", variables)}' failed because the collection was empty.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            var collection = ResolveRequiredCollection(step, "from", variables);
+                            if (collection.Count == 0)
+                            {
+                                messages.Add($"SelectFirst from '{ResolveRequiredString(step, "from", variables)}' failed because the collection was empty.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        var result = collection[0];
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Selected first item: {StringifyValue(result)}.");
-                        break;
-                    }
+                            var result = collection[0];
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Selected first item: {StringifyValue(result)}.");
+                            break;
+                        }
                     case "selectat":
-                    {
-                        var collection = ResolveRequiredCollection(step, "from", variables);
-                        var index = ResolveRequiredInt(step, "index", variables);
-                        if (index < 0 || index >= collection.Count)
                         {
-                            messages.Add($"SelectAt failed because index {index} is outside the collection range 0..{collection.Count - 1}.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            var collection = ResolveRequiredCollection(step, "from", variables);
+                            var index = ResolveRequiredInt(step, "index", variables);
+                            if (index < 0 || index >= collection.Count)
+                            {
+                                messages.Add($"SelectAt failed because index {index} is outside the collection range 0..{collection.Count - 1}.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        var result = collection[index];
-                        SaveValue(variables, step.Save, result);
-                        messages.Add($"Selected item at index {index}: {StringifyValue(result)}.");
-                        break;
-                    }
+                            var result = collection[index];
+                            SaveValue(variables, step.Save, result);
+                            messages.Add($"Selected item at index {index}: {StringifyValue(result)}.");
+                            break;
+                        }
                     case "requirecount":
-                    {
-                        var collection = ResolveRequiredCollection(step, "from", variables);
-                        var min = ResolveOptionalInt(step, "min", variables);
-                        var max = ResolveOptionalInt(step, "max", variables);
-                        if (min is not null && collection.Count < min.Value)
                         {
-                            messages.Add($"RequireCount failed: expected at least {min.Value} item(s), but found {collection.Count}.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            var collection = ResolveRequiredCollection(step, "from", variables);
+                            var min = ResolveOptionalInt(step, "min", variables);
+                            var max = ResolveOptionalInt(step, "max", variables);
+                            if (min is not null && collection.Count < min.Value)
+                            {
+                                messages.Add($"RequireCount failed: expected at least {min.Value} item(s), but found {collection.Count}.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        if (max is not null && collection.Count > max.Value)
-                        {
-                            messages.Add($"RequireCount failed: expected at most {max.Value} item(s), but found {collection.Count}.");
-                            return new PluginDevScenarioResult(scenario.Name, false, messages);
-                        }
+                            if (max is not null && collection.Count > max.Value)
+                            {
+                                messages.Add($"RequireCount failed: expected at most {max.Value} item(s), but found {collection.Count}.");
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
 
-                        messages.Add($"RequireCount passed with {collection.Count} item(s).");
-                        break;
-                    }
+                            messages.Add($"RequireCount passed with {collection.Count} item(s).");
+                            break;
+                        }
                     case "requirenotnull":
-                    {
-                        var value = ResolveRequiredObject(step, "value", variables);
-                        if (value is null)
                         {
-                            var failureMessage = ResolveOptionalString(step, "message", variables) ?? "RequireNotNull failed because the resolved value was null.";
-                            messages.Add(failureMessage);
+                            var value = ResolveRequiredObject(step, "value", variables);
+                            if (value is null)
+                            {
+                                var failureMessage = ResolveOptionalString(step, "message", variables) ?? "RequireNotNull failed because the resolved value was null.";
+                                messages.Add(failureMessage);
+                                return new PluginDevScenarioResult(scenario.Name, false, messages);
+                            }
+
+                            SaveValue(variables, step.Save, value);
+                            messages.Add($"RequireNotNull passed for '{ResolveRequiredString(step, "value", variables)}'.");
+                            break;
+                        }
+                    case "set":
+                        {
+                            var value = ResolveRequiredObject(step, "value", variables);
+                            if (string.IsNullOrWhiteSpace(step.Save))
+                            {
+                                throw new InvalidOperationException("Scenario step 'set' requires a save target.");
+                            }
+
+                            SaveValue(variables, step.Save, value);
+                            messages.Add($"Set '{step.Save}' to {StringifyValue(value)}.");
+                            break;
+                        }
+                    case "log":
+                        {
+                            var message = ResolveRequiredString(step, "message", variables);
+                            messages.Add(message);
+                            break;
+                        }
+                    case "placeholder":
+                        {
+                            var message = ResolveRequiredString(step, "message", variables);
+                            messages.Add(message);
                             return new PluginDevScenarioResult(scenario.Name, false, messages);
                         }
-
-                        SaveValue(variables, step.Save, value);
-                        messages.Add($"RequireNotNull passed for '{ResolveRequiredString(step, "value", variables)}'.");
-                        break;
-                    }
-                    case "set":
-                    {
-                        var value = ResolveRequiredObject(step, "value", variables);
-                        if (string.IsNullOrWhiteSpace(step.Save))
-                        {
-                            throw new InvalidOperationException("Scenario step 'set' requires a save target.");
-                        }
-
-                        SaveValue(variables, step.Save, value);
-                        messages.Add($"Set '{step.Save}' to {StringifyValue(value)}.");
-                        break;
-                    }
-                    case "log":
-                    {
-                        var message = ResolveRequiredString(step, "message", variables);
-                        messages.Add(message);
-                        break;
-                    }
-                    case "placeholder":
-                    {
-                        var message = ResolveRequiredString(step, "message", variables);
-                        messages.Add(message);
-                        return new PluginDevScenarioResult(scenario.Name, false, messages);
-                    }
                     default:
                         throw new InvalidOperationException($"Scenario '{scenario.Name}' uses unsupported op '{step.Op}'.");
                 }

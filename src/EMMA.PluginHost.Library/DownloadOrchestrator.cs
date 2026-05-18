@@ -96,12 +96,12 @@ public sealed class DownloadOrchestrator : IDisposable
             cancellationToken);
     }
 
-            /// <summary>
-            /// Re-queues a paused download job.
-            /// </summary>
-            /// <param name="jobId">The download job identifier.</param>
-            /// <param name="cancellationToken">Cancels the state update.</param>
-            /// <returns><see langword="true"/> when the job state was updated; otherwise <see langword="false"/>.</returns>
+    /// <summary>
+    /// Re-queues a paused download job.
+    /// </summary>
+    /// <param name="jobId">The download job identifier.</param>
+    /// <param name="cancellationToken">Cancels the state update.</param>
+    /// <returns><see langword="true"/> when the job state was updated; otherwise <see langword="false"/>.</returns>
     public async Task<bool> ResumeAsync(string jobId, CancellationToken cancellationToken)
     {
         var updated = await _downloads.UpdateStateAsync(

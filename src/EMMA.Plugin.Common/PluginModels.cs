@@ -91,39 +91,39 @@ public interface IPluginSearchSuggestionProvider
         CancellationToken cancellationToken);
 }
 
-    /// <summary>
-    /// Represents a capability bucket advertised by a plugin.
-    /// </summary>
-    /// <param name="name">The capability group name.</param>
-    /// <param name="mediaTypes">The media types covered by the capability.</param>
-    /// <param name="operations">The operations supported by the capability.</param>
+/// <summary>
+/// Represents a capability bucket advertised by a plugin.
+/// </summary>
+/// <param name="name">The capability group name.</param>
+/// <param name="mediaTypes">The media types covered by the capability.</param>
+/// <param name="operations">The operations supported by the capability.</param>
 public sealed record CapabilityItem(string name, string[] mediaTypes, string[] operations);
 
-    /// <summary>
-    /// Represents a chapter entry exposed by a paged-media plugin.
-    /// </summary>
-    /// <param name="id">The chapter identifier.</param>
-    /// <param name="number">The numeric chapter order.</param>
-    /// <param name="title">The display title for the chapter.</param>
-    /// <param name="uploaderGroups">Optional uploader or scanlation group names.</param>
+/// <summary>
+/// Represents a chapter entry exposed by a paged-media plugin.
+/// </summary>
+/// <param name="id">The chapter identifier.</param>
+/// <param name="number">The numeric chapter order.</param>
+/// <param name="title">The display title for the chapter.</param>
+/// <param name="uploaderGroups">Optional uploader or scanlation group names.</param>
 public sealed record ChapterItem(string id, int number, string title, string[]? uploaderGroups = null);
 
-    /// <summary>
-    /// Represents a single page returned by a paged-media plugin.
-    /// </summary>
-    /// <param name="id">The page identifier.</param>
-    /// <param name="index">The zero-based page index.</param>
-    /// <param name="contentUri">The content URI for the page asset.</param>
+/// <summary>
+/// Represents a single page returned by a paged-media plugin.
+/// </summary>
+/// <param name="id">The page identifier.</param>
+/// <param name="index">The zero-based page index.</param>
+/// <param name="contentUri">The content URI for the page asset.</param>
 public sealed record PageItem(string id, int index, string contentUri);
 
-    /// <summary>
-    /// Represents a generic plugin operation request.
-    /// </summary>
-    /// <param name="operation">The operation name to execute.</param>
-    /// <param name="mediaId">The optional media identifier.</param>
-    /// <param name="mediaType">The optional media type.</param>
-    /// <param name="argsJson">The optional JSON argument payload.</param>
-    /// <param name="payloadJson">The optional JSON body payload.</param>
+/// <summary>
+/// Represents a generic plugin operation request.
+/// </summary>
+/// <param name="operation">The operation name to execute.</param>
+/// <param name="mediaId">The optional media identifier.</param>
+/// <param name="mediaType">The optional media type.</param>
+/// <param name="argsJson">The optional JSON argument payload.</param>
+/// <param name="payloadJson">The optional JSON body payload.</param>
 public sealed record OperationRequest(
     string operation,
     string? mediaId,

@@ -609,33 +609,33 @@ public sealed class PluginDevSessionFactory
         switch (noWarn.Value.ValueKind)
         {
             case JsonValueKind.String:
-            {
-                var value = noWarn.Value.GetString();
-                if (!string.IsNullOrWhiteSpace(value))
                 {
-                    values.Add(value.Trim());
-                }
-
-                break;
-            }
-            case JsonValueKind.Array:
-            {
-                foreach (var item in noWarn.Value.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.String)
-                    {
-                        continue;
-                    }
-
-                    var value = item.GetString();
+                    var value = noWarn.Value.GetString();
                     if (!string.IsNullOrWhiteSpace(value))
                     {
                         values.Add(value.Trim());
                     }
-                }
 
-                break;
-            }
+                    break;
+                }
+            case JsonValueKind.Array:
+                {
+                    foreach (var item in noWarn.Value.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.String)
+                        {
+                            continue;
+                        }
+
+                        var value = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            values.Add(value.Trim());
+                        }
+                    }
+
+                    break;
+                }
         }
 
         return values;

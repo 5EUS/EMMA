@@ -3,87 +3,87 @@ using ConsoleAppFramework;
 
 try
 {
-if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE")))
-{
-    Environment.SetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE", "1");
-}
-
-PluginDevCliRuntimeContext.IsInteractive = args.Length == 0;
-
-var sessionFactory = new PluginDevSessionFactory();
-var session = sessionFactory.Create(Environment.CurrentDirectory);
-session.TransitionTo(PluginDevSessionState.Starting);
-PluginDevSessionHolder.SetCurrent(session);
-var pluginApplication = new PluginDevApplication(sessionFactory, Environment.CurrentDirectory, session);
-PluginDevApplicationHolder.SetCurrent(pluginApplication);
-
-if (args.Length == 0)
-{
-    if (session.Ui.StartWatchByDefault)
+    if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE")))
     {
-        try
+        Environment.SetEnvironmentVariable("EMMA_PLUGIN_DEV_MODE", "1");
+    }
+
+    PluginDevCliRuntimeContext.IsInteractive = args.Length == 0;
+
+    var sessionFactory = new PluginDevSessionFactory();
+    var session = sessionFactory.Create(Environment.CurrentDirectory);
+    session.TransitionTo(PluginDevSessionState.Starting);
+    PluginDevSessionHolder.SetCurrent(session);
+    var pluginApplication = new PluginDevApplication(sessionFactory, Environment.CurrentDirectory, session);
+    PluginDevApplicationHolder.SetCurrent(pluginApplication);
+
+    if (args.Length == 0)
+    {
+        if (session.Ui.StartWatchByDefault)
         {
-            pluginApplication.StartWatch();
+            try
+            {
+                pluginApplication.StartWatch();
+            }
+            catch (Exception ex)
+            {
+                pluginApplication.RecordError($"Default watch startup failed: {ex.Message}");
+            }
         }
-        catch (Exception ex)
+
+        if (session.Ui.StartServeByDefault)
         {
-            pluginApplication.RecordError($"Default watch startup failed: {ex.Message}");
+            try
+            {
+                Console.WriteLine(PluginDevLocalServer.StartInBackground(pluginApplication, 5075));
+            }
+            catch (Exception ex)
+            {
+                pluginApplication.RecordError($"Default serve startup failed: {ex.Message}");
+            }
         }
     }
 
-    if (session.Ui.StartServeByDefault)
+    var app = ConsoleApp.Create();
+    app.Add<MyCommands>();
+
+    var selector = new ResultSelector();
+
+    void ExecuteCommand(string[] commandArgs)
     {
-        try
+        var context = CommandContextHolder.Context;
+        context.Clear();
+
+        session.TransitionTo(PluginDevSessionState.Running);
+        app.Run(commandArgs);
+
+        if (context.Results.Count <= 0)
         {
-            Console.WriteLine(PluginDevLocalServer.StartInBackground(pluginApplication, 5075));
+            return;
         }
-        catch (Exception ex)
+
+        while (context.Results.Count > 0)
         {
-            pluginApplication.RecordError($"Default serve startup failed: {ex.Message}");
+            var toDisplay = context.Results.ToList();
+            context.Clear();
+            selector.Display(toDisplay).Wait();
         }
     }
-}
 
-var app = ConsoleApp.Create();
-app.Add<MyCommands>();
-
-var selector = new ResultSelector();
-
-void ExecuteCommand(string[] commandArgs)
-{
-    var context = CommandContextHolder.Context;
-    context.Clear();
-
-    session.TransitionTo(PluginDevSessionState.Running);
-    app.Run(commandArgs);
-
-    if (context.Results.Count <= 0)
+    if (args.Length != 0)
     {
+        ExecuteCommand(args);
+        session.TransitionTo(PluginDevSessionState.Stopped);
         return;
     }
 
-    while (context.Results.Count > 0)
+    var loop = new CommandLoop(commandArgs =>
     {
-        var toDisplay = context.Results.ToList();
-        context.Clear();
-        selector.Display(toDisplay).Wait();
-    }
-}
+        ExecuteCommand(commandArgs);
+    });
 
-if (args.Length != 0)
-{
-    ExecuteCommand(args);
+    loop.Run().Wait();
     session.TransitionTo(PluginDevSessionState.Stopped);
-    return;
-}
-
-var loop = new CommandLoop(commandArgs =>
-{
-    ExecuteCommand(commandArgs);
-});
-
-loop.Run().Wait();
-session.TransitionTo(PluginDevSessionState.Stopped);
 }
 catch (Exception ex)
 {
