@@ -6,6 +6,9 @@ It is intentionally status-first rather than plan-only.
 For the SDK-specific release gate that now defines `v0.7.0` readiness, see
 `plugin-sdk-v0.7.0-release-contract.md`.
 
+For the concrete binary transport and generic catalog redesign plan, see
+`binary-transport-and-catalog-v2-roadmap.md`.
+
 ## Milestone Summary
 
 | Milestone | Status | Notes |

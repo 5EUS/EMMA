@@ -39,17 +39,17 @@ public static class PluginWasmDiagnosticsScaffold
             return;
         }
 
-        var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(payload ?? string.Empty);
-        Console.Error.WriteLine(
-            "[TEMP_TIMING_REMOVE] pluginSearch op=search queryLength={0} payloadSource={1} fetchMs={2} parseMs={3} mapMs={4} totalMs={5} payloadBytes={6} resultCount={7}",
-            query?.Length ?? 0,
-            payloadWasFetched ? "provider" : "provided",
-            fetchMs,
-            parseMs,
-            mapMs,
-            totalMs,
-            payloadBytes,
-            resultCount);
+        var payloadBytes = (payload ?? string.Empty).Length;
+        var line = "[TEMP_TIMING_REMOVE] pluginSearch op=search"
+            + " queryLength=" + (query?.Length ?? 0)
+            + " payloadSource=" + (payloadWasFetched ? "provider" : "provided")
+            + " fetchMs=" + fetchMs
+            + " parseMs=" + parseMs
+            + " mapMs=" + mapMs
+            + " totalMs=" + totalMs
+            + " payloadBytes=" + payloadBytes
+            + " resultCount=" + resultCount;
+        Console.Error.WriteLine(line);
     }
 
     /// <summary>
@@ -101,7 +101,7 @@ public static class PluginWasmDiagnosticsScaffold
         var payloadJson = resolvePayload(parsedQuery);
 
         var stopwatch = Stopwatch.StartNew();
-        var payloadBytes = System.Text.Encoding.UTF8.GetByteCount(payloadJson ?? string.Empty);
+        var payloadBytes = (payloadJson ?? string.Empty).Length;
         var itemCount = 0;
 
         if (!string.IsNullOrWhiteSpace(payloadJson))

@@ -4,6 +4,10 @@ Simple CLI that calls the embedded API adapter backed by the plugin host pipelin
 The CLI now boots through a `PluginDevSession` so profile/config resolution and
 session metadata are available before commands run.
 
+For the planned binary asset transport and generic catalog migration work that
+will affect plugin-dev inspection flows, see
+`../../docs/architecture/binary-transport-and-catalog-v2-roadmap.md`.
+
 ## Usage
 
 ```bash

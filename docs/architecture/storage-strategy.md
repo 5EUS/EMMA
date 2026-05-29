@@ -1,5 +1,10 @@
 # Storage Strategy
 
+This document describes the current storage model.
+
+For the proposed generic catalog redesign and v2 schema, see
+`binary-transport-and-catalog-v2-roadmap.md`.
+
 ## SQLite Schema (High-Level)
 
 ### Media Metadata
