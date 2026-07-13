@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EMMA.Api/EMMA.Api.csproj" />
+    <Project Path="src/EMMA.Application/EMMA.Application.csproj" />
+    <Project Path="src/EMMA.Contracts/EMMA.Contracts.csproj" />
+    <Project Path="src/EMMA.Domain/EMMA.Domain.csproj" />
+    <Project Path="src/EMMA.Infrastructure/EMMA.Infrastructure.csproj" />
+    <Project Path="src/EMMA.PluginHost/EMMA.PluginHost.csproj" />
+    <Project Path="src/EMMA.Storage/EMMA.Storage.csproj" />
+    <Project Path="src/EMMA.WasmRuntime/EMMA.WasmRuntime.csproj" />
+  </Folder>
+</Solution>
