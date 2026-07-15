@@ -1,0 +1,70 @@
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_after_close_brace = all
+
+############################
+# Nullability & Safety
+############################
+dotnet_diagnostic.CS8602.severity = error   # dereference of possibly null
+dotnet_diagnostic.CS8618.severity = warning # uninitialized non-null
+
+############################
+# Async correctness
+############################
+dotnet_diagnostic.CA2007.severity = warning # ConfigureAwait
+dotnet_diagnostic.VSTHRD200.severity = error # async naming
+
+############################
+# Performance
+############################
+dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1852.severity = warning # seal types
+
+############################
+# Code quality
+############################
+dotnet_diagnostic.CA1508.severity = warning # dead conditional code
+dotnet_diagnostic.RCS1213.severity = warning # unused member
+
+############################
+# Style (keep reasonable)
+############################
+dotnet_diagnostic.IDE0051.severity = warning # unused private members
+dotnet_diagnostic.IDE0060.severity = warning # unused params
+
+############################
+# Naming
+############################
+dotnet_naming_rule.private_fields_underscore.severity = suggestion
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_style
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.underscore_style.required_prefix = _
+dotnet_naming_style.underscore_style.capitalization = camel_case
+
+############################
+# StyleCop (trim noise)
+############################
+dotnet_diagnostic.SA1600.severity = none   # no XML docs required
+dotnet_diagnostic.SA1309.severity = none   # allow flexible naming
+
+############################
+# Meziantou high-value rules
+############################
+dotnet_diagnostic.MA0004.severity = warning
+dotnet_diagnostic.MA0022.severity = warning
+
+dotnet_diagnostic.SA1633.severity = none   # no file header required
+
+dotnet_diagnostic.SA1649.severity = none   # allow flexible file naming
+dotnet_diagnostic.MA0048.severity = none   # allow flexible file naming
+
+dotnet_diagnostic.SA1101.severity = none   # allow flexible this. usage
