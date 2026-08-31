@@ -765,6 +765,7 @@ public sealed class WasmPluginRuntimeHost(
         CancellationToken cancellationToken)
     {
         var componentPath = ResolveComponentPath(record.Manifest);
+        var invokeStopwatch = Stopwatch.StartNew();
         var segmentJson = await RunInvokeOperationAsync(
             componentPath,
             operation: VideoSegmentOperation,
@@ -773,8 +774,11 @@ public sealed class WasmPluginRuntimeHost(
             argsJson: SerializeJson(new WasmVideoSegmentArgs(streamId, sequence)),
             permittedDomains: record.Manifest.Permissions?.Domains,
             cancellationToken: cancellationToken);
+        invokeStopwatch.Stop();
 
+        var deserializeStopwatch = Stopwatch.StartNew();
         var segment = DeserializeJson<WasmVideoSegmentWire>(segmentJson);
+        deserializeStopwatch.Stop();
         if (segment is null)
         {
             return null;
@@ -782,19 +786,51 @@ public sealed class WasmPluginRuntimeHost(
 
         if (string.IsNullOrWhiteSpace(segment.PayloadBase64))
         {
+            var totalMs = invokeStopwatch.ElapsedMilliseconds + deserializeStopwatch.ElapsedMilliseconds;
+            if (ShouldLogVideoSegmentDiagnostics(totalMs))
+            {
+                _logger.LogInformation(
+                    "WASM video segment timings for {PluginId}: invoke={InvokeMs}ms deserialize={DeserializeMs}ms decode=0ms total={TotalMs}ms (streamId={StreamId}, sequence={Sequence}, base64Bytes=0, payloadBytes=0)",
+                    record.Manifest.Id,
+                    invokeStopwatch.ElapsedMilliseconds,
+                    deserializeStopwatch.ElapsedMilliseconds,
+                    totalMs,
+                    streamId,
+                    sequence);
+            }
+
             return new WasmVideoSegmentResult(
                 string.IsNullOrWhiteSpace(segment.ContentType) ? "application/octet-stream" : segment.ContentType,
                 []);
         }
 
         byte[] bytes;
+        var decodeStopwatch = Stopwatch.StartNew();
         try
         {
             bytes = Convert.FromBase64String(segment.PayloadBase64);
         }
         catch (FormatException ex)
         {
+            decodeStopwatch.Stop();
             throw new InvalidOperationException("WASM video segment payload is not valid base64.", ex);
+        }
+        decodeStopwatch.Stop();
+
+        var totalWithDecodeMs = invokeStopwatch.ElapsedMilliseconds + deserializeStopwatch.ElapsedMilliseconds + decodeStopwatch.ElapsedMilliseconds;
+        if (ShouldLogVideoSegmentDiagnostics(totalWithDecodeMs))
+        {
+            _logger.LogInformation(
+                "WASM video segment timings for {PluginId}: invoke={InvokeMs}ms deserialize={DeserializeMs}ms decode={DecodeMs}ms total={TotalMs}ms (streamId={StreamId}, sequence={Sequence}, base64Bytes={Base64Bytes}, payloadBytes={PayloadBytes})",
+                record.Manifest.Id,
+                invokeStopwatch.ElapsedMilliseconds,
+                deserializeStopwatch.ElapsedMilliseconds,
+                decodeStopwatch.ElapsedMilliseconds,
+                totalWithDecodeMs,
+                streamId,
+                sequence,
+                segment.PayloadBase64.Length,
+                bytes.Length);
         }
 
         return new WasmVideoSegmentResult(
@@ -1006,6 +1042,28 @@ public sealed class WasmPluginRuntimeHost(
         }
 
         throw new InvalidOperationException($"WASM component not found for plugin '{manifest.Id}'.");
+    }
+
+    private static bool ShouldLogVideoSegmentDiagnostics(long totalMs)
+    {
+        if (totalMs >= 500)
+        {
+            return true;
+        }
+
+        var value = Environment.GetEnvironmentVariable("EMMA_WASM_PAYLOAD_DIAGNOSTICS")
+            ?? Environment.GetEnvironmentVariable("EMMA_PLUGIN_TIMING_DIAGNOSTICS");
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(value, out var parsedBool))
+        {
+            return parsedBool;
+        }
+
+        return value.Trim() is "1" or "yes" or "on";
     }
 
     private async Task<string> RunComponentAsync(

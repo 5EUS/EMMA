@@ -20,6 +20,7 @@ public static class PluginHostEndpoints
         app.MapGet("/plugins/available", async (
             PluginManifestLoader manifestLoader,
             PluginRegistry registry,
+            PluginPreferencesService preferencesService,
             IPluginEntrypointResolver entrypointResolver,
             CancellationToken cancellationToken) =>
         {
@@ -52,10 +53,65 @@ public static class PluginHostEndpoints
                         manifest.Capabilities.CpuBudgetMs,
                         manifest.Capabilities.MemoryMb
                     },
+                PreferenceSummary = preferencesService.GetSummaryAsync(manifest.Id, cancellationToken).GetAwaiter().GetResult(),
                 Loaded = loaded.Contains(manifest.Id)
             });
 
             return Results.Ok(results);
+        });
+
+        app.MapGet("/plugins/{pluginId}/preferences/schema", async (
+            string pluginId,
+            PluginPreferencesService preferencesService,
+            CancellationToken cancellationToken) =>
+        {
+            var schema = await preferencesService.GetSchemaAsync(pluginId, cancellationToken);
+            return schema is null
+                ? Results.NotFound(new { message = $"Plugin '{pluginId}' was not found." })
+                : Results.Ok(schema);
+        });
+
+        app.MapGet("/plugins/{pluginId}/preferences/summary", async (
+            string pluginId,
+            PluginPreferencesService preferencesService,
+            CancellationToken cancellationToken) =>
+        {
+            var summary = await preferencesService.GetSummaryAsync(pluginId, cancellationToken);
+            return Results.Ok(summary);
+        });
+
+        app.MapPut("/plugins/{pluginId}/preferences/values/{fieldKey}", async (
+            string pluginId,
+            string fieldKey,
+            PluginPreferenceMutationRequest request,
+            PluginPreferencesService preferencesService,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await preferencesService.SetValueAsync(pluginId, fieldKey, request, cancellationToken);
+            return result.Success
+                ? Results.Ok(result)
+                : Results.BadRequest(result);
+        });
+
+        app.MapDelete("/plugins/{pluginId}/preferences/values/{fieldKey}", async (
+            string pluginId,
+            string fieldKey,
+            PluginPreferencesService preferencesService,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await preferencesService.ClearValueAsync(pluginId, fieldKey, cancellationToken);
+            return result.Success
+                ? Results.Ok(result)
+                : Results.BadRequest(result);
+        });
+
+        app.MapPost("/plugins/{pluginId}/preferences/validate", async (
+            string pluginId,
+            PluginPreferencesService preferencesService,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await preferencesService.ValidateAsync(pluginId, cancellationToken);
+            return Results.Ok(result);
         });
 
         app.MapGet("/plugins/logs", (

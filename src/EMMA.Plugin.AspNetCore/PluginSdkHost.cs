@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using EMMA.Plugin.Common;
 using EMMA.Contracts.Plugins;
@@ -609,6 +610,7 @@ public static class PluginSdkHost
             app.MapPost("/dev/video/segment", async (
                 PluginDevVideoSegmentRequest request,
                 IPluginVideoRuntime runtime,
+                ILoggerFactory loggerFactory,
                 IOptions<PluginSdkSecurityOptions> securityOptions,
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
@@ -619,12 +621,33 @@ public static class PluginSdkHost
                     return authorizationError;
                 }
 
+                var logger = loggerFactory.CreateLogger(nameof(PluginSdkHost));
+                var totalStopwatch = Stopwatch.StartNew();
+                var runtimeStopwatch = Stopwatch.StartNew();
                 var response = await runtime.GetSegmentAsync(request.MediaId, request.StreamId, request.Sequence, cancellationToken);
+                runtimeStopwatch.Stop();
+
+                var base64Stopwatch = Stopwatch.StartNew();
                 var payload = response.Payload.ToByteArray();
+                var payloadBase64 = Convert.ToBase64String(payload);
+                base64Stopwatch.Stop();
+                totalStopwatch.Stop();
+
+                logger.LogInformation(
+                    "Plugin dev video segment timings: mediaId={MediaId} streamId={StreamId} sequence={Sequence} runtimeMs={RuntimeMs} base64Ms={Base64Ms} totalMs={TotalMs} payloadBytes={PayloadBytes} base64Bytes={Base64Bytes}",
+                    request.MediaId,
+                    request.StreamId,
+                    request.Sequence,
+                    runtimeStopwatch.ElapsedMilliseconds,
+                    base64Stopwatch.ElapsedMilliseconds,
+                    totalStopwatch.ElapsedMilliseconds,
+                    payload.Length,
+                    payloadBase64.Length);
+
                 return Results.Json(new
                 {
                     ContentType = string.IsNullOrWhiteSpace(response.ContentType) ? "application/octet-stream" : response.ContentType,
-                    PayloadBase64 = Convert.ToBase64String(payload),
+                    PayloadBase64 = payloadBase64,
                     SizeBytes = payload.Length
                 });
             });

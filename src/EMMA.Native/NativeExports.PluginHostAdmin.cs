@@ -353,6 +353,185 @@ public static partial class NativeExports
         }
     }
 
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_plugin_preference_schema_json")]
+    public static IntPtr RuntimeGetPluginPreferenceSchemaJson(int handle, IntPtr pluginIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                return AllocUtf8(HttpGetJson(remoteBaseUri, $"/plugins/{Uri.EscapeDataString(pluginId)}/preferences/schema"));
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.GetPluginPreferenceSchemaJsonManaged(pluginId);
+            if (json is null)
+            {
+                SetLastError(PluginHostExports.GetLastErrorManaged() ?? "Failed to load plugin preference schema.");
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_get_plugin_preference_summary_json")]
+    public static IntPtr RuntimeGetPluginPreferenceSummaryJson(int handle, IntPtr pluginIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                return AllocUtf8(HttpGetJson(remoteBaseUri, $"/plugins/{Uri.EscapeDataString(pluginId)}/preferences/summary"));
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.GetPluginPreferenceSummaryJsonManaged(pluginId);
+            if (json is null)
+            {
+                SetLastError(PluginHostExports.GetLastErrorManaged() ?? "Failed to load plugin preference summary.");
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_set_plugin_preference_value_json")]
+    public static IntPtr RuntimeSetPluginPreferenceValueJson(int handle, IntPtr pluginIdUtf8, IntPtr fieldKeyUtf8, IntPtr requestJsonUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            var fieldKey = PtrToString(fieldKeyUtf8) ?? string.Empty;
+            var requestJson = PtrToString(requestJsonUtf8) ?? "{}";
+
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                return AllocUtf8(HttpSendJson(remoteBaseUri, $"/plugins/{Uri.EscapeDataString(pluginId)}/preferences/values/{Uri.EscapeDataString(fieldKey)}", HttpMethod.Put, requestJson));
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.SetPluginPreferenceValueJsonManaged(pluginId, fieldKey, requestJson);
+            if (json is null)
+            {
+                SetLastError(PluginHostExports.GetLastErrorManaged() ?? "Failed to set plugin preference value.");
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_clear_plugin_preference_value")]
+    public static int RuntimeClearPluginPreferenceValue(int handle, IntPtr pluginIdUtf8, IntPtr fieldKeyUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return 0;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            var fieldKey = PtrToString(fieldKeyUtf8) ?? string.Empty;
+
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                HttpSendJson(remoteBaseUri, $"/plugins/{Uri.EscapeDataString(pluginId)}/preferences/values/{Uri.EscapeDataString(fieldKey)}", HttpMethod.Delete, null);
+                return 1;
+            }
+
+            EnsurePluginHostInitialized();
+            return PluginHostExports.ClearPluginPreferenceValueManaged(pluginId, fieldKey);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "emma_runtime_validate_plugin_preferences_json")]
+    public static IntPtr RuntimeValidatePluginPreferencesJson(int handle, IntPtr pluginIdUtf8)
+    {
+        ClearLastError();
+
+        try
+        {
+            if (!States.TryGetValue(handle, out _))
+            {
+                SetLastError("Runtime handle not found.");
+                return IntPtr.Zero;
+            }
+
+            var pluginId = PtrToString(pluginIdUtf8) ?? string.Empty;
+            if (TryGetRemotePluginHostBaseUri(out var remoteBaseUri))
+            {
+                return AllocUtf8(HttpSendJson(remoteBaseUri, $"/plugins/{Uri.EscapeDataString(pluginId)}/preferences/validate", HttpMethod.Post, null));
+            }
+
+            EnsurePluginHostInitialized();
+            var json = PluginHostExports.ValidatePluginPreferencesJsonManaged(pluginId);
+            if (json is null)
+            {
+                SetLastError(PluginHostExports.GetLastErrorManaged() ?? "Failed to validate plugin preferences.");
+                return IntPtr.Zero;
+            }
+
+            return AllocUtf8(json);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return IntPtr.Zero;
+        }
+    }
+
     [UnmanagedCallersOnly(EntryPoint = "emma_runtime_list_plugin_repositories_json")]
     public static IntPtr RuntimeListPluginRepositoriesJson()
     {

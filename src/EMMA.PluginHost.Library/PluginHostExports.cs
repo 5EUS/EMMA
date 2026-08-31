@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -20,6 +21,7 @@ using EMMA.Storage;
 using Grpc.Core;
 using Grpc.Net.Client;
 using EMMA.Domain;
+using Microsoft.Extensions.Logging;
 
 namespace EMMA.PluginHost.Library;
 
@@ -94,6 +96,48 @@ public static class PluginHostExports
     // Don't use [ThreadStatic] - we need the error to be visible across threads for FFI
     private static string? _lastError;
     private static string? _lastSearchTiming;
+
+    private static ILogger? TryGetPluginHostLogger()
+    {
+        return _serviceProvider?
+            .GetService<ILoggerFactory>()?
+            .CreateLogger(nameof(PluginHostExports));
+    }
+
+    private static bool ShouldLogPluginTimingDiagnostics()
+    {
+        var value = Environment.GetEnvironmentVariable("EMMA_PLUGIN_TIMING_DIAGNOSTICS")
+            ?? Environment.GetEnvironmentVariable("EMMA_WASM_PAYLOAD_DIAGNOSTICS");
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (bool.TryParse(value, out var parsedBool))
+        {
+            return parsedBool;
+        }
+
+        return value.Trim() is "1" or "yes" or "on";
+    }
+
+    private static void LogAssetTransportTiming(string operation, long elapsedMs, string details)
+    {
+        var logger = TryGetPluginHostLogger();
+        if (logger is null)
+        {
+            return;
+        }
+
+        if (ShouldLogPluginTimingDiagnostics() || elapsedMs >= 500)
+        {
+            logger.LogInformation("Plugin host {Operation} timings: {Details}", operation, details);
+            return;
+        }
+
+        logger.LogDebug("Plugin host {Operation} timings: {Details}", operation, details);
+    }
 
     // ==================== Managed API (callable from C#) ====================
 
@@ -185,12 +229,15 @@ public static class PluginHostExports
                 // Storage
                 services.AddSingleton(StorageOptions.Default);
                 services.AddSingleton<StorageInitializer>();
+                services.AddSingleton<ProtectedPreferenceCipher>();
                 services.AddSingleton(PageAssetCacheOptions.Default);
                 services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
                 services.AddSingleton<ILibraryPort, SqliteLibraryPort>();
                 services.AddSingleton<IProgressPort, SqliteProgressPort>();
                 services.AddSingleton<IHistoryPort, SqliteHistoryPort>();
                 services.AddSingleton<IDownloadPort, SqliteDownloadPort>();
+                services.AddSingleton<IPluginPreferenceStore, SqlitePluginPreferenceStore>();
+                services.AddSingleton<PluginPreferencesService>();
                 services.AddSingleton<IPageAssetCachePort>(sp =>
                     new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
                 services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();
@@ -479,6 +526,7 @@ public static class PluginHostExports
             EnsureInitialized();
 
             var records = _registry!.GetSnapshot();
+            var preferencesService = _serviceProvider!.GetRequiredService<PluginPreferencesService>();
             var summaries = records.Select(r => new PluginSummaryResponse(
                 Id: r.Manifest.Id,
                 Title: r.Manifest.Name ?? r.Manifest.Id,
@@ -489,7 +537,8 @@ public static class PluginHostExports
                 ThumbnailFit: r.Manifest.Thumbnail?.Fit,
                 ThumbnailWidth: r.Manifest.Thumbnail?.Width,
                 ThumbnailHeight: r.Manifest.Thumbnail?.Height,
-                SearchExperience: r.Manifest.SearchExperience
+                SearchExperience: r.Manifest.SearchExperience,
+                PreferenceSummary: preferencesService.GetSummaryAsync(r.Manifest.Id, CancellationToken.None).GetAwaiter().GetResult()
             )).ToList();
 
             return JsonSerializer.Serialize(summaries, PluginHostExportsJsonContext.Default.ListPluginSummaryResponse);
@@ -519,6 +568,125 @@ public static class PluginHostExports
         {
             SetLastError(ex);
             return -1;
+        }
+    }
+
+    /// <summary>
+    /// Gets the normalized preference schema for a plugin as JSON.
+    /// </summary>
+    public static string? GetPluginPreferenceSchemaJsonManaged(string pluginId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var service = _serviceProvider!.GetRequiredService<PluginPreferencesService>();
+            var schema = service.GetSchemaAsync(pluginId, CancellationToken.None).GetAwaiter().GetResult();
+            if (schema is null)
+            {
+                SetLastError($"Plugin '{pluginId}' was not found.");
+                return null;
+            }
+
+            return JsonSerializer.Serialize(schema, PluginHostExportsJsonContext.Default.PluginPreferenceSchemaResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Gets the preference summary for a plugin as JSON.
+    /// </summary>
+    public static string? GetPluginPreferenceSummaryJsonManaged(string pluginId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var service = _serviceProvider!.GetRequiredService<PluginPreferencesService>();
+            var summary = service.GetSummaryAsync(pluginId, CancellationToken.None).GetAwaiter().GetResult();
+            return JsonSerializer.Serialize(summary, PluginHostExportsJsonContext.Default.PluginPreferenceSummaryResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Sets a single plugin preference value from a JSON mutation request.
+    /// </summary>
+    public static string? SetPluginPreferenceValueJsonManaged(string pluginId, string fieldKey, string requestJson)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var service = _serviceProvider!.GetRequiredService<PluginPreferencesService>();
+            var request = JsonSerializer.Deserialize(requestJson, PluginHostExportsJsonContext.Default.PluginPreferenceMutationRequest)
+                ?? new PluginPreferenceMutationRequest(null);
+            var result = service.SetValueAsync(pluginId, fieldKey, request, CancellationToken.None).GetAwaiter().GetResult();
+            return JsonSerializer.Serialize(result, PluginHostExportsJsonContext.Default.PluginPreferenceMutationResult);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Clears a single stored plugin preference value.
+    /// </summary>
+    public static int ClearPluginPreferenceValueManaged(string pluginId, string fieldKey)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var service = _serviceProvider!.GetRequiredService<PluginPreferencesService>();
+            var result = service.ClearValueAsync(pluginId, fieldKey, CancellationToken.None).GetAwaiter().GetResult();
+            if (!result.Success)
+            {
+                SetLastError(result.Error ?? $"Failed to clear preference '{fieldKey}'.");
+                return 0;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Validates the current stored preference values for a plugin and returns the result as JSON.
+    /// </summary>
+    public static string? ValidatePluginPreferencesJsonManaged(string pluginId)
+    {
+        ClearLastError();
+
+        try
+        {
+            EnsureInitialized();
+            var service = _serviceProvider!.GetRequiredService<PluginPreferencesService>();
+            var result = service.ValidateAsync(pluginId, CancellationToken.None).GetAwaiter().GetResult();
+            return JsonSerializer.Serialize(result, PluginHostExportsJsonContext.Default.PluginPreferenceValidationResponse);
+        }
+        catch (Exception ex)
+        {
+            SetLastError(ex);
+            return null;
         }
     }
 
@@ -1819,21 +1987,47 @@ public static class PluginHostExports
     public static string? GetPageAssetJsonManaged(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
         ClearLastError();
+        var totalStopwatch = Stopwatch.StartNew();
+        long fetchMs = 0;
+        long serializeMs = 0;
+        var payloadBytes = 0;
+        var responseBytes = 0;
+        var success = false;
 
         try
         {
+            var fetchStopwatch = Stopwatch.StartNew();
             var asset = GetPageAssetManagedInternal(pluginId, mediaId, chapterId, pageIndex);
+            fetchStopwatch.Stop();
+            fetchMs = fetchStopwatch.ElapsedMilliseconds;
             if (asset is null)
             {
                 return null;
             }
 
-            return JsonSerializer.Serialize(asset, PluginHostExportsJsonContext.Default.MediaPageAsset);
+            payloadBytes = asset.Payload.Length;
+
+            var serializeStopwatch = Stopwatch.StartNew();
+            var json = JsonSerializer.Serialize(asset, PluginHostExportsJsonContext.Default.MediaPageAsset);
+            serializeStopwatch.Stop();
+
+            serializeMs = serializeStopwatch.ElapsedMilliseconds;
+            responseBytes = Encoding.UTF8.GetByteCount(json);
+            success = true;
+            return json;
         }
         catch (Exception ex)
         {
             SetLastError(ex);
             return null;
+        }
+        finally
+        {
+            totalStopwatch.Stop();
+            LogAssetTransportTiming(
+                "page-asset-json",
+                totalStopwatch.ElapsedMilliseconds,
+                $"pluginId={pluginId}, mediaId={mediaId}, chapterId={chapterId}, pageIndex={pageIndex}, fetchMs={fetchMs}, serializeMs={serializeMs}, payloadBytes={payloadBytes}, responseBytes={responseBytes}, success={success}");
         }
     }
 
@@ -1868,36 +2062,99 @@ public static class PluginHostExports
 
     private static MediaPageAsset? GetPageAssetManagedInternal(string pluginId, string mediaId, string chapterId, int pageIndex)
     {
-        if (TryReadDownloadedPagedAsset(pluginId, mediaId, chapterId, pageIndex, out var downloadedAsset))
+        var totalStopwatch = Stopwatch.StartNew();
+        long downloadedReadMs = 0;
+        long pageLookupMs = 0;
+        long cacheGetMs = 0;
+        long fetchMs = 0;
+        long cacheSetMs = 0;
+        var payloadBytes = 0;
+        string contentType = "application/octet-stream";
+        string source = "none";
+        string contentUri = "<unresolved>";
+        var success = false;
+
+        try
         {
-            return downloadedAsset;
-        }
+            var downloadedReadStopwatch = Stopwatch.StartNew();
+            var downloadedFound = TryReadDownloadedPagedAsset(pluginId, mediaId, chapterId, pageIndex, out var downloadedAsset);
+            downloadedReadStopwatch.Stop();
+            downloadedReadMs = downloadedReadStopwatch.ElapsedMilliseconds;
+            if (downloadedFound)
+            {
+                source = "downloaded";
+                payloadBytes = downloadedAsset!.Payload.Length;
+                contentType = downloadedAsset.ContentType;
+                success = true;
+                return downloadedAsset;
+            }
 
-        var page = GetPageManagedInternal(pluginId, mediaId, chapterId, pageIndex);
-        if (page is null)
+            var pageLookupStopwatch = Stopwatch.StartNew();
+            var page = GetPageManagedInternal(pluginId, mediaId, chapterId, pageIndex);
+            pageLookupStopwatch.Stop();
+            pageLookupMs = pageLookupStopwatch.ElapsedMilliseconds;
+            if (page is null)
+            {
+                return null;
+            }
+
+            contentUri = page.ContentUri.ToString();
+
+            EnsureInitialized();
+            var cache = _serviceProvider!.GetService<IPageAssetCachePort>();
+            var fetcher = _serviceProvider!.GetService<IPageAssetFetcherPort>();
+            if (fetcher is null)
+            {
+                SetLastError("Page asset fetcher is not configured.");
+                return null;
+            }
+
+            var cacheKey = $"page-asset:{page.ContentUri}";
+            MediaPageAsset? cached = null;
+            if (cache is not null)
+            {
+                var cacheGetStopwatch = Stopwatch.StartNew();
+                cached = cache.GetAsync(cacheKey, CancellationToken.None).GetAwaiter().GetResult();
+                cacheGetStopwatch.Stop();
+                cacheGetMs = cacheGetStopwatch.ElapsedMilliseconds;
+            }
+
+            MediaPageAsset asset;
+            if (cached is not null)
+            {
+                source = "cache";
+                asset = cached;
+            }
+            else
+            {
+                var fetchStopwatch = Stopwatch.StartNew();
+                asset = fetcher.FetchAsync(page.ContentUri, CancellationToken.None).GetAwaiter().GetResult();
+                fetchStopwatch.Stop();
+                fetchMs = fetchStopwatch.ElapsedMilliseconds;
+                source = "fetcher";
+
+                if (cache is not null)
+                {
+                    var cacheSetStopwatch = Stopwatch.StartNew();
+                    cache.SetAsync(cacheKey, asset, CancellationToken.None).GetAwaiter().GetResult();
+                    cacheSetStopwatch.Stop();
+                    cacheSetMs = cacheSetStopwatch.ElapsedMilliseconds;
+                }
+            }
+
+            payloadBytes = asset.Payload.Length;
+            contentType = asset.ContentType;
+            success = true;
+            return asset;
+        }
+        finally
         {
-            return null;
+            totalStopwatch.Stop();
+            LogAssetTransportTiming(
+                "page-asset",
+                totalStopwatch.ElapsedMilliseconds,
+                $"pluginId={pluginId}, mediaId={mediaId}, chapterId={chapterId}, pageIndex={pageIndex}, source={source}, downloadedReadMs={downloadedReadMs}, pageLookupMs={pageLookupMs}, cacheGetMs={cacheGetMs}, fetchMs={fetchMs}, cacheSetMs={cacheSetMs}, payloadBytes={payloadBytes}, contentType={contentType}, contentUri={contentUri}, success={success}");
         }
-
-        EnsureInitialized();
-        var cache = _serviceProvider!.GetService<IPageAssetCachePort>();
-        var fetcher = _serviceProvider!.GetService<IPageAssetFetcherPort>();
-        if (fetcher is null)
-        {
-            SetLastError("Page asset fetcher is not configured.");
-            return null;
-        }
-
-        var cacheKey = $"page-asset:{page.ContentUri}";
-        var cached = cache?.GetAsync(cacheKey, CancellationToken.None).GetAwaiter().GetResult();
-        var asset = cached ?? fetcher.FetchAsync(page.ContentUri, CancellationToken.None).GetAwaiter().GetResult();
-
-        if (cache is not null && cached is null)
-        {
-            cache.SetAsync(cacheKey, asset, CancellationToken.None).GetAwaiter().GetResult();
-        }
-
-        return asset;
     }
 
     private static int ChangeDownloadStateManaged(
@@ -4283,21 +4540,47 @@ public static class PluginHostExports
     public static string? GetVideoSegmentJsonManaged(string pluginId, string mediaId, string streamId, int sequence)
     {
         ClearLastError();
+        var totalStopwatch = Stopwatch.StartNew();
+        long fetchMs = 0;
+        long serializeMs = 0;
+        var payloadBytes = 0;
+        var responseBytes = 0;
+        var success = false;
 
         try
         {
+            var fetchStopwatch = Stopwatch.StartNew();
             var segment = GetVideoSegmentManagedInternal(pluginId, mediaId, streamId, sequence);
+            fetchStopwatch.Stop();
+            fetchMs = fetchStopwatch.ElapsedMilliseconds;
             if (segment is null)
             {
                 return null;
             }
 
-            return JsonSerializer.Serialize(segment, PluginHostExportsJsonContext.Default.VideoSegmentAssetResponse);
+            payloadBytes = segment.Payload.Length;
+
+            var serializeStopwatch = Stopwatch.StartNew();
+            var json = JsonSerializer.Serialize(segment, PluginHostExportsJsonContext.Default.VideoSegmentAssetResponse);
+            serializeStopwatch.Stop();
+
+            serializeMs = serializeStopwatch.ElapsedMilliseconds;
+            responseBytes = Encoding.UTF8.GetByteCount(json);
+            success = true;
+            return json;
         }
         catch (Exception ex)
         {
             SetLastError(ex);
             return null;
+        }
+        finally
+        {
+            totalStopwatch.Stop();
+            LogAssetTransportTiming(
+                "video-segment-json",
+                totalStopwatch.ElapsedMilliseconds,
+                $"pluginId={pluginId}, mediaId={mediaId}, streamId={streamId}, sequence={sequence}, fetchMs={fetchMs}, serializeMs={serializeMs}, payloadBytes={payloadBytes}, responseBytes={responseBytes}, success={success}");
         }
     }
 
@@ -5855,6 +6138,16 @@ public static class PluginHostExports
 
     private static VideoSegmentAssetResponse? GetVideoSegmentManagedInternal(string pluginId, string mediaId, string streamId, int sequence)
     {
+        var totalStopwatch = Stopwatch.StartNew();
+        long downloadedReadMs = 0;
+        long wasmFetchMs = 0;
+        long grpcFetchMs = 0;
+        long payloadCopyMs = 0;
+        var payloadBytes = 0;
+        string contentType = "application/octet-stream";
+        string source = "none";
+        var success = false;
+
         if (string.IsNullOrWhiteSpace(mediaId) || string.IsNullOrWhiteSpace(streamId))
         {
             SetLastError("Media ID and stream ID are required");
@@ -5867,92 +6160,130 @@ public static class PluginHostExports
             return null;
         }
 
-        if (TryReadDownloadedVideoSegmentAsset(pluginId, mediaId, streamId, sequence, out var downloadedSegment))
+        try
         {
-            return downloadedSegment;
-        }
+            var downloadedReadStopwatch = Stopwatch.StartNew();
+            var downloadedFound = TryReadDownloadedVideoSegmentAsset(pluginId, mediaId, streamId, sequence, out var downloadedSegment);
+            downloadedReadStopwatch.Stop();
+            downloadedReadMs = downloadedReadStopwatch.ElapsedMilliseconds;
+            if (downloadedFound)
+            {
+                source = "downloaded";
+                payloadBytes = downloadedSegment!.Payload.Length;
+                contentType = downloadedSegment.ContentType;
+                success = true;
+                return downloadedSegment;
+            }
 
-        if (!TryResolvePlugin(pluginId, out var record, out var address))
-        {
-            return null;
-        }
+            if (!TryResolvePlugin(pluginId, out var record, out var address))
+            {
+                return null;
+            }
 
-        if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
-        {
-            var wasmSegment = _wasmRuntime.GetVideoSegmentAsync(
-                    record,
-                    MediaId.Create(mediaId),
-                    streamId,
-                    sequence,
-                    CancellationToken.None)
+            if (_wasmRuntime!.IsWasmPlugin(record!.Manifest))
+            {
+                var wasmFetchStopwatch = Stopwatch.StartNew();
+                var wasmSegment = _wasmRuntime.GetVideoSegmentAsync(
+                        record,
+                        MediaId.Create(mediaId),
+                        streamId,
+                        sequence,
+                        CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult();
+                wasmFetchStopwatch.Stop();
+                wasmFetchMs = wasmFetchStopwatch.ElapsedMilliseconds;
+
+                if (wasmSegment is null)
+                {
+                    SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
+                    return null;
+                }
+
+                if (wasmSegment.Payload.Length == 0 && string.IsNullOrWhiteSpace(wasmSegment.ContentType))
+                {
+                    SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
+                    return null;
+                }
+
+                source = "wasm";
+                payloadBytes = wasmSegment.Payload.Length;
+                contentType = string.IsNullOrWhiteSpace(wasmSegment.ContentType)
+                    ? "application/octet-stream"
+                    : wasmSegment.ContentType;
+                success = true;
+
+                return new VideoSegmentAssetResponse(
+                    contentType,
+                    wasmSegment.Payload,
+                    DateTimeOffset.UtcNow.ToString("O"));
+            }
+
+            if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
+                return null;
+            }
+
+            if (address is null)
+            {
+                SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
+                return null;
+            }
+
+            var channel = GetOrCreateChannel(address);
+            var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
+            var correlationId = Guid.NewGuid().ToString("n");
+            var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
+            var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+
+            var grpcFetchStopwatch = Stopwatch.StartNew();
+            var response = client.GetSegmentAsync(new PluginContracts.SegmentRequest
+            {
+                MediaId = mediaId,
+                StreamId = streamId,
+                Sequence = sequence,
+                Context = new PluginContracts.RequestContext
+                {
+                    CorrelationId = correlationId,
+                    DeadlineUtc = deadlineUtc.ToString("O")
+                }
+            }, headers: headers, cancellationToken: CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+            grpcFetchStopwatch.Stop();
+            grpcFetchMs = grpcFetchStopwatch.ElapsedMilliseconds;
 
-            if (wasmSegment is null)
+            var payloadCopyStopwatch = Stopwatch.StartNew();
+            var payload = response.Payload.ToByteArray();
+            payloadCopyStopwatch.Stop();
+            payloadCopyMs = payloadCopyStopwatch.ElapsedMilliseconds;
+            if (payload.Length == 0 && string.IsNullOrWhiteSpace(response.ContentType))
             {
                 SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
                 return null;
             }
 
-            if (wasmSegment.Payload.Length == 0 && string.IsNullOrWhiteSpace(wasmSegment.ContentType))
-            {
-                SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
-                return null;
-            }
+            source = "grpc";
+            payloadBytes = payload.Length;
+            contentType = string.IsNullOrWhiteSpace(response.ContentType)
+                ? "application/octet-stream"
+                : response.ContentType;
+            success = true;
 
             return new VideoSegmentAssetResponse(
-                string.IsNullOrWhiteSpace(wasmSegment.ContentType)
-                    ? "application/octet-stream"
-                    : wasmSegment.ContentType,
-                wasmSegment.Payload,
+                contentType,
+                payload,
                 DateTimeOffset.UtcNow.ToString("O"));
         }
-
-        if (!string.Equals(record.Manifest.Protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+        finally
         {
-            SetLastError($"Unsupported plugin protocol: {record.Manifest.Protocol}");
-            return null;
+            totalStopwatch.Stop();
+            LogAssetTransportTiming(
+                "video-segment",
+                totalStopwatch.ElapsedMilliseconds,
+                $"pluginId={pluginId}, mediaId={mediaId}, streamId={streamId}, sequence={sequence}, source={source}, downloadedReadMs={downloadedReadMs}, wasmFetchMs={wasmFetchMs}, grpcFetchMs={grpcFetchMs}, payloadCopyMs={payloadCopyMs}, payloadBytes={payloadBytes}, contentType={contentType}, success={success}");
         }
-
-        if (address is null)
-        {
-            SetLastError("Plugin endpoint is missing or invalid for non-WASM plugin.");
-            return null;
-        }
-
-        var channel = GetOrCreateChannel(address);
-        var client = new PluginContracts.VideoProvider.VideoProviderClient(channel);
-        var correlationId = Guid.NewGuid().ToString("n");
-        var headers = BuildGrpcHeaders(record.Manifest.Id, correlationId);
-        var deadlineUtc = DateTimeOffset.UtcNow.AddSeconds(30);
-
-        var response = client.GetSegmentAsync(new PluginContracts.SegmentRequest
-        {
-            MediaId = mediaId,
-            StreamId = streamId,
-            Sequence = sequence,
-            Context = new PluginContracts.RequestContext
-            {
-                CorrelationId = correlationId,
-                DeadlineUtc = deadlineUtc.ToString("O")
-            }
-        }, headers: headers, cancellationToken: CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
-
-        var payload = response.Payload.ToByteArray();
-        if (payload.Length == 0 && string.IsNullOrWhiteSpace(response.ContentType))
-        {
-            SetLastError($"SEGMENT_NOT_FOUND:{mediaId}:{streamId}:{sequence}");
-            return null;
-        }
-
-        return new VideoSegmentAssetResponse(
-            string.IsNullOrWhiteSpace(response.ContentType)
-                ? "application/octet-stream"
-                : response.ContentType,
-            payload,
-            DateTimeOffset.UtcNow.ToString("O"));
     }
 
     private static string BuildPageCacheKey(string pluginId, string mediaId, string chapterId, int pageIndex)

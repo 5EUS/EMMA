@@ -1,4 +1,5 @@
 using EMMA.PluginHost.Plugins;
+using EMMA.PluginHost.Services;
 
 namespace EMMA.PluginHost.Library;
 
@@ -16,4 +17,5 @@ public sealed record PluginSummaryResponse(
     string? ThumbnailFit = null,
     int? ThumbnailWidth = null,
     int? ThumbnailHeight = null,
-    PluginManifestSearchExperience? SearchExperience = null);
+    PluginManifestSearchExperience? SearchExperience = null,
+    PluginPreferenceSummaryResponse? PreferenceSummary = null);

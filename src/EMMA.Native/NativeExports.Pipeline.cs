@@ -586,9 +586,16 @@ public static partial class NativeExports
     {
         ClearLastError();
         var stopwatch = Stopwatch.StartNew();
+        long hostCallMs = 0;
+        long pageLookupMs = 0;
+        long assetFetchMs = 0;
+        long serializeMs = 0;
         string mediaIdForLog = "<unset>";
         string chapterIdForLog = "<unset>";
         string pluginIdForLog = "<none>";
+        string sourceForLog = "none";
+        var payloadBytesForLog = 0;
+        var responseBytesForLog = 0;
         var success = false;
 
         try
@@ -619,30 +626,51 @@ public static partial class NativeExports
             pluginIdForLog = activePluginId ?? "<none>";
             if (!string.IsNullOrWhiteSpace(activePluginId))
             {
-                var json = PluginHostExports.GetPageAssetJsonManaged(activePluginId, mediaIdValue, chapterId, pageIndex);
-                if (json == null)
+                sourceForLog = "plugin-host-json";
+                var hostStopwatch = Stopwatch.StartNew();
+                var hostJson = PluginHostExports.GetPageAssetJsonManaged(activePluginId, mediaIdValue, chapterId, pageIndex);
+                hostStopwatch.Stop();
+                hostCallMs = hostStopwatch.ElapsedMilliseconds;
+                if (hostJson == null)
                 {
                     var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host page asset call returned null";
                     SetLastError(error);
                     return IntPtr.Zero;
                 }
 
+                responseBytesForLog = Encoding.UTF8.GetByteCount(hostJson);
                 success = true;
-                return AllocUtf8(json);
+                return AllocUtf8(hostJson);
             }
 
+            sourceForLog = "runtime-pipeline-json";
+
+            var pageLookupStopwatch = Stopwatch.StartNew();
             var page = state.Runtime.Pipeline
                 .GetPageAsync(MediaId.Create(mediaIdValue), chapterId, pageIndex, CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+            pageLookupStopwatch.Stop();
+            pageLookupMs = pageLookupStopwatch.ElapsedMilliseconds;
 
+            var assetFetchStopwatch = Stopwatch.StartNew();
             var asset = state.Runtime.Pipeline
                 .GetPageAssetAsync(page, CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
+            assetFetchStopwatch.Stop();
+            assetFetchMs = assetFetchStopwatch.ElapsedMilliseconds;
+
+            payloadBytesForLog = asset.Payload.Length;
+
+            var serializeStopwatch = Stopwatch.StartNew();
+            var json = BuildPageAssetJson(asset);
+            serializeStopwatch.Stop();
+            serializeMs = serializeStopwatch.ElapsedMilliseconds;
+            responseBytesForLog = Encoding.UTF8.GetByteCount(json);
 
             success = true;
-            return AllocUtf8(BuildPageAssetJson(asset));
+            return AllocUtf8(json);
         }
         catch (Exception ex)
         {
@@ -655,7 +683,8 @@ public static partial class NativeExports
             LogTimedOperation(
                 "get-page-asset",
                 stopwatch.ElapsedMilliseconds,
-                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, chapterId={chapterIdForLog}, pageIndex={pageIndex}, success={success}");
+                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, chapterId={chapterIdForLog}, pageIndex={pageIndex}, source={sourceForLog}, hostCallMs={hostCallMs}, pageLookupMs={pageLookupMs}, assetFetchMs={assetFetchMs}, serializeMs={serializeMs}, payloadBytes={payloadBytesForLog}, responseBytes={responseBytesForLog}, success={success}",
+                forceInfo: true);
         }
     }
 
@@ -727,9 +756,11 @@ public static partial class NativeExports
     {
         ClearLastError();
         var stopwatch = Stopwatch.StartNew();
+        long hostCallMs = 0;
         string mediaIdForLog = "<unset>";
         string streamIdForLog = "<unset>";
         string pluginIdForLog = "<none>";
+        var responseBytesForLog = 0;
         var success = false;
 
         try
@@ -764,7 +795,10 @@ public static partial class NativeExports
                 return IntPtr.Zero;
             }
 
+            var hostStopwatch = Stopwatch.StartNew();
             var json = PluginHostExports.GetVideoSegmentJsonManaged(activePluginId, mediaIdValue, streamId, sequence);
+            hostStopwatch.Stop();
+            hostCallMs = hostStopwatch.ElapsedMilliseconds;
             if (json is null)
             {
                 var error = PluginHostExports.GetLastErrorManaged() ?? "Plugin host video segment call returned null";
@@ -772,6 +806,7 @@ public static partial class NativeExports
                 return IntPtr.Zero;
             }
 
+            responseBytesForLog = Encoding.UTF8.GetByteCount(json);
             success = true;
             return AllocUtf8(json);
         }
@@ -786,7 +821,8 @@ public static partial class NativeExports
             LogTimedOperation(
                 "get-video-segment",
                 stopwatch.ElapsedMilliseconds,
-                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, streamId={streamIdForLog}, sequence={sequence}, success={success}");
+                $"handle={handle}, pluginId={pluginIdForLog}, mediaId={mediaIdForLog}, streamId={streamIdForLog}, sequence={sequence}, hostCallMs={hostCallMs}, responseBytes={responseBytesForLog}, success={success}",
+                forceInfo: true);
         }
     }
 }

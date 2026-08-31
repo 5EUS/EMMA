@@ -33,7 +33,8 @@ public sealed record PluginManifest(
     string? Author,
     PluginManifestRuntime? Runtime = null,
     PluginManifestThumbnail? Thumbnail = null,
-    PluginManifestSearchExperience? SearchExperience = null);
+    PluginManifestSearchExperience? SearchExperience = null,
+    PluginManifestPreferences? Preferences = null);
 
 /// <summary>
 /// Describes thumbnail presentation metadata for a plugin.

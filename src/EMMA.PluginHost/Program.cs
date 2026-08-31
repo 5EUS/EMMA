@@ -52,9 +52,12 @@ builder.Services.AddSingleton<IWasmPluginRuntimeHost, WasmPluginRuntimeHost>();
 builder.Services.AddSingleton<IPluginSignatureVerifier, DelegatedPluginSignatureVerifier>();
 builder.Services.AddSingleton(StorageOptions.Default);
 builder.Services.AddSingleton<StorageInitializer>();
+builder.Services.AddSingleton<ProtectedPreferenceCipher>();
 builder.Services.AddSingleton<TempAssetCleanupService>();
 builder.Services.AddSingleton(PageAssetCacheOptions.Default);
 builder.Services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
+builder.Services.AddSingleton<IPluginPreferenceStore, SqlitePluginPreferenceStore>();
+builder.Services.AddSingleton<PluginPreferencesService>();
 builder.Services.AddSingleton<IPageAssetCachePort>(sp =>
     new BoundedPageAssetCache(sp.GetRequiredService<PageAssetCacheOptions>()));
 builder.Services.AddSingleton<IPageAssetFetcherPort, HttpPageAssetFetcher>();

@@ -47,7 +47,8 @@ public static partial class NativeExports
         string? ThumbnailFit = null,
         int? ThumbnailWidth = null,
         int? ThumbnailHeight = null,
-        string? SearchExperienceJson = null);
+        string? SearchExperienceJson = null,
+        string? PreferenceSummaryJson = null);
     private sealed record PluginPathConfiguration(string? ManifestsDirectory, string? PluginsDirectory);
     private sealed record PluginHostConfiguration(string Mode, string? BaseUrl, string? ExecutablePath);
 
@@ -635,6 +636,13 @@ public static partial class NativeExports
                     searchExperienceJson = searchExperience.GetRawText();
                 }
 
+                string? preferenceSummaryJson = null;
+                if (TryGetJsonProperty(item, "preferenceSummary", out var preferenceSummary)
+                    && preferenceSummary.ValueKind == JsonValueKind.Object)
+                {
+                    preferenceSummaryJson = preferenceSummary.GetRawText();
+                }
+
                 mapped.Add(new PluginSummary(
                     id,
                     ReadJsonString(item, "title")
@@ -645,8 +653,9 @@ public static partial class NativeExports
                     thumbnailAspectRatio,
                     thumbnailFit,
                     thumbnailWidth,
-                        thumbnailHeight,
-                        searchExperienceJson));
+                    thumbnailHeight,
+                    searchExperienceJson,
+                    preferenceSummaryJson));
             }
 
             return BuildPluginsJson(mapped);
@@ -945,6 +954,14 @@ public static partial class NativeExports
                 AppendJsonString(sb, "searchExperience");
                 sb.Append(':');
                 sb.Append(plugin.SearchExperienceJson);
+            }
+
+            if (!string.IsNullOrWhiteSpace(plugin.PreferenceSummaryJson))
+            {
+                sb.Append(',');
+                AppendJsonString(sb, "preferenceSummary");
+                sb.Append(':');
+                sb.Append(plugin.PreferenceSummaryJson);
             }
             sb.Append('}');
         }
