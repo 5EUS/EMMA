@@ -91,7 +91,7 @@ public sealed class PluginRepositoryInstallOrchestrator(
             ?? throw new InvalidDataException(
                 $"Release '{selection.Release.Version}' for plugin '{selection.Plugin.PluginId}' has an invalid sha256 value.");
 
-        var stagingRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-repository", Guid.NewGuid().ToString("N"));
+        var stagingRoot = CreateInstallWorkDirectory("downloads");
         Directory.CreateDirectory(stagingRoot);
 
         var installStartedAt = DateTimeOffset.UtcNow;
@@ -227,7 +227,7 @@ public sealed class PluginRepositoryInstallOrchestrator(
         var payloadType = DetectPayloadType(pluginEntries);
         EnsurePayloadSupportedForCurrentPlatform(payloadType);
 
-        var installStagingRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-stage", Guid.NewGuid().ToString("N"));
+        var installStagingRoot = CreateInstallWorkDirectory("staging");
         var stagedPluginRoot = Path.Combine(installStagingRoot, manifest.Id);
         Directory.CreateDirectory(stagedPluginRoot);
 
@@ -290,7 +290,7 @@ public sealed class PluginRepositoryInstallOrchestrator(
         Directory.CreateDirectory(Path.GetDirectoryName(payload.ManifestDestination)!);
         Directory.CreateDirectory(Path.GetDirectoryName(payload.PluginDestination)!);
 
-        var backupRoot = Path.Combine(Path.GetTempPath(), "emma-plugin-backup", Guid.NewGuid().ToString("N"));
+        var backupRoot = CreateInstallWorkDirectory("backup");
         Directory.CreateDirectory(backupRoot);
 
         var backupPluginPath = Path.Combine(backupRoot, payload.Manifest.Id);
@@ -343,6 +343,13 @@ public sealed class PluginRepositoryInstallOrchestrator(
             TryDeleteDirectory(payload.StagingRoot);
             throw;
         }
+    }
+
+    private string CreateInstallWorkDirectory(string purpose)
+    {
+        var sandboxRoot = Path.GetFullPath(_hostOptions.SandboxRootDirectory);
+        var appDataRoot = Directory.GetParent(sandboxRoot)?.FullName ?? sandboxRoot;
+        return Path.Combine(appDataRoot, ".emma-install", purpose, Guid.NewGuid().ToString("N"));
     }
 
     private static async Task<string> ReadEntryTextAsync(ZipArchiveEntry entry, CancellationToken cancellationToken)

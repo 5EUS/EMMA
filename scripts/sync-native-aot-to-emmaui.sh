@@ -198,6 +198,7 @@ fi
 
 # Also sync the SQLite native library (required by storage layer)
 SQLITE_LIB_NAME=""
+SQLITE_SOURCE_FILE=""
 case "$RID" in
   osx-*)
     SQLITE_LIB_NAME="libe_sqlite3.dylib"
@@ -205,7 +206,10 @@ case "$RID" in
   win-*)
     SQLITE_LIB_NAME="e_sqlite3.dll"
     ;;
-  linux-*|android-*)
+  linux-*)
+    SQLITE_LIB_NAME="libe_sqlite3.so"
+    ;;
+  android-*)
     SQLITE_LIB_NAME="libe_sqlite3.so"
     ;;
   ios-*|iossimulator-*)
@@ -216,17 +220,80 @@ esac
 
 if [[ -n "$SQLITE_LIB_NAME" ]]; then
   SOURCE_SQLITE_LIB="$AOT_DIR/$SQLITE_LIB_NAME"
-  if [[ -f "$SOURCE_SQLITE_LIB" ]]; then
+
+  if [[ "$RID" == android-* ]]; then
+    SQLITE_ANDROID_ABI=""
+    case "$RID" in
+      android-arm64) SQLITE_ANDROID_ABI="arm64-v8a" ;;
+      android-x64) SQLITE_ANDROID_ABI="x86_64" ;;
+      android-arm) SQLITE_ANDROID_ABI="armeabi-v7a" ;;
+      android-x86) SQLITE_ANDROID_ABI="x86" ;;
+      *)
+        echo "Unsupported Android RID for SQLite ABI mapping: $RID"
+        exit 1
+        ;;
+    esac
+
+    NUGET_PACKAGES_ROOT="${NUGET_PACKAGES:-$HOME/.nuget/packages}"
+    SQLITE_ANDROID_PACKAGE_DIR="$NUGET_PACKAGES_ROOT/sqlitepclraw.lib.e_sqlite3.android"
+    SQLITE_ANDROID_VERSION="${SQLITEPCLRAW_ANDROID_VERSION:-}"
+    SQLITE_AAR_PATH=""
+
+    if [[ -z "$SQLITE_ANDROID_VERSION" && -d "$SQLITE_ANDROID_PACKAGE_DIR" ]]; then
+      if sort -V </dev/null >/dev/null 2>&1; then
+        SQLITE_ANDROID_VERSION="$(find "$SQLITE_ANDROID_PACKAGE_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)"
+      else
+        SQLITE_ANDROID_VERSION="$(find "$SQLITE_ANDROID_PACKAGE_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tail -n 1)"
+      fi
+    fi
+
+    if [[ -n "$SQLITE_ANDROID_VERSION" ]]; then
+      SQLITE_AAR_PATH="$SQLITE_ANDROID_PACKAGE_DIR/$SQLITE_ANDROID_VERSION/lib/net6.0-android31.0/SQLitePCLRaw.lib.e_sqlite3.android.aar"
+    fi
+
+    if [[ -f "$SQLITE_AAR_PATH" ]] && command -v unzip >/dev/null 2>&1; then
+      SQLITE_EXTRACTED_FILE="$(mktemp)"
+      if unzip -p "$SQLITE_AAR_PATH" "jni/$SQLITE_ANDROID_ABI/$SQLITE_LIB_NAME" > "$SQLITE_EXTRACTED_FILE"; then
+        SQLITE_SOURCE_FILE="$SQLITE_EXTRACTED_FILE"
+      else
+        rm -f "$SQLITE_EXTRACTED_FILE"
+      fi
+    fi
+
+    if [[ -z "$SQLITE_SOURCE_FILE" ]]; then
+      echo ""
+      echo "Error: failed to resolve Android SQLite library from AAR for RID '$RID'."
+      echo "Expected AAR path: ${SQLITE_AAR_PATH:-<not found>}"
+      echo "Install 'unzip' and ensure SQLitePCLRaw.lib.e_sqlite3.android is restored in: $SQLITE_ANDROID_PACKAGE_DIR"
+      echo "Refusing to fall back to '$SOURCE_SQLITE_LIB' because it may be glibc-linked and crash on Android."
+      exit 1
+    fi
+  else
+    if [[ -f "$SOURCE_SQLITE_LIB" ]]; then
+      SQLITE_SOURCE_FILE="$SOURCE_SQLITE_LIB"
+    fi
+  fi
+
+  if [[ -n "$SQLITE_SOURCE_FILE" && -f "$SQLITE_SOURCE_FILE" ]]; then
     echo ""
     echo "Syncing SQLite native library: $SQLITE_LIB_NAME"
     for dir in "${DEST_DIRS[@]}"; do
-      cp "$SOURCE_SQLITE_LIB" "$dir/$SQLITE_LIB_NAME"
+      cp "$SQLITE_SOURCE_FILE" "$dir/$SQLITE_LIB_NAME"
       echo "  -> $dir/$SQLITE_LIB_NAME"
     done
+
+    if [[ -n "${SQLITE_EXTRACTED_FILE:-}" ]]; then
+      rm -f "$SQLITE_EXTRACTED_FILE"
+    fi
   else
     echo ""
-    echo "Warning: SQLite native library not found: $SOURCE_SQLITE_LIB"
-    echo "This is bundled automatically during NativeAOT publish."
+    echo "Warning: SQLite native library could not be resolved for RID '$RID'."
+    if [[ "$RID" == android-* ]]; then
+      echo "Expected Android AAR: $NUGET_PACKAGES_ROOT/sqlitepclraw.lib.e_sqlite3.android/2.1.10/lib/net6.0-android31.0/SQLitePCLRaw.lib.e_sqlite3.android.aar"
+      echo "Fallback looked at: $SOURCE_SQLITE_LIB"
+    else
+      echo "Expected in NativeAOT output: $SOURCE_SQLITE_LIB"
+    fi
   fi
 fi
 

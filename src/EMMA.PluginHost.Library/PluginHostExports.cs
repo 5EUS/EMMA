@@ -13,6 +13,7 @@ using PluginContracts = EMMA.Contracts.Plugins;
 using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Http;
 using EMMA.PluginHost.Configuration;
+using EMMA.PluginHost.Platform;
 using EMMA.PluginHost.Plugins;
 using EMMA.PluginHost.Sandboxing;
 using EMMA.PluginHost.Services;
@@ -118,6 +119,7 @@ public static class PluginHostExports
 
                 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
+                var storageOptions = CreateStorageOptions(manifestsDir, sandboxDir);
                 InitializeSqliteForEmbeddedHost();
 
                 var services = new ServiceCollection();
@@ -183,7 +185,7 @@ public static class PluginHostExports
                 services.AddSingleton<IPluginSignatureVerifier, DelegatedPluginSignatureVerifier>();
 
                 // Storage
-                services.AddSingleton(StorageOptions.Default);
+                services.AddSingleton(storageOptions);
                 services.AddSingleton<StorageInitializer>();
                 services.AddSingleton(PageAssetCacheOptions.Default);
                 services.AddSingleton<IMediaCatalogPort, SqliteMediaCatalogPort>();
@@ -199,15 +201,15 @@ public static class PluginHostExports
                 services.AddSingleton<IPluginSandboxManager>(sp =>
                 {
                     var options = sp.GetRequiredService<IOptions<PluginHostOptions>>();
-
-                    if (OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS())
-                        return new IosPluginSandboxManager(options, sp.GetService<ILogger<IosPluginSandboxManager>>()!);
-                    if (OperatingSystem.IsMacOS())
-                        return new MacOsPluginSandboxManager(options, sp.GetService<ILogger<MacOsPluginSandboxManager>>()!);
-                    if (OperatingSystem.IsLinux())
-                        return new LinuxPluginSandboxManager(options, sp.GetService<ILogger<LinuxPluginSandboxManager>>()!);
-
-                    return new WindowsPluginSandboxManager(options, sp.GetService<ILogger<WindowsPluginSandboxManager>>()!);
+                    return HostPlatformPolicy.Current switch
+                    {
+                        HostPlatform.Android => new AndroidPluginSandboxManager(options, sp.GetRequiredService<ILogger<AndroidPluginSandboxManager>>()),
+                        HostPlatform.AppleMobile => new IosPluginSandboxManager(options, sp.GetRequiredService<ILogger<IosPluginSandboxManager>>()),
+                        HostPlatform.Windows => new WindowsPluginSandboxManager(options, sp.GetRequiredService<ILogger<WindowsPluginSandboxManager>>()),
+                        HostPlatform.Linux => new LinuxPluginSandboxManager(options, sp.GetRequiredService<ILogger<LinuxPluginSandboxManager>>()),
+                        HostPlatform.MacOS => new MacOsPluginSandboxManager(options, sp.GetRequiredService<ILogger<MacOsPluginSandboxManager>>()),
+                        _ => throw new PlatformNotSupportedException("Unsupported host platform for plugin sandbox manager.")
+                    };
                 });
 
                 // Handshake
@@ -6376,6 +6378,41 @@ public static class PluginHostExports
         }
 
         SQLitePCL.Batteries_V2.Init();
+    }
+
+    private static StorageOptions CreateStorageOptions(string manifestsDir, string sandboxDir)
+    {
+        var storageRoot = GetConfiguredStorageRoot(sandboxDir)
+            ?? GetConfiguredStorageRoot(manifestsDir);
+
+        if (string.IsNullOrWhiteSpace(storageRoot))
+        {
+            return StorageOptions.Default;
+        }
+
+        return new StorageOptions(Path.Combine(storageRoot, "emma.db"))
+        {
+            TempAssetRootDirectory = Path.Combine(storageRoot, "temp-assets")
+        };
+    }
+
+    private static string? GetConfiguredStorageRoot(string? hostDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(hostDirectory))
+        {
+            return null;
+        }
+
+        try
+        {
+            var fullPath = Path.GetFullPath(hostDirectory);
+            var parent = Directory.GetParent(fullPath)?.FullName;
+            return string.IsNullOrWhiteSpace(parent) ? null : parent;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string SerializeMetadataAttributes(Dictionary<string, object?> metadata)

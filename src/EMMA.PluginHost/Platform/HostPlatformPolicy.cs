@@ -75,7 +75,7 @@ public static class HostPlatformPolicy
             return options.EnableProcessPlugins.Value;
         }
 
-        return Current is not HostPlatform.AppleMobile and not HostPlatform.MacOS;
+        return Current is not HostPlatform.Android and not HostPlatform.AppleMobile and not HostPlatform.MacOS;
     }
 
     /// <summary>
@@ -110,6 +110,10 @@ public static class HostPlatformPolicy
 
     private static HostPlatform DetectCurrent()
     {
+#if EMMA_ANDROID_AOT
+        // Android NativeAOT is published using a linux-bionic RID, which otherwise reports as Linux.
+        return HostPlatform.Android;
+#else
         if (OperatingSystem.IsAndroid())
         {
             return HostPlatform.Android;
@@ -136,5 +140,6 @@ public static class HostPlatformPolicy
         }
 
         return HostPlatform.Unknown;
+#endif
     }
 }

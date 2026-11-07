@@ -57,8 +57,9 @@ public sealed class PluginRepositoryCatalogClient(
 
         if (response.StatusCode != HttpStatusCode.OK)
         {
+            var responseBody = await ReadErrorContentAsync(response, cancellationToken);
             throw new InvalidDataException(
-                $"Repository '{repository.Id}' returned status {(int)response.StatusCode} while fetching catalog.");
+                $"Repository '{repository.Id}' returned {(int)response.StatusCode} ({response.ReasonPhrase}) while fetching catalog from '{uri}'.{responseBody}");
         }
 
         var contentLength = response.Content.Headers.ContentLength;
@@ -119,8 +120,9 @@ public sealed class PluginRepositoryCatalogClient(
 
         if (response.StatusCode != HttpStatusCode.OK)
         {
+            var responseBody = await ReadErrorContentAsync(response, cancellationToken);
             throw new InvalidDataException(
-                $"Artifact download failed with status {(int)response.StatusCode}.");
+                $"Artifact download from '{uri}' failed with {(int)response.StatusCode} ({response.ReasonPhrase}).{responseBody}");
         }
 
         var contentLength = response.Content.Headers.ContentLength;
@@ -187,8 +189,9 @@ public sealed class PluginRepositoryCatalogClient(
 
         if (response.StatusCode != HttpStatusCode.OK)
         {
+            var responseBody = await ReadErrorContentAsync(response, cancellationToken);
             throw new InvalidDataException(
-                $"Request to '{url}' failed with status {(int)response.StatusCode}.");
+                $"Request to '{uri}' failed with {(int)response.StatusCode} ({response.ReasonPhrase}).{responseBody}");
         }
 
         return await ReadContentWithLimitAsync(response, maxBytes, cancellationToken);
@@ -251,6 +254,28 @@ public sealed class PluginRepositoryCatalogClient(
         }
 
         return Encoding.UTF8.GetString(memory.ToArray());
+    }
+
+    private static async Task<string> ReadErrorContentAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        const int maxErrorBytes = 4 * 1024;
+
+        if (response.Content is null)
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var content = await ReadContentWithLimitAsync(response, maxErrorBytes, cancellationToken);
+            return string.IsNullOrWhiteSpace(content) ? string.Empty : $" Response: {content.Trim()}";
+        }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static Uri ParseAndValidateRemoteUri(string value, bool allowHttp)
