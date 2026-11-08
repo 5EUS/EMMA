@@ -31,12 +31,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     public EmmaRuntime(EmmaRuntimeOptions options)
     {
         string data = Path.GetFullPath(options.DataDirectory);
-        if (options.NativeLibraryDirectory is { } libraries)
-        {
-            SqliteNativeLibrary.AddSearchDirectory(libraries);
-            WasmRuntimeHost.AddLibrarySearchDirectory(libraries);
-        }
-
+        ConfigureNativeLibraries(options.NativeLibraryDirectory);
         this.Time = options.Time;
         this.Trust = options.Trust;
         this.HostOptions = new PluginHostOptions(Path.Combine(data, "plugins"));
@@ -221,6 +216,17 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 
         this.transport?.Dispose();
         this.http?.Dispose();
+    }
+
+    private static void ConfigureNativeLibraries(string? directory)
+    {
+        // Always isolate SQLite from any other copy in the process; a host rarely knows whether there is one.
+        SqliteNativeLibrary.Register();
+        if (directory is not null)
+        {
+            SqliteNativeLibrary.AddSearchDirectory(directory);
+            WasmRuntimeHost.AddLibrarySearchDirectory(directory);
+        }
     }
 
     private Task UnloadAsync(PluginId plugin, CancellationToken cancellationToken) =>

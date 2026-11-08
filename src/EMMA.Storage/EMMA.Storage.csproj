@@ -17,6 +17,10 @@
     TODO(rewrite): the default database path (main read EMMA_STORAGE_DATABASE_PATH inside
     StorageOptions) is deliberately gone. The host resolves configuration and passes the path in.
   -->
+  <PropertyGroup>
+    <!-- SqliteNativeLibrary loads SQLite with dlopen (RTLD_DEEPBIND) through a source-generated P/Invoke. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../EMMA.Application/EMMA.Application.csproj" />
   </ItemGroup>

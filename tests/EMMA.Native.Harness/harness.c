@@ -93,6 +93,14 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    /* A host often has its own SQLite loaded already (a Flutter app that plays video gets the system libsqlite3 through
+     * libmpv and ffmpeg). The runtime must not be disturbed by it, so load one first, globally, as such a host would.
+     * Skipped where the system has none. */
+#ifndef _WIN32
+    if (dlopen("libsqlite3.so.0", RTLD_NOW | RTLD_GLOBAL) || dlopen("libsqlite3.dylib", RTLD_NOW | RTLD_GLOBAL)) {
+        printf("native harness: the host process has its own SQLite loaded\n");
+    }
+#endif
     Lib lib = LOAD(argv[1]);
     if (!lib) {
         fprintf(stderr, "cannot load %s\n", argv[1]);
