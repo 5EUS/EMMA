@@ -236,14 +236,30 @@ These live in `EMMA.Domain` / `EMMA.Application` and are never seen by plugins.
   unit `page`; for video, the episode with unit `ms`. "Continue reading" for a series is a
   query for the most recently progressed descendant. This replaces the two typed progress
   records and the single `position REAL`.
-- `Library` entries and history reference `NodeRef` only.
+- **History** is progress read two ways: per node (`progress.recent`) and per series
+  (`progress.history`, `progress.series`). A *series* is the topmost node the host has cached
+  above the progress (climbing `parent_local_id`), or the node itself when its parents are not
+  cached; the host never asks what kind it is. Deleting a series deletes the progress of
+  everything beneath it. The user can set how long history is kept (`emma.history`
+  `retention_days`, default for ever); it is applied when the setting changes and whenever progress
+  is recorded.
+- `Library` entries and history reference `NodeRef` only. A user has named **libraries**
+  (case-insensitive, 1 to 64 characters) and a node is saved in at most one of them, so saved or
+  not is one fact and "move" changes which library holds it. The default library
+  (`Default`) exists from the first time it is needed and cannot be deleted; deleting another
+  library deletes its entries and nothing else. Searching saved nodes matches the cached title
+  and never calls a plugin.
+- **App settings** are small text choices the app asks the host to remember, per user, under a
+  scope (`series:<ref>` for a series' sort order, say). They are not plugin settings (a plugin
+  declares those). Scopes starting with `emma.` are the host's own and clients cannot write them.
 - **Downloads** are a job over `(NodeRef, role, hints)`: the host walks `children` down to
   nodes whose kind declares the role, resolves each, and stores the assets. One executor, no
   paged or video branch.
 - **Storage** (built in phase 3, SQLite with STRICT tables): `nodes` keyed `(plugin_id, local_id)`
   with `kind`, `title`, `parent_local_id`, `thumbnail` and `props` (typed JSON through a
-  source-generated context); `progress` and `library` keyed by user plus the same pair;
-  `download_jobs`. Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no assets table
+  source-generated context); `progress` and `library` keyed by user plus the same pair (`library`
+  also names the library the entry is in, with `libraries` holding the names); `app_settings` keyed
+  by user, scope and key; `download_jobs`. Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no assets table
   (asset bytes live in the bounded cache) and no foreign key from user state to `nodes`: nodes are
   a cache that may be purged, while progress and library entries must survive that.
 - All timestamps come from an injected `IClock`; plugins use `host.now-ms`.

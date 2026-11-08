@@ -26,15 +26,41 @@ CREATE TABLE progress (
 
 CREATE INDEX idx_progress_recent ON progress (user_id, updated_at DESC);
 
-CREATE TABLE library (
-    user_id   TEXT    NOT NULL,
-    plugin_id TEXT    NOT NULL,
-    local_id  TEXT    NOT NULL,
-    added_at  INTEGER NOT NULL,
-    PRIMARY KEY (user_id, plugin_id, local_id)
+-- A user's libraries. The default library is not stored until it is first needed (the store creates it), so a
+-- user who never saved anything has no rows. Names compare without regard to case; the row keeps the casing the
+-- library was created with.
+CREATE TABLE libraries (
+    user_id    TEXT    NOT NULL,
+    name       TEXT    NOT NULL COLLATE NOCASE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, name)
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX idx_library_added ON library (user_id, added_at DESC);
+-- A saved node. A node is in at most one library per user (moving it changes library_name), and deleting a library
+-- deletes its entries. Progress and downloads are never touched by either.
+CREATE TABLE library (
+    user_id      TEXT    NOT NULL,
+    plugin_id    TEXT    NOT NULL,
+    local_id     TEXT    NOT NULL,
+    library_name TEXT    NOT NULL COLLATE NOCASE,
+    added_at     INTEGER NOT NULL,
+    PRIMARY KEY (user_id, plugin_id, local_id),
+    FOREIGN KEY (user_id, library_name) REFERENCES libraries (user_id, name) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX idx_library_added ON library (user_id, library_name, added_at DESC);
+
+-- Small per-user choices the app wants remembered: the history retention, a series' reverse-order choice, the
+-- parallel-downloads limit. `scope` says what the choice is about (a series, the history, the app) and the host
+-- reserves scopes that start with "emma." for itself. Values are text; a client that needs structure encodes it.
+CREATE TABLE app_settings (
+    user_id     TEXT    NOT NULL,
+    scope       TEXT    NOT NULL,
+    setting_key TEXT    NOT NULL,
+    value       TEXT    NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (user_id, scope, setting_key)
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE download_jobs (
     id               TEXT    NOT NULL PRIMARY KEY,

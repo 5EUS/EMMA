@@ -62,20 +62,4 @@ public sealed partial class EmmaRuntime
             ? Outcome.Success(new AssetBytes(payload.Value.Mime, payload.Value.Payload, RangeStart: null, Total: null, asset.Delivery is ProxiedDelivery))
             : Outcome.Failure<AssetBytes>(payload.Error);
     }
-
-    /// <summary>Saves a node to a user's library. Only nodes the host has served can be saved, so a library never holds a reference nothing can resolve.</summary>
-    /// <param name="user">The owner.</param>
-    /// <param name="node">The node.</param>
-    /// <param name="cancellationToken">Cancels the call.</param>
-    /// <returns>Success, or <c>not-found</c> when the node has not been seen.</returns>
-    public async Task<Outcome<bool>> AddToLibraryAsync(UserId user, NodeRef node, CancellationToken cancellationToken)
-    {
-        if (await this.Nodes.GetAsync(node, cancellationToken).ConfigureAwait(false) is null)
-        {
-            return Outcome.Failure<bool>(ErrorCode.NotFound, "That node has not been seen; browse or search to it first.");
-        }
-
-        await this.Library.AddAsync(new LibraryEntry(user, node, this.Time.GetUtcNow()), cancellationToken).ConfigureAwait(false);
-        return Outcome.Success(true);
-    }
 }

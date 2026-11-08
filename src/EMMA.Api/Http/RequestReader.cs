@@ -75,6 +75,21 @@ internal static class RequestReader
         return Outcome.Failure<int?>(ErrorCode.InvalidArgument, $"'limit' must be a whole number from 1 to {max}.");
     }
 
+    /// <summary>Reads an optional query parameter that may appear at most once.</summary>
+    /// <param name="request">The request.</param>
+    /// <param name="name">The parameter name.</param>
+    /// <returns>The value, <see langword="null"/> when absent, or why it is repeated.</returns>
+    public static Outcome<string?> Optional(HttpRequest request, string name)
+    {
+        StringValues values = request.Query[name];
+        if (values.Count > 1)
+        {
+            return Outcome.Failure<string?>(ErrorCode.InvalidArgument, $"'{name}' may be given only once.");
+        }
+
+        return Outcome.Success<string?>(values.Count == 0 ? null : values[0]);
+    }
+
     /// <summary>Reads exactly one value of a required query parameter.</summary>
     /// <param name="request">The request.</param>
     /// <param name="name">The parameter name.</param>

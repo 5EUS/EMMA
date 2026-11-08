@@ -10,8 +10,9 @@ chapter, an episode or a recipe step.
   `Query`, filters, `PluginInfo`/`KindInfo`.
 - **Assets:** `Asset` with a closed set of deliveries (`InlineDelivery`, `RemoteDelivery`,
   `ProxiedDelivery`), `AssetPayload`, `AssetKey`.
-- **User state:** `Progress` with an open-unit `ProgressLocator`, `LibraryEntry`,
-  `DownloadJob`.
+- **User state:** `Progress` with an open-unit `ProgressLocator`, `ProgressGroup` and
+  `SeriesProgress` (history by series), `LibraryName`, `LibraryEntry` and `LibrarySummary`
+  (named libraries), `AppSettingChange`, `DownloadJob`.
 - **Failures:** `Outcome<T>` and `PluginError` for expected failures; exceptions are
   reserved for bugs.
 - **Trust:** `CapabilityPolicy` (what one plugin may reach) and `ContractLimits`.

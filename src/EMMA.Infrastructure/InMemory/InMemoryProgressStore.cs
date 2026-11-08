@@ -62,6 +62,108 @@ public sealed class InMemoryProgressStore(INodeStorePort nodes) : IProgressPort
         return Task.FromResult(recent);
     }
 
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<Progress>> ListWithinAsync(UserId user, NodeRef ancestor, int limit, CancellationToken cancellationToken)
+    {
+        List<Progress> within = [];
+        foreach (Progress candidate in this.entries.Values.Where(entry => entry.User == user))
+        {
+            if (await this.IsWithinAsync(candidate.Node, ancestor, cancellationToken).ConfigureAwait(false))
+            {
+                within.Add(candidate);
+            }
+        }
+
+        return [.. within.OrderByDescending(entry => entry.UpdatedAt).ThenBy(entry => entry.Node.Id.Value, StringComparer.Ordinal).Take(Math.Max(0, limit))];
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ProgressGroup>> ListGroupsAsync(UserId user, int limit, CancellationToken cancellationToken)
+    {
+        Dictionary<NodeRef, List<Progress>> groups = [];
+        foreach (Progress entry in this.entries.Values.Where(entry => entry.User == user))
+        {
+            NodeRef root = await this.RootOfAsync(entry.Node, cancellationToken).ConfigureAwait(false);
+            if (!groups.TryGetValue(root, out List<Progress>? members))
+            {
+                groups[root] = members = [];
+            }
+
+            members.Add(entry);
+        }
+
+        return
+        [
+            .. groups
+                .Select(group =>
+                {
+                    Progress latest = group.Value.OrderByDescending(entry => entry.UpdatedAt).ThenBy(entry => entry.Node.Id.Value, StringComparer.Ordinal).First();
+                    int completed = group.Value.Count(entry => entry.Completed);
+                    return new ProgressGroup(group.Key, latest, completed, group.Value.Count - completed);
+                })
+                .OrderByDescending(group => group.Latest.UpdatedAt)
+                .ThenBy(group => group.Series.Id.Value, StringComparer.Ordinal)
+                .Take(Math.Max(0, limit)),
+        ];
+    }
+
+    /// <inheritdoc/>
+    public async Task<int> DeleteWithinAsync(UserId user, NodeRef root, CancellationToken cancellationToken)
+    {
+        int removed = 0;
+        foreach (Progress candidate in this.entries.Values.Where(entry => entry.User == user))
+        {
+            if (await this.IsWithinAsync(candidate.Node, root, cancellationToken).ConfigureAwait(false)
+                && this.entries.TryRemove((candidate.User, candidate.Node), out _))
+            {
+                removed++;
+            }
+        }
+
+        return removed;
+    }
+
+    /// <inheritdoc/>
+    public Task<int> ClearAsync(UserId user, CancellationToken cancellationToken) =>
+        this.RemoveWhere(entry => entry.User == user, cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<int> DeleteBeforeAsync(UserId user, DateTimeOffset before, CancellationToken cancellationToken) =>
+        this.RemoveWhere(entry => entry.User == user && entry.UpdatedAt < before, cancellationToken);
+
+    private Task<int> RemoveWhere(Func<Progress, bool> match, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int removed = 0;
+        foreach (Progress entry in this.entries.Values.Where(match))
+        {
+            if (this.entries.TryRemove((entry.User, entry.Node), out _))
+            {
+                removed++;
+            }
+        }
+
+        return Task.FromResult(removed);
+    }
+
+    // The topmost node reachable through cached parents; a node that is not cached is its own root.
+    private async Task<NodeRef> RootOfAsync(NodeRef node, CancellationToken cancellationToken)
+    {
+        NodeRef current = node;
+        for (int depth = 0; depth < MaxDepth; depth++)
+        {
+            Node? stored = await nodes.GetAsync(current, cancellationToken).ConfigureAwait(false);
+            if (stored?.Parent is not { } parent || await nodes.GetAsync(parent, cancellationToken).ConfigureAwait(false) is null)
+            {
+                return current;
+            }
+
+            current = parent;
+        }
+
+        return current;
+    }
+
     private async Task<bool> IsWithinAsync(NodeRef node, NodeRef ancestor, CancellationToken cancellationToken)
     {
         NodeRef current = node;

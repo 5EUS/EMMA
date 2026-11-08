@@ -25,8 +25,8 @@ the design and lists every operation.
   receives the JSON and the binary content as `(pointer, length)` pairs by value, pointing at heap memory it now owns and
   frees with `emma_buffer_free`; nothing points at the library's stack, so the values can be handed to another thread
   (a Dart `NativeCallable.listener` runs later on the event loop and needs exactly that). In Dart, the async form pairs with `NativeCallable.listener`.
-- **One user per handle.** A handle belongs to the `user` in its configuration, and progress and library are always that
-  user's. There is no way to name another.
+- **One user per handle.** A handle belongs to the `user` in its configuration, and progress, libraries and remembered
+  choices are always that user's. There is no way to name another.
 - **The caller is trusted.** Unlike the HTTP API, the library exposes plugin installation, switching and removal
   (`plugins.install` and friends): the caller is the app that embeds EMMA, in its own process, and already has every
   authority these grant. Signature checks still apply to what is installed.
@@ -77,9 +77,23 @@ Requests are JSON objects; an empty request means `{}`. `ref` is a node referenc
 | `progress.get` | `ref` | the caller's progress, or `not_found` |
 | `progress.continue` | `ref` | the latest progress beneath a container |
 | `progress.recent` | `limit` | `{items: [...]}`, newest first |
-| `library.list` | none | `{entries: [{node, added_at}]}` |
-| `library.add` | `ref` | `{}`; the node must have been served by a search or listing |
-| `library.remove` | `ref` | `{}` |
+| `progress.history` | `limit` | `{groups: [{series, latest, completed, in_progress}]}`: one entry per series (the topmost node the host has cached above the progress), the one with the latest activity first, `latest` being its most recently updated progress |
+| `progress.series` | `ref` | `{container, completed, in_progress, latest_activity, items}`: everything beneath the container with progress, newest first (at most 10,000), and the counts. Never an error: empty when there is nothing |
+| `progress.delete` | `refs` | `{removed}`: deletes the progress of each node and of everything beneath it (a chapter, or a whole series); zero is not an error |
+| `progress.clear` | none | `{removed}`: deletes all of the user's progress |
+| `progress.complete` | `refs` | `{items: [...]}`: marks nodes finished. A node with progress keeps its unit and extent and its position moves to the end; one without is recorded as unit `item`, 1 of 1 |
+| `progress.retention_get` | none | `{days}`: how long history is kept, `0` for ever (the default) |
+| `progress.retention_set` | `days` (0 to 3650) | `{days, removed}`: sets the retention and deletes what is older now. It is applied again whenever progress is recorded |
+| `library.list` | `library` (optional) | `{entries: [{node, library, added_at}]}`, newest first: one library, or every library when `library` is left out; `not_found` for a library that does not exist |
+| `library.search` | `text`, `library` (optional), `limit` | the same shape: saved nodes whose title contains `text`, from the node cache and without asking any plugin (ASCII case is ignored). Each entry names the library it came from |
+| `library.add` | `ref`, `library` (optional) | `{}`; the node must have been served by a search or listing. `library` defaults to the default library and must exist. A node that is already saved stays where it is (use `library.move`) |
+| `library.remove` | `ref` | `{}`; removes the node from whichever library holds it |
+| `library.move` | `ref`, `library` | `{}`; moves a saved node to another library, keeping its date. `not_found` when the node is not saved or the library does not exist |
+| `library.libraries` | none | `{libraries: [{name, created_at, count, is_default}]}`, the default library first, then by name |
+| `library.create` | `name` | the new library; names are 1 to 64 characters, unique ignoring case |
+| `library.delete` | `name` | `{}`; deletes the library and the entries in it (progress and the nodes are untouched). The default library cannot be deleted |
+| `app_settings.get` | `scope` | `{scope, values}`: the small text choices the app remembered under a scope, such as `series:<ref>` |
+| `app_settings.set` | `scope`, `changes` (`[{key, value}]`; no `value` forgets the key) | the same as `app_settings.get`, after the change. All or none is applied. Keys are 1 to 64 of `a-z 0-9 . _ -`, values at most 4096 characters, a scope holds at most 100 keys, and scopes starting with `emma.` belong to the host and are refused |
 
 `assets.content` honours `range` only for assets the plugin serves itself (proxied); other assets are read whole. A range
 that starts past the end is the error `range_not_satisfiable`. As over HTTP, asset listings never reveal where an asset

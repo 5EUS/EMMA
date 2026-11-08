@@ -56,6 +56,7 @@ internal static class ApiHost
         AssetEndpoints.Map(v1);
         ProgressEndpoints.Map(v1);
         LibraryEndpoints.Map(v1);
+        AppSettingsEndpoints.Map(v1);
         return app;
     }
 }

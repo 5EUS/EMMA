@@ -34,4 +34,42 @@ public interface IProgressPort
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The entries.</returns>
     Task<IReadOnlyList<Progress>> ListRecentAsync(UserId user, int limit, CancellationToken cancellationToken);
+
+    /// <summary>Lists the progress of a node and of everything beneath it.</summary>
+    /// <param name="user">The user.</param>
+    /// <param name="ancestor">The container node.</param>
+    /// <param name="limit">The most entries to return.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The entries, most recent first.</returns>
+    Task<IReadOnlyList<Progress>> ListWithinAsync(UserId user, NodeRef ancestor, int limit, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Groups a user's progress by series: the topmost node the node cache holds above each progress entry, or the
+    /// node itself when its parents are not cached.
+    /// </summary>
+    /// <param name="user">The user.</param>
+    /// <param name="limit">The most groups to return.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The groups, the one with the latest activity first.</returns>
+    Task<IReadOnlyList<ProgressGroup>> ListGroupsAsync(UserId user, int limit, CancellationToken cancellationToken);
+
+    /// <summary>Deletes the progress of a node and of everything beneath it.</summary>
+    /// <param name="user">The user.</param>
+    /// <param name="root">The node.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>How many entries were deleted.</returns>
+    Task<int> DeleteWithinAsync(UserId user, NodeRef root, CancellationToken cancellationToken);
+
+    /// <summary>Deletes all of a user's progress.</summary>
+    /// <param name="user">The user.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>How many entries were deleted.</returns>
+    Task<int> ClearAsync(UserId user, CancellationToken cancellationToken);
+
+    /// <summary>Deletes a user's progress that was last updated before a moment.</summary>
+    /// <param name="user">The user.</param>
+    /// <param name="before">Entries updated before this are deleted.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>How many entries were deleted.</returns>
+    Task<int> DeleteBeforeAsync(UserId user, DateTimeOffset before, CancellationToken cancellationToken);
 }

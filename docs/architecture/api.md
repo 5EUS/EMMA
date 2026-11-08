@@ -34,7 +34,7 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
 | A repeated key header is refused. | Ambiguity is refused, not resolved. |
 | Rate limiting runs *after* authentication and is partitioned by the authenticated client id. | A caller cannot get a fresh bucket by inventing a key or a header. A flood of invalid keys is rejected cheaply before the limiter and spends no real client's allowance. |
 | A global concurrency limit runs alongside the per-client window. | One slow plugin cannot be used to tie up every worker. |
-| Progress and library are filed under the authenticated client; no route takes a user. | There is no cross-user access to get wrong. |
+| Progress, libraries and remembered choices are filed under the authenticated client; no route takes a user. | There is no cross-user access to get wrong. |
 | Asset listings never reveal remote URLs, request headers or proxied tokens. | Those can carry cookies, referer rules and capabilities private to the plugin. The host fetches under the plugin's network policy. |
 | Content responses are `nosniff` with `Content-Security-Policy: sandbox`, and the plugin's type is re-parsed. | Bytes and type come from a plugin. Without this, a plugin could serve a page that runs with the API's origin, or inject headers through its `mime`. |
 | Request bodies are limited to 64 KiB and unknown fields are refused. | Every body is a small document; a typo should fail, not be ignored. |
@@ -64,3 +64,5 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
   can be set but never read back). That is the same "keys carry no scopes" gap as above: once keys have scopes, changing
   settings should need one that reading does not.
 - Out of scope for the API: plugin management (CLI), downloads (no executor yet).
+- Progress, libraries and remembered choices have no scopes of their own: any client key may use them, but only its own
+  data, which is why the "keys carry no scopes" gap above does not apply to them.

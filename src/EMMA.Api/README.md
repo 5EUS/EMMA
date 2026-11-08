@@ -63,11 +63,25 @@ A bad value in any setting stops the host at startup with a message naming it.
 | `GET /v1/progress?ref=…` | The caller's progress in a node. |
 | `GET /v1/progress/continue?ref=…` | The latest progress anywhere beneath a container: "continue reading". |
 | `GET /v1/progress/recent?limit=…` | The caller's recent progress, newest first (1 to 200). |
-| `GET /v1/library` | The caller's saved nodes, newest first. |
-| `PUT /v1/library?ref=…` | Save a node the host has already served. |
-| `DELETE /v1/library?ref=…` | Remove a saved node. |
+| `GET /v1/progress/history?limit=…` | Recent activity grouped by series (1 to 200): `series`, `latest` (the most recent progress beneath it), `completed`, `in_progress`. |
+| `GET /v1/progress/series?ref=…` | Everything beneath a container: `completed`, `in_progress`, `latest_activity` and every node with progress, newest first. |
+| `DELETE /v1/progress?ref=…&ref=…` | Delete the progress of each node and of everything beneath it. Answers `removed`. |
+| `POST /v1/progress/clear` | Delete all of the caller's progress. Answers `removed`. |
+| `POST /v1/progress/complete?ref=…&ref=…` | Mark nodes finished (positions that exist are kept). Answers `items`. |
+| `GET /v1/progress/retention` | How long history is kept: `days`, 0 for ever. |
+| `PUT /v1/progress/retention` | Body: `days` (0 to 3650). Deletes older history at once and whenever progress is recorded. Answers `days` and `removed`. |
+| `GET /v1/library?library=…` | The caller's saved nodes, newest first, each with its `library`. One library, or all when `library` is left out. |
+| `GET /v1/library/search?text=…&library=…&limit=…` | Saved nodes whose title contains `text`, across libraries unless `library` is given, from the node cache (no plugin is called). |
+| `PUT /v1/library?ref=…&library=…` | Save a node the host has already served, into `library` (default: the default library). A node already saved stays where it is. |
+| `DELETE /v1/library?ref=…` | Remove a saved node from whichever library holds it. |
+| `POST /v1/library/move?ref=…&library=…` | Move a saved node to another library. |
+| `GET /v1/libraries` | The caller's libraries: `name`, `created_at`, `count`, `is_default`. The default library is always first. |
+| `POST /v1/libraries` | Create a library. Body: `name` (1 to 64 characters, unique ignoring case). |
+| `DELETE /v1/libraries?name=…` | Delete a library and its entries. The default library cannot be deleted. |
+| `GET /v1/app-settings?scope=…` | What the app remembered for the caller under a scope: `values`, text by key. |
+| `PUT /v1/app-settings?scope=…` | Change it, all or none. Body: `changes`, a list of `key` and `value` (no `value` forgets the key). Scopes starting with `emma.` are the host's. |
 
-Progress and the library always belong to the authenticated client; there is no parameter to name another user.
+Progress, libraries and remembered choices always belong to the authenticated client; there is no parameter to name another user.
 
 Asset listings say how an asset is delivered but never where it lives. A remote URL may carry cookies or referer
 rules and a proxied token is private to the plugin, so clients ask for an asset by `index` and the host fetches it

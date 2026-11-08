@@ -42,7 +42,8 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.Registry = new SqlitePluginRegistry(storageOptions);
         this.Nodes = new SqliteNodeStore(storageOptions, this.Time);
         this.ProgressStore = new SqliteProgressStore(storageOptions);
-        this.Library = new SqliteLibraryStore(storageOptions);
+        this.LibraryStore = new SqliteLibraryStore(storageOptions, this.Time);
+        IAppSettingsPort appSettings = new SqliteAppSettings(storageOptions);
         this.secretBox = new FileSecretBox(Path.Combine(data, "secret.key"));
         IPluginSettingsPort settings = new SqlitePluginSettings(storageOptions, this.secretBox, this.Time);
         this.Policies = new ManifestCapabilityPolicyProvider();
@@ -84,7 +85,9 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 
         this.Catalog = new CatalogPipeline(this.Gateway, this.Nodes, executor);
         this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, executor, AssetPipelineOptions.Default, this.Time);
-        this.Progress = new ProgressPipeline(this.ProgressStore, this.Time);
+        this.Progress = new ProgressPipeline(this.ProgressStore, appSettings, this.Time);
+        this.Library = new LibraryPipeline(this.LibraryStore, this.Nodes, this.Time);
+        this.AppSettings = new AppSettingsPipeline(appSettings, this.Time);
         this.PluginSettings = new PluginSettingsPipeline(this.Gateway, settings);
     }
 
@@ -106,8 +109,8 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     /// <summary>Gets the stored progress. Hosts use <see cref="Progress"/>; this is for the tests that seed it.</summary>
     public IProgressPort ProgressStore { get; }
 
-    /// <summary>Gets the saved nodes of each user.</summary>
-    public ILibraryPort Library { get; }
+    /// <summary>Gets the stored libraries. Hosts use <see cref="Library"/>; this is for the tests that seed it.</summary>
+    public ILibraryPort LibraryStore { get; }
 
     /// <summary>Gets what each plugin may reach.</summary>
     public ManifestCapabilityPolicyProvider Policies { get; }
@@ -127,8 +130,14 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     /// <summary>Gets asset resolution and bytes.</summary>
     public AssetPipeline Assets { get; }
 
-    /// <summary>Gets progress.</summary>
+    /// <summary>Gets progress and history.</summary>
     public ProgressPipeline Progress { get; }
+
+    /// <summary>Gets each user's libraries and the nodes saved in them.</summary>
+    public LibraryPipeline Library { get; }
+
+    /// <summary>Gets what the app remembers for each user, such as how a series is sorted.</summary>
+    public AppSettingsPipeline AppSettings { get; }
 
     /// <summary>Gets the user's plugin settings. Prefer <see cref="SetPluginSettingsAsync"/> for changes, which also reopens the plugin.</summary>
     public PluginSettingsPipeline PluginSettings { get; }

@@ -44,6 +44,18 @@ namespace EMMA.Api.Contracts;
 [JsonSerializable(typeof(ProgressListResponse))]
 [JsonSerializable(typeof(LibraryEntryDto))]
 [JsonSerializable(typeof(LibraryResponse))]
+[JsonSerializable(typeof(LibrarySummaryDto))]
+[JsonSerializable(typeof(LibrariesResponse))]
+[JsonSerializable(typeof(CreateLibraryRequest))]
+[JsonSerializable(typeof(ProgressGroupDto))]
+[JsonSerializable(typeof(ProgressHistoryResponse))]
+[JsonSerializable(typeof(SeriesProgressDto))]
+[JsonSerializable(typeof(RemovedResponse))]
+[JsonSerializable(typeof(RetentionResponse))]
+[JsonSerializable(typeof(SetRetentionRequest))]
+[JsonSerializable(typeof(AppSettingsResponse))]
+[JsonSerializable(typeof(AppSettingChangeDto))]
+[JsonSerializable(typeof(SetAppSettingsRequest))]
 public sealed partial class ApiJsonContext : JsonSerializerContext
 {
 }

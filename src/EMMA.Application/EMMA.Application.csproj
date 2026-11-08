@@ -5,12 +5,6 @@
     in phase 8 once there are real assets to measure.
   -->
   <!--
-    TODO(rewrite): main's library port used the user id as the library name and carried a
-    "NormalizeLegacyDefaultLibrary" migration, which points to a muddled user/library
-    model. ILibraryPort is one library per user; add named libraries only when a client
-    needs them.
-  -->
-  <!--
     TODO(rewrite): the download executor is not written yet. It walks children down to
     the nodes whose kind declares the job's role, resolves each, and stores the assets.
     IDownloadPort and DownloadJob exist; the executor belongs with the host (phase 4).

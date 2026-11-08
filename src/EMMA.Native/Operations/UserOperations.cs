@@ -1,11 +1,12 @@
 using EMMA.Api.Contracts;
 using EMMA.Api.Mapping;
+using EMMA.Application.Pipelines;
 using EMMA.Domain;
 using EMMA.Native.Requests;
 
 namespace EMMA.Native.Operations;
 
-/// <summary>The handle's user's own data: progress and library. A handle belongs to one user, so there is no way to name another.</summary>
+/// <summary>The handle's user's own progress. A handle belongs to one user, so there is no way to name another.</summary>
 internal static class UserOperations
 {
     private const int DefaultRecent = 50;
@@ -77,19 +78,28 @@ internal static class UserOperations
         return Envelope.Ok(new ProgressListResponse([.. recent.Select(UserMapper.ToDto)]), ApiJsonContext.Default.ProgressListResponse);
     }
 
-    /// <summary>Lists the user's saved nodes.</summary>
+    /// <summary>Lists the user's recent activity, one entry per series.</summary>
     /// <param name="context">The call.</param>
     /// <returns>The response.</returns>
-    public static async Task<NativeResponse> LibraryListAsync(OperationContext context)
+    public static async Task<NativeResponse> HistoryAsync(OperationContext context)
     {
-        IReadOnlyList<LibraryEntry> entries = await context.Runtime.Library.ListAsync(context.User, context.CancellationToken).ConfigureAwait(false);
-        return Envelope.Ok(new LibraryResponse([.. entries.Select(UserMapper.ToDto)]), ApiJsonContext.Default.LibraryResponse);
+        Outcome<RecentCall> call = context.Read(NativeJsonContext.Default.RecentCall);
+        Outcome<int?> limit = call.IsSuccess ? RequestParsing.Limit(call.Value.Limit, MaxRecent) : Outcome.Failure<int?>(call.Error);
+        if (!limit.IsSuccess)
+        {
+            return Envelope.Failure(limit.Error);
+        }
+
+        IReadOnlyList<ProgressGroup> groups = await context.Runtime.Progress
+            .HistoryAsync(context.User, limit.Value ?? DefaultRecent, context.CancellationToken)
+            .ConfigureAwait(false);
+        return Envelope.Ok(new ProgressHistoryResponse([.. groups.Select(UserMapper.ToDto)]), ApiJsonContext.Default.ProgressHistoryResponse);
     }
 
-    /// <summary>Saves a node the host has already served.</summary>
+    /// <summary>Gets what the user did beneath one container.</summary>
     /// <param name="context">The call.</param>
     /// <returns>The response.</returns>
-    public static async Task<NativeResponse> LibraryAddAsync(OperationContext context)
+    public static async Task<NativeResponse> SeriesAsync(OperationContext context)
     {
         Outcome<NodeRef> node = ReadRef(context);
         if (!node.IsSuccess)
@@ -97,24 +107,86 @@ internal static class UserOperations
             return Envelope.Failure(node.Error);
         }
 
-        Outcome<bool> added = await context.Runtime.AddToLibraryAsync(context.User, node.Value, context.CancellationToken).ConfigureAwait(false);
-        return added.IsSuccess ? Envelope.Done : Envelope.Failure(added.Error);
+        SeriesProgress series = await context.Runtime.Progress.SeriesAsync(context.User, node.Value, context.CancellationToken).ConfigureAwait(false);
+        return Envelope.Ok(UserMapper.ToDto(series), ApiJsonContext.Default.SeriesProgressDto);
     }
 
-    /// <summary>Removes a saved node.</summary>
+    /// <summary>Deletes the progress of nodes and of everything beneath them.</summary>
     /// <param name="context">The call.</param>
     /// <returns>The response.</returns>
-    public static async Task<NativeResponse> LibraryRemoveAsync(OperationContext context)
+    public static async Task<NativeResponse> DeleteAsync(OperationContext context)
     {
-        Outcome<NodeRef> node = ReadRef(context);
-        if (!node.IsSuccess)
+        Outcome<IReadOnlyList<NodeRef>> nodes = ReadRefs(context);
+        if (!nodes.IsSuccess)
         {
-            return Envelope.Failure(node.Error);
+            return Envelope.Failure(nodes.Error);
         }
 
-        return await context.Runtime.Library.RemoveAsync(context.User, node.Value, context.CancellationToken).ConfigureAwait(false)
-            ? Envelope.Done
-            : Envelope.Failure(ErrorCode.NotFound, "That node is not in the library.");
+        int removed = await context.Runtime.Progress.DeleteAsync(context.User, nodes.Value, context.CancellationToken).ConfigureAwait(false);
+        return Envelope.Ok(new RemovedResponse(removed), ApiJsonContext.Default.RemovedResponse);
+    }
+
+    /// <summary>Deletes all of the user's progress.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> ClearAsync(OperationContext context)
+    {
+        int removed = await context.Runtime.Progress.ClearAsync(context.User, context.CancellationToken).ConfigureAwait(false);
+        return Envelope.Ok(new RemovedResponse(removed), ApiJsonContext.Default.RemovedResponse);
+    }
+
+    /// <summary>Marks nodes finished.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> CompleteAsync(OperationContext context)
+    {
+        Outcome<IReadOnlyList<NodeRef>> nodes = ReadRefs(context);
+        if (!nodes.IsSuccess)
+        {
+            return Envelope.Failure(nodes.Error);
+        }
+
+        IReadOnlyList<Progress> stored = await context.Runtime.Progress.CompleteAsync(context.User, nodes.Value, context.CancellationToken).ConfigureAwait(false);
+        return Envelope.Ok(new ProgressListResponse([.. stored.Select(UserMapper.ToDto)]), ApiJsonContext.Default.ProgressListResponse);
+    }
+
+    /// <summary>Gets how long the user's history is kept.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> RetentionGetAsync(OperationContext context)
+    {
+        int days = await context.Runtime.Progress.GetRetentionAsync(context.User, context.CancellationToken).ConfigureAwait(false);
+        return Envelope.Ok(new RetentionResponse(days, null), ApiJsonContext.Default.RetentionResponse);
+    }
+
+    /// <summary>Sets how long the user's history is kept.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> RetentionSetAsync(OperationContext context)
+    {
+        Outcome<RetentionCall> call = context.Read(NativeJsonContext.Default.RetentionCall);
+        if (!call.IsSuccess)
+        {
+            return Envelope.Failure(call.Error);
+        }
+
+        if (call.Value.Days is not { } days)
+        {
+            return Envelope.Failure(ErrorCode.InvalidArgument, "'days' is required.");
+        }
+
+        Outcome<HistoryRetention> set = await context.Runtime.Progress.SetRetentionAsync(context.User, days, context.CancellationToken).ConfigureAwait(false);
+        return set.IsSuccess
+            ? Envelope.Ok(new RetentionResponse(set.Value.Days, set.Value.Removed), ApiJsonContext.Default.RetentionResponse)
+            : Envelope.Failure(set.Error);
+    }
+
+    private static Outcome<IReadOnlyList<NodeRef>> ReadRefs(OperationContext context)
+    {
+        Outcome<RefsCall> call = context.Read(NativeJsonContext.Default.RefsCall);
+        return call.IsSuccess
+            ? RequestParsing.Nodes(call.Value.Refs, "refs")
+            : Outcome.Failure<IReadOnlyList<NodeRef>>(call.Error);
     }
 
     private static Outcome<NodeRef> ReadRef(OperationContext context)

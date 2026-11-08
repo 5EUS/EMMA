@@ -122,6 +122,121 @@ public sealed class SqliteProgressStoreTests : StorageTestBase
         Assert.Empty(await this.Store.ListRecentAsync(TestData.User, 0, Ct));
     }
 
+    /// <summary>The subtree listing holds the node and everything beneath it, newest first, and honours the limit.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ListWithinListsTheSubtreeNewestFirst()
+    {
+        await this.Nodes.UpsertAsync([MakeNode("series"), MakeNode("ep1", "series"), MakeNode("ep2", "series"), MakeNode("elsewhere")], Ct);
+        await this.Store.UpsertAsync(Make("ep1", "ms", 1, null, completed: true, minute: 1), Ct);
+        await this.Store.UpsertAsync(Make("ep2", "ms", 1, null, completed: false, minute: 2), Ct);
+        await this.Store.UpsertAsync(Make("elsewhere", "ms", 1, null, completed: false, minute: 3), Ct);
+        await this.Store.UpsertAsync(Make("ep1", "ms", 1, null, completed: false, minute: 4) with { User = Bob }, Ct);
+
+        IReadOnlyList<Progress> within = await this.Store.ListWithinAsync(TestData.User, TestData.Ref("series"), 10, Ct);
+        IReadOnlyList<Progress> top = await this.Store.ListWithinAsync(TestData.User, TestData.Ref("series"), 1, Ct);
+
+        Assert.Equal([TestData.Ref("ep2"), TestData.Ref("ep1")], within.Select(entry => entry.Node));
+        Assert.Single(top);
+    }
+
+    /// <summary>Groups are keyed by the topmost cached ancestor, count finished and unfinished entries, and carry the latest one.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ListGroupsGroupsBySeries()
+    {
+        await this.Nodes.UpsertAsync(
+            [
+                MakeNode("show"),
+                MakeNode("season", "show"),
+                MakeNode("ep1", "season"),
+                MakeNode("ep2", "season"),
+                MakeNode("manga"),
+                MakeNode("c1", "manga"),
+                MakeNode("orphan", "gone"),
+            ],
+            Ct);
+        await this.Store.UpsertAsync(Make("ep1", "ms", 1, null, completed: true, minute: 1), Ct);
+        await this.Store.UpsertAsync(Make("ep2", "ms", 5, null, completed: false, minute: 5), Ct);
+        await this.Store.UpsertAsync(Make("c1", "page", 3, 9, completed: false, minute: 3), Ct);
+        await this.Store.UpsertAsync(Make("orphan", "page", 1, null, completed: true, minute: 2), Ct);
+        await this.Store.UpsertAsync(Make("uncached", "page", 1, null, completed: false, minute: 0), Ct);
+        await this.Store.UpsertAsync(Make("ep1", "ms", 1, null, completed: true, minute: 9) with { User = Bob }, Ct);
+
+        IReadOnlyList<ProgressGroup> groups = await this.Store.ListGroupsAsync(TestData.User, 10, Ct);
+        IReadOnlyList<ProgressGroup> top = await this.Store.ListGroupsAsync(TestData.User, 1, Ct);
+
+        Assert.Equal(
+            [TestData.Ref("show"), TestData.Ref("manga"), TestData.Ref("orphan"), TestData.Ref("uncached")],
+            groups.Select(group => group.Series));
+        Assert.Equal(TestData.Ref("ep2"), groups[0].Latest.Node);
+        Assert.Equal((1, 1), (groups[0].Completed, groups[0].InProgress));
+        Assert.Equal((0, 1), (groups[1].Completed, groups[1].InProgress));
+        Assert.Equal((1, 0), (groups[2].Completed, groups[2].InProgress));
+        Assert.Single(top);
+    }
+
+    /// <summary>A parent cycle in bad data does not hang the grouping.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ListGroupsSurvivesAParentCycle()
+    {
+        await this.Nodes.UpsertAsync([MakeNode("a", "b"), MakeNode("b", "a")], Ct);
+        await this.Store.UpsertAsync(Make("b", "page", 1, null, completed: false), Ct);
+
+        Assert.Single(await this.Store.ListGroupsAsync(TestData.User, 10, Ct));
+    }
+
+    /// <summary>Deleting a subtree removes the node and its descendants for that user only.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task DeleteWithinRemovesTheSubtreeForOneUser()
+    {
+        await this.Nodes.UpsertAsync([MakeNode("series"), MakeNode("ep1", "series"), MakeNode("elsewhere")], Ct);
+        await this.Store.UpsertAsync(Make("series", "page", 1, null, completed: false), Ct);
+        await this.Store.UpsertAsync(Make("ep1", "page", 1, null, completed: false), Ct);
+        await this.Store.UpsertAsync(Make("elsewhere", "page", 1, null, completed: false), Ct);
+        await this.Store.UpsertAsync(Make("ep1", "page", 1, null, completed: false) with { User = Bob }, Ct);
+
+        int removed = await this.Store.DeleteWithinAsync(TestData.User, TestData.Ref("series"), Ct);
+
+        Assert.Equal(2, removed);
+        Assert.Equal([TestData.Ref("elsewhere")], (await this.Store.ListRecentAsync(TestData.User, 10, Ct)).Select(entry => entry.Node));
+        Assert.Single(await this.Store.ListRecentAsync(Bob, 10, Ct));
+        Assert.Equal(0, await this.Store.DeleteWithinAsync(TestData.User, TestData.Ref("series"), Ct));
+    }
+
+    /// <summary>Clearing removes one user's progress and nobody else's.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ClearRemovesOneUsersProgress()
+    {
+        await this.Store.UpsertAsync(Make("a", "page", 1, null, completed: false), Ct);
+        await this.Store.UpsertAsync(Make("b", "page", 1, null, completed: false), Ct);
+        await this.Store.UpsertAsync(Make("a", "page", 1, null, completed: false) with { User = Bob }, Ct);
+
+        Assert.Equal(2, await this.Store.ClearAsync(TestData.User, Ct));
+        Assert.Empty(await this.Store.ListRecentAsync(TestData.User, 10, Ct));
+        Assert.Single(await this.Store.ListRecentAsync(Bob, 10, Ct));
+    }
+
+    /// <summary>Deleting before a moment removes only older entries.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task DeleteBeforeRemovesOlderEntries()
+    {
+        await this.Store.UpsertAsync(Make("old", "page", 1, null, completed: false, minute: 1), Ct);
+        await this.Store.UpsertAsync(Make("edge", "page", 1, null, completed: false, minute: 5), Ct);
+        await this.Store.UpsertAsync(Make("new", "page", 1, null, completed: false, minute: 9), Ct);
+        await this.Store.UpsertAsync(Make("old", "page", 1, null, completed: false, minute: 1) with { User = Bob }, Ct);
+
+        int removed = await this.Store.DeleteBeforeAsync(TestData.User, new DateTimeOffset(2026, 1, 1, 0, 5, 0, TimeSpan.Zero), Ct);
+
+        Assert.Equal(1, removed);
+        Assert.Equal([TestData.Ref("new"), TestData.Ref("edge")], (await this.Store.ListRecentAsync(TestData.User, 10, Ct)).Select(entry => entry.Node));
+        Assert.Single(await this.Store.ListRecentAsync(Bob, 10, Ct));
+    }
+
     /// <summary>The database itself refuses nonsense, so a bug above cannot store it.</summary>
     /// <param name="value">The position.</param>
     /// <param name="total">The extent.</param>
