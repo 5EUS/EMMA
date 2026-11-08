@@ -396,7 +396,7 @@ dotnet_naming_style.s_camelcase.capitalization = camel_case
 dotnet_diagnostic.IDE0005.severity = error
 dotnet_diagnostic.IDE1006.severity = none
 dotnet_diagnostic.IDE0003.severity = none
-dotnet_diagnostic.IDE0028.severity = none
+dotnet_diagnostic.IDE0028.severity = none # upgrade dotnet?
 
 #### Strict additions ####
 
