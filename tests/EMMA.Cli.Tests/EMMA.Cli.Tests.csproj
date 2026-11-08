@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- xUnit v3 test assemblies are self-hosting executables. -->
+    <OutputType>Exe</OutputType>
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>false</IsAotCompatible>
+    <NativeArtifacts>$(MSBuildThisFileDirectory)../../artifacts/native/</NativeArtifacts>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/EMMA.Cli/EMMA.Cli.csproj" />
+    <ProjectReference Include="../EMMA.TestSupport/EMMA.TestSupport.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+  <!-- These tests drive the real native host. A missing artifact is a failed build, not a skipped test. -->
+  <Target Name="RequireNativeArtifacts" BeforeTargets="BeforeBuild">
+    <ItemGroup>
+      <NativeHostFile Include="$(NativeArtifacts)lib/*" />
+    </ItemGroup>
+    <Error Condition="'@(NativeHostFile)' == ''"
+           Code="EMMA0001"
+           Text="The native Wasm host is not built. Run: sh native/build-host.sh and sh native/build-plugins.sh" />
+  </Target>
+  <ItemGroup>
+    <None Include="$(NativeArtifacts)lib/*" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+</Project>

@@ -56,7 +56,7 @@ public sealed class WasmGatewayTests(RuntimeFixture runtime) : IClassFixture<Run
                 Outcome<PluginNodePage> disabled = await host.Gateway.SearchAsync(GatewayHarness.Id, Text("series"), Ct).ConfigureAwait(true);
 
                 Assert.Equal(ErrorCode.NotFound, missing.Error?.Code);
-                Assert.Equal(ErrorCode.Unavailable, disabled.Error?.Code);
+                Assert.Equal(ErrorCode.Unsupported, disabled.Error?.Code);
             });
     }
 
@@ -163,7 +163,7 @@ public sealed class WasmGatewayTests(RuntimeFixture runtime) : IClassFixture<Run
 
                 Assert.Equal(PluginStatus.Enabled, beforeThird);
                 Assert.Equal(PluginStatus.Quarantined, (await host.Registry.GetAsync(GatewayHarness.Id, Ct).ConfigureAwait(true))!.Status);
-                Assert.Equal(ErrorCode.Unavailable, after.Error?.Code);
+                Assert.Equal(ErrorCode.Unsupported, after.Error?.Code);
             });
     }
 

@@ -14,7 +14,9 @@ public static class NativeArtifacts
             : throw new FileNotFoundException($"{path} is missing. Run: sh native/build-plugins.sh", path);
     }
 
-    private static string RepositoryRoot()
+    /// <summary>Finds the repository root by walking up from the test output to <c>EMMA.slnx</c>.</summary>
+    /// <returns>The root directory.</returns>
+    public static string RepositoryRoot()
     {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "EMMA.slnx")))

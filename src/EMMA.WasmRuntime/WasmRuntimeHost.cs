@@ -17,6 +17,13 @@ public sealed class WasmRuntimeHost : IDisposable
 
     private WasmRuntimeHost(nint pointer) => this.handle = new RuntimeHandle(pointer);
 
+    /// <summary>
+    /// Adds a directory to search for the native Wasm host, ahead of the application directory. A library loaded into
+    /// someone else's process (an app embedding EMMA) is not found next to that process, so its owner says where it is.
+    /// </summary>
+    /// <param name="directory">The directory holding <c>libemma_wasm</c>.</param>
+    public static void AddLibrarySearchDirectory(string directory) => NativeLibraryResolver.AddDirectory(directory);
+
     /// <summary>Creates the runtime.</summary>
     /// <param name="options">Options, or <see langword="null"/> for the defaults.</param>
     /// <returns>The runtime.</returns>

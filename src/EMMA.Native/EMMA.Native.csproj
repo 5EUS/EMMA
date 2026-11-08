@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The in-process C ABI for apps that embed EMMA (Flutter via dart:ffi, or any C caller). It is a thin shell:
+    one dispatching call over the same pipelines the HTTP API uses, JSON in and out with the same shapes. See
+    docs/architecture/native-abi.md. The ABI is versioned by emma_abi_version(); new operations are new
+    operation names, never new exports.
+
+    TODO(rewrite): only desktop targets are published and checked (scripts/publish-native.sh). main also had
+    scripts for iOS (a static library in an xcframework) and Android (NDK toolchain); they are not ported
+    because they cannot be validated without a Mac and the NDK. Port and test them together when a mobile
+    build is on the table. The Wasm host's iOS path (pulley) is likewise unverified.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;win-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../EMMA.Runtime/EMMA.Runtime.csproj" />
+    <ProjectReference Include="../EMMA.Api.Contracts/EMMA.Api.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="EMMA.Native.Tests" />
+  </ItemGroup>
+  <!--
+    The Wasm host ships beside the library. A missing one is not a build error: the library still lists and
+    configures plugins, and says what is missing when a plugin is first opened.
+  -->
+  <PropertyGroup>
+    <NativeArtifacts>$(MSBuildThisFileDirectory)../../artifacts/native/</NativeArtifacts>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(NativeArtifacts)lib/*" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+</Project>

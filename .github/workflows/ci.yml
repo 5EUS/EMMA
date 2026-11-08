@@ -55,9 +55,14 @@ jobs:
       - name: Test
         run: dotnet test -c Release --no-build
       - name: Publish NativeAOT
-        # TODO(rewrite): only EMMA.Api is published for now. Add EMMA.Native (shared
-        # library for Flutter FFI) when it exists.
-        run: dotnet publish src/EMMA.Api/EMMA.Api.csproj -c Release -r ${{ matrix.rid }} --self-contained
+        # The HTTP API and the command-line tool. The native library (EMMA.Native) is published and driven from C by
+        # the smoke test below. TODO(rewrite): the smoke test skips Windows (the harness is written for it but untested).
+        run: |
+          dotnet publish src/EMMA.Api/EMMA.Api.csproj -c Release -r ${{ matrix.rid }} --self-contained
+          dotnet publish src/EMMA.Cli/EMMA.Cli.csproj -c Release -r ${{ matrix.rid }} --self-contained
+      - name: Native library smoke test (C harness)
+        shell: bash
+        run: sh scripts/development/native-smoke.sh
       - name: Vulnerable packages
         run: dotnet list package --vulnerable --include-transitive
 

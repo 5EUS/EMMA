@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The JSON that EMMA speaks to clients: DTOs, the source-generated serializer context and the mappers from
+    Domain types. Shared by the HTTP API, the native library and the CLI, so a Flutter app sees one set of
+    shapes whether it calls REST or the in-process library.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../EMMA.Domain/EMMA.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="$(AssemblyName).Tests" />
+  </ItemGroup>
+</Project>

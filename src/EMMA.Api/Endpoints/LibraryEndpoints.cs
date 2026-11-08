@@ -4,6 +4,7 @@ using EMMA.Api.Mapping;
 using EMMA.Api.Security;
 using EMMA.Application.Ports;
 using EMMA.Domain;
+using EMMA.Runtime;
 
 namespace EMMA.Api.Endpoints;
 
@@ -25,12 +26,7 @@ internal static class LibraryEndpoints
         return ApiResults.Ok(new LibraryResponse([.. entries.Select(UserMapper.ToDto)]), ApiJsonContext.Default.LibraryResponse);
     }
 
-    private static async Task<IResult> AddAsync(
-        HttpContext context,
-        ILibraryPort library,
-        INodeStorePort nodes,
-        TimeProvider time,
-        CancellationToken cancellationToken)
+    private static async Task<IResult> AddAsync(HttpContext context, EmmaRuntime runtime, CancellationToken cancellationToken)
     {
         Outcome<NodeRef> node = RequestReader.Node(context.Request, "ref");
         if (!node.IsSuccess)
@@ -38,14 +34,8 @@ internal static class LibraryEndpoints
             return ApiResults.Failure(node.Error);
         }
 
-        // Only nodes the host has served can be saved, so a library never holds a reference nothing can resolve.
-        if (await nodes.GetAsync(node.Value, cancellationToken).ConfigureAwait(false) is null)
-        {
-            return ApiResults.Failure(ErrorCode.NotFound, "That node has not been seen; browse or search to it first.");
-        }
-
-        await library.AddAsync(new LibraryEntry(context.RequireClient().User, node.Value, time.GetUtcNow()), cancellationToken).ConfigureAwait(false);
-        return Results.NoContent();
+        Outcome<bool> added = await runtime.AddToLibraryAsync(context.RequireClient().User, node.Value, cancellationToken).ConfigureAwait(false);
+        return added.IsSuccess ? Results.NoContent() : ApiResults.Failure(added.Error);
     }
 
     private static async Task<IResult> RemoveAsync(HttpContext context, ILibraryPort library, CancellationToken cancellationToken)

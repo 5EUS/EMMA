@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "id": "com.example.template",
+  "name": "Template Plugin",
+  "version": "0.1.0",
+  "description": "An EMMA plugin: replace this with what your plugin does.",
+  "author": "You",
+  "kinds": ["demo.collection", "demo.entry"],
+  "contract": {
+    "required": ["emma:core/meta@1", "emma:core/catalog@1", "emma:core/assets@1"]
+  },
+  "transport": "wasm",
+  "entrypoint": {
+    "path": "plugin.wasm",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "permissions": {
+    "network": [],
+    "cache": false
+  },
+  "limits": {
+    "cpuBudgetMs": 5000,
+    "memoryMb": 64
+  }
+}

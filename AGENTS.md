@@ -24,11 +24,16 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
 
 ## Layout
 
-- `src/` holds the EMMA libraries plus the `EMMA.Api` host (the only NativeAOT
-  project so far); `tests/` will hold xUnit v3 projects, one per `src/` project.
+- `src/` holds the EMMA libraries and three NativeAOT hosts (`EMMA.Api`, `EMMA.Native`, `EMMA.Cli`);
+  `tests/` holds xUnit v3 projects, one per `src/` project.
 - Layering is hexagonal and enforced by project references: `EMMA.Domain` (no dependencies) <-
   `EMMA.Application` (ports and pipelines) <- `EMMA.Infrastructure`, `EMMA.Storage`, `EMMA.PluginHost`
-  <- `EMMA.Api`. `EMMA.WasmRuntime` is the C# binding to the native host and depends only on Domain.
+  <- `EMMA.Runtime` (the composition root every host shares) <- the hosts. `EMMA.Api.Contracts` holds the
+  JSON every client sees (DTOs, mappers, error codes, request parsing) and is shared by all three hosts.
+  `EMMA.WasmRuntime` is the C# binding to the native host and depends only on Domain.
+- A new capability goes in a pipeline or `EmmaRuntime`, then each host exposes it: an endpoint in `EMMA.Api`, an
+  operation name in `EMMA.Native`'s `Dispatcher` (never a new C export, see `docs/architecture/native-abi.md`; a test
+  fails if an operation is undocumented), a command in `EMMA.Cli`. Do not put logic in a host.
 - The plugin contract is the WIT package `emma:core` in `src/EMMA.Contracts/wit`. The core never switches on
   a media type; kinds are open strings the plugin declares. Read `docs/architecture/contract.md` before
   changing the contract, and keep the vendored copies of the WIT (for example in plugin repositories) in step.
@@ -37,6 +42,12 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
 - The native Wasm host (`native/emma-wasm`) and the fixture plugins must be built before the .NET tests:
   `sh native/build-plugins.sh` and `sh native/build-host.sh` (`check.sh` does both; needs the
   `wasm32-wasip2` Rust target). A missing artifact fails the build on purpose.
+- `EMMA.Native` is the C ABI for embedding apps: one `emma_call` with operation names, JSON in and out, numeric
+  handles, no throwing across the boundary. `sh scripts/development/native-smoke.sh` publishes it and drives it
+  from C (`tests/EMMA.Native.Harness`); NativeAOT publishes are memory-hungry, so do not run them in a loop.
+- Plugin authoring: `native/templates/rust-plugin` is a real crate that `build-plugins.sh` builds against the current
+  contract and `emma plugin new` scaffolds (it is compiled into the CLI). Its `wit/` is copied from
+  `src/EMMA.Contracts/wit` and git-ignored; never edit a copy. See `docs/plugins/authoring.md`.
 - `EMMA.Api` is REST plus source-generated JSON only (no gRPC) and the composition root
   (`Composition/EmmaServices.cs`). Read `docs/architecture/api.md` before changing authentication, rate
   limiting or a response shape. Authentication is default-deny and runs before the rate limiter, which is

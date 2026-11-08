@@ -21,7 +21,7 @@ internal static class ApiResults
     /// <returns>The result, with the status and code the failure class maps to.</returns>
     public static IResult Failure(PluginError error)
     {
-        (int status, string code) = Describe(error.Code);
+        (int status, string code) = ApiErrors.Describe(error.Code);
         return Error(status, code, error.Message, error.RetryAfter);
     }
 
@@ -39,21 +39,6 @@ internal static class ApiResults
     /// <returns>The result.</returns>
     public static IResult Error(int status, string code, string message, TimeSpan? retryAfter = null)
     {
-        ErrorResponse body = new(new ErrorBody(code, message, retryAfter is { } delay ? (long)delay.TotalMilliseconds : null));
-        return new JsonResult<ErrorResponse>(status, body, ApiJsonContext.Default.ErrorResponse, retryAfter);
+        return new JsonResult<ErrorResponse>(status, ApiErrors.ToResponse(code, message, retryAfter), ApiJsonContext.Default.ErrorResponse, retryAfter);
     }
-
-    private static (int Status, string Code) Describe(ErrorCode code) => code switch
-    {
-        ErrorCode.NotFound => (StatusCodes.Status404NotFound, "not_found"),
-        ErrorCode.InvalidArgument => (StatusCodes.Status400BadRequest, "invalid_argument"),
-        ErrorCode.Unsupported => (StatusCodes.Status501NotImplemented, "unsupported"),
-        ErrorCode.RateLimited => (StatusCodes.Status429TooManyRequests, "upstream_rate_limited"),
-        ErrorCode.Unavailable => (StatusCodes.Status503ServiceUnavailable, "unavailable"),
-        ErrorCode.Cancelled => (StatusCodes.Status504GatewayTimeout, "timeout"),
-
-        // The plugin's own upstream wants credentials from the user. That is not this API's 401.
-        ErrorCode.Unauthorized => (StatusCodes.Status424FailedDependency, "plugin_unauthorized"),
-        _ => (StatusCodes.Status502BadGateway, "plugin_error"),
-    };
 }

@@ -1,0 +1,86 @@
+using EMMA.Api.Contracts;
+using EMMA.Api.Mapping;
+using EMMA.Domain;
+using EMMA.Native.Requests;
+
+namespace EMMA.Native.Operations;
+
+/// <summary>Search, browsing and lookup. Every media type goes through these.</summary>
+internal static class CatalogOperations
+{
+    /// <summary>Searches one plugin.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> SearchAsync(OperationContext context)
+    {
+        Outcome<SearchCall> call = context.Read(NativeJsonContext.Default.SearchCall);
+        Outcome<PluginId> plugin = call.IsSuccess ? RequestParsing.Plugin(call.Value.Plugin) : Outcome.Failure<PluginId>(call.Error);
+        if (!plugin.IsSuccess)
+        {
+            return Envelope.Failure(plugin.Error);
+        }
+
+        Outcome<Query> query = NodeMapper.ToQuery(call.Value.Query ?? new SearchRequest(null, null, null, null, null, null));
+        if (!query.IsSuccess)
+        {
+            return Envelope.Failure(query.Error);
+        }
+
+        return Page(await context.Runtime.Catalog.SearchAsync(plugin.Value, query.Value, context.CancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>Lists a plugin's browse root.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> BrowseAsync(OperationContext context)
+    {
+        Outcome<PageCall> call = context.Read(NativeJsonContext.Default.PageCall);
+        Outcome<PluginId> plugin = call.IsSuccess ? RequestParsing.Plugin(call.Value.Plugin) : Outcome.Failure<PluginId>(call.Error);
+        Outcome<PageRequest> page = call.IsSuccess ? RequestParsing.Page(call.Value.Cursor, call.Value.Limit) : Outcome.Failure<PageRequest>(call.Error);
+        if (!plugin.IsSuccess || !page.IsSuccess)
+        {
+            return Envelope.Failure((plugin.Error ?? page.Error)!);
+        }
+
+        return Page(await context.Runtime.Catalog.BrowseRootAsync(plugin.Value, page.Value, context.CancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>Lists the children of a node.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> ChildrenAsync(OperationContext context)
+    {
+        Outcome<PageCall> call = context.Read(NativeJsonContext.Default.PageCall);
+        Outcome<NodeRef> parent = call.IsSuccess ? RequestParsing.Node(call.Value.Ref, "ref") : Outcome.Failure<NodeRef>(call.Error);
+        Outcome<PageRequest> page = call.IsSuccess ? RequestParsing.Page(call.Value.Cursor, call.Value.Limit) : Outcome.Failure<PageRequest>(call.Error);
+        if (!parent.IsSuccess || !page.IsSuccess)
+        {
+            return Envelope.Failure((parent.Error ?? page.Error)!);
+        }
+
+        return Page(await context.Runtime.Catalog.ChildrenAsync(parent.Value, page.Value, context.CancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>Fetches nodes by reference.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> GetAsync(OperationContext context)
+    {
+        Outcome<RefsCall> call = context.Read(NativeJsonContext.Default.RefsCall);
+        Outcome<IReadOnlyList<NodeRef>> references = call.IsSuccess ? RequestParsing.Nodes(call.Value.Refs, "refs") : Outcome.Failure<IReadOnlyList<NodeRef>>(call.Error);
+        if (!references.IsSuccess)
+        {
+            return Envelope.Failure(references.Error);
+        }
+
+        Outcome<IReadOnlyList<Node>> nodes = await context.Runtime.Catalog.GetAsync(references.Value, context.CancellationToken).ConfigureAwait(false);
+        return nodes.IsSuccess
+            ? Envelope.Ok(new NodeListResponse([.. nodes.Value.Select(NodeMapper.ToDto)]), ApiJsonContext.Default.NodeListResponse)
+            : Envelope.Failure(nodes.Error);
+    }
+
+    private static NativeResponse Page(Outcome<NodePage> page) =>
+        page.IsSuccess
+            ? Envelope.Ok(NodeMapper.ToDto(page.Value), ApiJsonContext.Default.NodePageResponse)
+            : Envelope.Failure(page.Error);
+}

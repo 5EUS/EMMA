@@ -105,6 +105,12 @@
         "resolved": "1.2.0.556",
         "contentHash": "zvn9Mqs/ox/83cpYPignI8hJEM2A93s2HkHs8HYMOAQW0PkampyoErAiIyKxgTLqbbad29HX/shv/6LGSjPJNQ=="
       },
+      "emma.api.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "EMMA.Domain": "[1.0.0, )"
+        }
+      },
       "emma.application": {
         "type": "Project",
         "dependencies": {
@@ -125,6 +131,15 @@
         "dependencies": {
           "EMMA.Application": "[1.0.0, )",
           "EMMA.WasmRuntime": "[1.0.0, )"
+        }
+      },
+      "emma.runtime": {
+        "type": "Project",
+        "dependencies": {
+          "EMMA.Application": "[1.0.0, )",
+          "EMMA.Infrastructure": "[1.0.0, )",
+          "EMMA.PluginHost": "[1.0.0, )",
+          "EMMA.Storage": "[1.0.0, )"
         }
       },
       "emma.storage": {

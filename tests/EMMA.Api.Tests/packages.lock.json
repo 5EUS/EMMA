@@ -256,10 +256,14 @@
       "emma.api": {
         "type": "Project",
         "dependencies": {
-          "EMMA.Application": "[1.0.0, )",
-          "EMMA.Infrastructure": "[1.0.0, )",
-          "EMMA.PluginHost": "[1.0.0, )",
-          "EMMA.Storage": "[1.0.0, )"
+          "EMMA.Api.Contracts": "[1.0.0, )",
+          "EMMA.Runtime": "[1.0.0, )"
+        }
+      },
+      "emma.api.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "EMMA.Domain": "[1.0.0, )"
         }
       },
       "emma.application": {
@@ -282,6 +286,15 @@
         "dependencies": {
           "EMMA.Application": "[1.0.0, )",
           "EMMA.WasmRuntime": "[1.0.0, )"
+        }
+      },
+      "emma.runtime": {
+        "type": "Project",
+        "dependencies": {
+          "EMMA.Application": "[1.0.0, )",
+          "EMMA.Infrastructure": "[1.0.0, )",
+          "EMMA.PluginHost": "[1.0.0, )",
+          "EMMA.Storage": "[1.0.0, )"
         }
       },
       "emma.storage": {

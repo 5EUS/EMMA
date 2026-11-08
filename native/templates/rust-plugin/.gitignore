@@ -1,0 +1,5 @@
+/target
+/dist
+/plugin.wasm
+# Copied from the EMMA contract by `emma plugin new` (or by native/build-plugins.sh inside the EMMA repository).
+/wit

@@ -14,7 +14,21 @@ internal static class NativeLibraryResolver
     internal const string OverrideVariable = "EMMA_WASM_LIBRARY";
 
     private static readonly Lock Gate = new();
+    private static readonly List<string> Directories = [];
     private static bool registered;
+
+    /// <summary>Adds a directory searched for the native library before the default places.</summary>
+    /// <param name="directory">The directory.</param>
+    internal static void AddDirectory(string directory)
+    {
+        lock (Gate)
+        {
+            if (!Directories.Contains(directory, StringComparer.Ordinal))
+            {
+                Directories.Add(directory);
+            }
+        }
+    }
 
     /// <summary>Installs the resolver once for this assembly.</summary>
     internal static void EnsureRegistered()
@@ -56,6 +70,17 @@ internal static class NativeLibraryResolver
     private static IEnumerable<string> Candidates()
     {
         string file = LibraryFileName();
+        string[] configured;
+        lock (Gate)
+        {
+            configured = [.. Directories];
+        }
+
+        foreach (string directory in configured)
+        {
+            yield return Path.Combine(directory, file);
+        }
+
         string baseDirectory = AppContext.BaseDirectory;
         yield return Path.Combine(baseDirectory, file);
         yield return Path.Combine(baseDirectory, "runtimes", RuntimeInformation.RuntimeIdentifier, "native", file);

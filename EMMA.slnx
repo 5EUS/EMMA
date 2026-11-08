@@ -1,21 +1,28 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/EMMA.Api/EMMA.Api.csproj" />
+    <Project Path="src/EMMA.Api.Contracts/EMMA.Api.Contracts.csproj" />
     <Project Path="src/EMMA.Application/EMMA.Application.csproj" />
+    <Project Path="src/EMMA.Cli/EMMA.Cli.csproj" />
     <Project Path="src/EMMA.Contracts/EMMA.Contracts.csproj" />
     <Project Path="src/EMMA.Domain/EMMA.Domain.csproj" />
     <Project Path="src/EMMA.Infrastructure/EMMA.Infrastructure.csproj" />
+    <Project Path="src/EMMA.Native/EMMA.Native.csproj" />
     <Project Path="src/EMMA.PluginHost/EMMA.PluginHost.csproj" />
+    <Project Path="src/EMMA.Runtime/EMMA.Runtime.csproj" />
     <Project Path="src/EMMA.Storage/EMMA.Storage.csproj" />
     <Project Path="src/EMMA.WasmRuntime/EMMA.WasmRuntime.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/EMMA.Api.Tests/EMMA.Api.Tests.csproj" />
     <Project Path="tests/EMMA.Application.Tests/EMMA.Application.Tests.csproj" />
+    <Project Path="tests/EMMA.Cli.Tests/EMMA.Cli.Tests.csproj" />
     <Project Path="tests/EMMA.Domain.Tests/EMMA.Domain.Tests.csproj" />
     <Project Path="tests/EMMA.Infrastructure.Tests/EMMA.Infrastructure.Tests.csproj" />
+    <Project Path="tests/EMMA.Native.Tests/EMMA.Native.Tests.csproj" />
     <Project Path="tests/EMMA.PluginConformance/EMMA.PluginConformance.csproj" />
     <Project Path="tests/EMMA.PluginHost.Tests/EMMA.PluginHost.Tests.csproj" />
+    <Project Path="tests/EMMA.Runtime.Tests/EMMA.Runtime.Tests.csproj" />
     <Project Path="tests/EMMA.Storage.Tests/EMMA.Storage.Tests.csproj" />
     <Project Path="tests/EMMA.TestSupport/EMMA.TestSupport.csproj" />
     <Project Path="tests/EMMA.WasmRuntime.Tests/EMMA.WasmRuntime.Tests.csproj" />

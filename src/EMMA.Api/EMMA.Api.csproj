@@ -11,10 +11,8 @@
     <NativeArtifacts>$(MSBuildThisFileDirectory)../../artifacts/native/</NativeArtifacts>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="../EMMA.Application/EMMA.Application.csproj" />
-    <ProjectReference Include="../EMMA.Infrastructure/EMMA.Infrastructure.csproj" />
-    <ProjectReference Include="../EMMA.Storage/EMMA.Storage.csproj" />
-    <ProjectReference Include="../EMMA.PluginHost/EMMA.PluginHost.csproj" />
+    <ProjectReference Include="../EMMA.Runtime/EMMA.Runtime.csproj" />
+    <ProjectReference Include="../EMMA.Api.Contracts/EMMA.Api.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="$(AssemblyName).Tests" />

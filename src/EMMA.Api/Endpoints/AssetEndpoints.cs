@@ -6,6 +6,7 @@ using EMMA.Api.Http;
 using EMMA.Api.Mapping;
 using EMMA.Application.Pipelines;
 using EMMA.Domain;
+using EMMA.Runtime;
 
 using Microsoft.Extensions.Primitives;
 
@@ -38,11 +39,11 @@ internal static class AssetEndpoints
 
         Outcome<IReadOnlyList<Asset>> resolved = await assets.ResolveAsync(target.Value.Node, target.Value.Role, [], cancellationToken).ConfigureAwait(false);
         return resolved.IsSuccess
-            ? ApiResults.Ok(ToResponse(resolved.Value), ApiJsonContext.Default.AssetListResponse)
+            ? ApiResults.Ok(AssetMapper.ToResponse(resolved.Value), ApiJsonContext.Default.AssetListResponse)
             : ApiResults.Failure(resolved.Error);
     }
 
-    private static async Task<IResult> ContentAsync(HttpContext context, AssetPipeline assets, CancellationToken cancellationToken)
+    private static async Task<IResult> ContentAsync(HttpContext context, EmmaRuntime runtime, CancellationToken cancellationToken)
     {
         Outcome<(NodeRef Node, AssetRole Role)> target = ReadTarget(context.Request);
         Outcome<int> index = ReadIndex(context.Request);
@@ -51,43 +52,22 @@ internal static class AssetEndpoints
             return ApiResults.Failure((target.Error ?? index.Error)!);
         }
 
-        (NodeRef node, AssetRole role) = target.Value;
-        Outcome<IReadOnlyList<Asset>> resolved = await assets.ResolveAsync(node, role, [], cancellationToken).ConfigureAwait(false);
-        if (!resolved.IsSuccess)
+        Outcome<AssetBytes> content = await runtime
+            .ReadAssetAsync(target.Value.Node, target.Value.Role, index.Value, ReadRange(context.Request), cancellationToken)
+            .ConfigureAwait(false);
+        if (!content.IsSuccess)
         {
-            return ApiResults.Failure(resolved.Error);
+            return ApiResults.Failure(content.Error);
         }
 
-        if (index.Value >= resolved.Value.Count)
+        AssetBytes bytes = content.Value;
+        if (bytes.RangeNotSatisfiable)
         {
-            return ApiResults.Failure(ErrorCode.NotFound, "The node has no asset at that index.");
+            return ApiResults.Error(StatusCodes.Status416RangeNotSatisfiable, "range_not_satisfiable", "The range starts beyond the end of the asset.");
         }
 
-        Asset asset = resolved.Value[index.Value];
-        return asset.Delivery is ProxiedDelivery proxied && ReadRange(context.Request) is { } range
-            ? await RangeAsync(assets, node, asset, proxied, range, cancellationToken).ConfigureAwait(false)
-            : await WholeAsync(assets, node, role, asset, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task<IResult> WholeAsync(AssetPipeline assets, NodeRef node, AssetRole role, Asset asset, CancellationToken cancellationToken)
-    {
-        Outcome<AssetPayload> payload = await assets.GetPayloadAsync(node, role, asset, cancellationToken).ConfigureAwait(false);
-        return payload.IsSuccess
-            ? new AssetContentResult(payload.Value.Mime, payload.Value.Payload, range: null, acceptsRanges: asset.Delivery is ProxiedDelivery)
-            : ApiResults.Failure(payload.Error);
-    }
-
-    private static async Task<IResult> RangeAsync(AssetPipeline assets, NodeRef node, Asset asset, ProxiedDelivery proxied, ByteRange range, CancellationToken cancellationToken)
-    {
-        Outcome<Chunk> chunk = await assets.ReadRangeAsync(node, proxied, range, cancellationToken).ConfigureAwait(false);
-        if (!chunk.IsSuccess)
-        {
-            return ApiResults.Failure(chunk.Error);
-        }
-
-        return chunk.Value.Bytes.IsEmpty
-            ? ApiResults.Error(StatusCodes.Status416RangeNotSatisfiable, "range_not_satisfiable", "The range starts beyond the end of the asset.")
-            : new AssetContentResult(asset.Mime, chunk.Value.Bytes, new ContentRange(range.Start, chunk.Value.Total), acceptsRanges: true);
+        ContentRange? range = bytes.RangeStart is { } start ? new ContentRange(start, bytes.Total) : null;
+        return new AssetContentResult(bytes.Mime, bytes.Bytes, range, bytes.AcceptsRanges);
     }
 
     private static Outcome<(NodeRef Node, AssetRole Role)> ReadTarget(HttpRequest request)
@@ -137,19 +117,4 @@ internal static class AssetEndpoints
 
         return new ByteRange(start, item.To is { } last ? last - start + 1 : null);
     }
-
-    private static AssetListResponse ToResponse(IReadOnlyList<Asset> assets) => new(
-        [.. assets.Select((asset, index) => new AssetDto(
-            index,
-            asset.Mime,
-            asset.Size,
-            DeliveryName(asset.Delivery),
-            PropMapper.ToDtos(asset.Props)))]);
-
-    private static string DeliveryName(AssetDelivery delivery) => delivery switch
-    {
-        InlineDelivery => "inline",
-        RemoteDelivery => "remote",
-        _ => "proxied",
-    };
 }

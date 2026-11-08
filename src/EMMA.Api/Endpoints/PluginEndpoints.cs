@@ -4,6 +4,7 @@ using EMMA.Api.Mapping;
 using EMMA.Application.Pipelines;
 using EMMA.Application.Ports;
 using EMMA.Domain;
+using EMMA.Runtime;
 
 namespace EMMA.Api.Endpoints;
 
@@ -28,11 +29,7 @@ internal static class PluginEndpoints
             ApiJsonContext.Default.PluginListResponse);
     }
 
-    private static async Task<IResult> DetailAsync(
-        string plugin,
-        IPluginRegistryPort registry,
-        CatalogPipeline catalog,
-        CancellationToken cancellationToken)
+    private static async Task<IResult> DetailAsync(string plugin, EmmaRuntime runtime, CancellationToken cancellationToken)
     {
         Outcome<PluginId> id = RequestReader.Plugin(plugin);
         if (!id.IsSuccess)
@@ -40,25 +37,10 @@ internal static class PluginEndpoints
             return ApiResults.Failure(id.Error);
         }
 
-        InstalledPlugin? installed = await registry.GetAsync(id.Value, cancellationToken).ConfigureAwait(false);
-        if (installed is null)
-        {
-            return ApiResults.Failure(ErrorCode.NotFound, "That plugin is not installed.");
-        }
-
-        PluginInfo? info = null;
-        if (installed.Status == PluginStatus.Enabled)
-        {
-            Outcome<PluginInfo> described = await catalog.DescribeAsync(id.Value, cancellationToken).ConfigureAwait(false);
-            if (!described.IsSuccess)
-            {
-                return ApiResults.Failure(described.Error);
-            }
-
-            info = described.Value;
-        }
-
-        return ApiResults.Ok(PluginMapper.ToDetail(installed, info), ApiJsonContext.Default.PluginDetailResponse);
+        Outcome<PluginDetail> detail = await runtime.DescribePluginAsync(id.Value, cancellationToken).ConfigureAwait(false);
+        return detail.IsSuccess
+            ? ApiResults.Ok(PluginMapper.ToDetail(detail.Value.Plugin, detail.Value.Info), ApiJsonContext.Default.PluginDetailResponse)
+            : ApiResults.Failure(detail.Error);
     }
 
     private static async Task<IResult> BrowseAsync(

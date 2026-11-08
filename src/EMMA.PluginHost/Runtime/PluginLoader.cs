@@ -45,7 +45,8 @@ public sealed class PluginLoader(
 
         if (installed.Status != PluginStatus.Enabled)
         {
-            return Refuse(ErrorCode.Unavailable, $"Plugin '{id}' is {installed.Status}.");
+            // Not transient: retrying a disabled or quarantined plugin cannot succeed, so the caller must not wait and retry.
+            return Refuse(ErrorCode.Unsupported, $"Plugin '{id}' is {installed.Status}.");
         }
 
         Outcome<PluginManifest> manifest = await this.VerifiedManifestAsync(installed, cancellationToken).ConfigureAwait(false);

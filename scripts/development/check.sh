@@ -28,6 +28,10 @@ dotnet build -c Release --no-restore
 dotnet test -c Release --no-build
 dotnet list package --vulnerable --include-transitive
 
+# Publishes the native library with NativeAOT and drives it from a C program. Slow and memory-hungry, so it comes last
+# among the builds; skips itself without a C compiler or off Linux and macOS.
+sh scripts/development/native-smoke.sh
+
 # Duplicate detection needs PMD (and Java); CI always runs it, locally it is optional.
 if command -v pmd >/dev/null 2>&1; then
   sh scripts/development/cpd.sh

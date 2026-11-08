@@ -64,13 +64,13 @@ internal sealed class ApiTestServer : IAsyncDisposable
             root,
             perClientPermits,
             [],
-            services =>
+            options => options with
             {
-                services.AddSingleton<IPluginGateway>(gateway);
-                services.AddSingleton<IAssetFetcherPort>(fetcher);
+                GatewayOverride = gateway,
+                FetcherOverride = fetcher,
 
                 // One attempt, so a failing fake answers at once instead of after the retry delays.
-                services.AddSingleton(new PluginCallOptions(1, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.FromSeconds(30)));
+                CallOptions = new PluginCallOptions(1, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.FromSeconds(30)),
             }).ConfigureAwait(false);
         if (installPlugin)
         {
@@ -99,7 +99,7 @@ internal sealed class ApiTestServer : IAsyncDisposable
                 $"--Emma:Trust:Repositories:0:Id={TestPki.RepositoryId}",
                 $"--Emma:Trust:Repositories:0:RootKeys:{TestPki.RootKeyId}={TestPki.Root.PublicPem}",
             ],
-            services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(TestPki.Now))).ConfigureAwait(false);
+            options => options with { Time = new FakeTimeProvider(TestPki.Now) }).ConfigureAwait(false);
         return new ApiTestServer(app, root, new FakePluginGateway(), new FakeAssetFetcher(TimeProvider.System));
     }
 
@@ -200,7 +200,7 @@ internal sealed class ApiTestServer : IAsyncDisposable
 
     private static string NewRoot() => Path.Combine(Path.GetTempPath(), "emma-api-tests", Guid.NewGuid().ToString("N"));
 
-    private static async Task<WebApplication> BuildAsync(string root, int perClientPermits, string[] extraArgs, Action<IServiceCollection> configure)
+    private static async Task<WebApplication> BuildAsync(string root, int perClientPermits, string[] extraArgs, Func<EMMA.Runtime.EmmaRuntimeOptions, EMMA.Runtime.EmmaRuntimeOptions> configure)
     {
         string[] args =
         [

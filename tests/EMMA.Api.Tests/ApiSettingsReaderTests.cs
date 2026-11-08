@@ -22,7 +22,7 @@ public sealed class ApiSettingsReaderTests
         Assert.Empty(settings.Security.Keys);
         Assert.Equal("x-api-key", settings.Security.KeyHeader);
         Assert.Equal(RateLimitSettings.Default, settings.Security.RateLimit);
-        Assert.EndsWith("emma.db", settings.DatabasePath, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrWhiteSpace(settings.DataDirectory));
     }
 
     /// <summary>Keys, limits and trust are read, and derived paths sit under the data directory.</summary>
@@ -44,7 +44,7 @@ public sealed class ApiSettingsReaderTests
         Assert.Equal(5, settings.Security.RateLimit.PerClientPermits);
         Assert.Equal(TimeSpan.FromSeconds(10), settings.Security.RateLimit.PerClientWindow);
         Assert.Equal("main", Assert.Single(settings.Trust.Repositories).Id);
-        Assert.Equal(Path.GetFullPath("/var/lib/emma/plugins"), settings.InstallRoot);
+        Assert.Equal(Path.GetFullPath("/var/lib/emma"), settings.DataDirectory);
     }
 
     /// <summary>Turning signature checks off is refused outside development, so an environment variable cannot do it in production.</summary>

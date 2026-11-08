@@ -40,14 +40,15 @@ public static class TestPackages
     /// <param name="id">The plugin id to install it under.</param>
     /// <param name="sign">Whether to sign the manifest with the test signer.</param>
     /// <param name="adjust">Changes the manifest before it is signed.</param>
+    /// <param name="signedAt">The moment to sign at, for hosts that read the real clock; defaults to the test PKI's fixed moment.</param>
     /// <returns>The archive bytes.</returns>
-    public static async Task<byte[]> FixtureAsync(string fixture, string id, bool sign = true, Func<PluginManifest, PluginManifest>? adjust = null)
+    public static async Task<byte[]> FixtureAsync(string fixture, string id, bool sign = true, Func<PluginManifest, PluginManifest>? adjust = null, DateTimeOffset? signedAt = null)
     {
         byte[] component = await File.ReadAllBytesAsync(NativeArtifacts.Plugin(fixture)).ConfigureAwait(false);
         PluginManifest manifest = Manifest(component, id, sign: false);
         manifest = manifest with { Kinds = [], Permissions = manifest.Permissions with { Network = [] } };
         manifest = adjust?.Invoke(manifest) ?? manifest;
-        return Standard(sign ? TestPki.Sign(manifest) : manifest, component);
+        return Standard(sign ? Sign(manifest, signedAt) : manifest, component);
     }
 
     /// <summary>Builds a well-formed package: the manifest and the entrypoint.</summary>
@@ -98,4 +99,9 @@ public static class TestPackages
 
         return stream.ToArray();
     }
+
+    private static PluginManifest Sign(PluginManifest manifest, DateTimeOffset? signedAt) =>
+        signedAt is { } moment
+            ? TestPki.Sign(manifest, issuedAt: moment.AddHours(-1), expiresAt: moment.AddDays(7))
+            : TestPki.Sign(manifest);
 }

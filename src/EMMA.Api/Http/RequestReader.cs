@@ -1,8 +1,8 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
+using EMMA.Api.Contracts;
 using EMMA.Domain;
 
 using Microsoft.Extensions.Primitives;
@@ -18,10 +18,7 @@ internal static class RequestReader
     /// <summary>Reads a plugin id from a route value.</summary>
     /// <param name="text">The value.</param>
     /// <returns>The id, or why it is invalid.</returns>
-    public static Outcome<PluginId> Plugin(string? text) =>
-        PluginId.TryCreate(text, out PluginId id)
-            ? Outcome.Success(id)
-            : Outcome.Failure<PluginId>(ErrorCode.InvalidArgument, "The plugin id is not valid.");
+    public static Outcome<PluginId> Plugin(string? text) => RequestParsing.Plugin(text);
 
     /// <summary>Reads exactly one node reference from a query parameter.</summary>
     /// <param name="request">The request.</param>
@@ -30,57 +27,29 @@ internal static class RequestReader
     public static Outcome<NodeRef> Node(HttpRequest request, string name)
     {
         StringValues values = request.Query[name];
-        return values.Count == 1 && NodeRef.TryParse(values[0], out NodeRef reference)
-            ? Outcome.Success(reference)
-            : Outcome.Failure<NodeRef>(ErrorCode.InvalidArgument, $"'{name}' must be one node reference such as 'com.example.plugin:abc'.");
+        return RequestParsing.Node(values.Count == 1 ? values[0] : null, name);
     }
 
     /// <summary>Reads one or more node references from a repeated query parameter.</summary>
     /// <param name="request">The request.</param>
     /// <param name="name">The parameter name.</param>
     /// <returns>The references, or why one is invalid.</returns>
-    public static Outcome<IReadOnlyList<NodeRef>> Nodes(HttpRequest request, string name)
-    {
-        StringValues values = request.Query[name];
-        if (values.Count is 0 or > ContractLimits.MaxIdsPerGet)
-        {
-            return Outcome.Failure<IReadOnlyList<NodeRef>>(
-                ErrorCode.InvalidArgument,
-                $"Give between 1 and {ContractLimits.MaxIdsPerGet} '{name}' parameters.");
-        }
-
-        List<NodeRef> references = [];
-        foreach (string? value in values)
-        {
-            if (!NodeRef.TryParse(value, out NodeRef reference))
-            {
-                return Outcome.Failure<IReadOnlyList<NodeRef>>(ErrorCode.InvalidArgument, $"'{name}' holds an invalid node reference.");
-            }
-
-            references.Add(reference);
-        }
-
-        return Outcome.Success<IReadOnlyList<NodeRef>>(references);
-    }
+    public static Outcome<IReadOnlyList<NodeRef>> Nodes(HttpRequest request, string name) =>
+        RequestParsing.Nodes([.. request.Query[name]], name);
 
     /// <summary>Reads the <c>cursor</c> and <c>limit</c> parameters.</summary>
     /// <param name="request">The request.</param>
     /// <returns>The page request, or why a parameter is invalid.</returns>
     public static Outcome<PageRequest> Page(HttpRequest request)
     {
-        string? cursor = request.Query["cursor"].Count == 1 ? request.Query["cursor"][0] : null;
-        if (request.Query["cursor"].Count > 1 || (cursor is not null && !ValidCursor(cursor)))
-        {
-            return Outcome.Failure<PageRequest>(ErrorCode.InvalidArgument, "'cursor' is not valid.");
-        }
-
+        StringValues cursor = request.Query["cursor"];
         Outcome<int?> limit = Limit(request, ContractLimits.MaxNodesPerPage);
-        if (!limit.IsSuccess)
+        if (cursor.Count > 1 || !limit.IsSuccess)
         {
-            return Outcome.Failure<PageRequest>(limit.Error);
+            return Outcome.Failure<PageRequest>(limit.Error ?? new PluginError(ErrorCode.InvalidArgument, "'cursor' is not valid."));
         }
 
-        return Outcome.Success(new PageRequest(string.IsNullOrEmpty(cursor) ? null : cursor, limit.Value));
+        return RequestParsing.Page(cursor.Count == 1 ? cursor[0] : null, limit.Value);
     }
 
     /// <summary>Reads the optional <c>limit</c> parameter.</summary>
@@ -148,6 +117,4 @@ internal static class RequestReader
             return Outcome.Failure<T>(ErrorCode.InvalidArgument, "The body is too large or could not be read.");
         }
     }
-
-    private static bool ValidCursor(string cursor) => Encoding.UTF8.GetByteCount(cursor) <= ContractLimits.MaxCursorBytes;
 }

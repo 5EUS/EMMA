@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The `emma` command-line tool: manage installed plugins, package and sign them, scaffold a new one, and run a
+    plugin in a throwaway host to see what EMMA would make of it. main's CLI was a 3,000-line plugin-dev
+    server; this one is deliberately small because the pipelines already do the work.
+
+    TODO(rewrite): the trust configuration (<data>/config.json here) and the API's (Emma:Trust in its
+    configuration) are separate sources. Make the API read the same file if having both turns out to be a chore.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>emma</AssemblyName>
+    <RootNamespace>EMMA.Cli</RootNamespace>
+    <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;win-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <PublishAot>true</PublishAot>
+    <NativeArtifacts>$(MSBuildThisFileDirectory)../../artifacts/native/</NativeArtifacts>
+    <TemplateDirectory>$(MSBuildThisFileDirectory)../../native/templates/rust-plugin/</TemplateDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../EMMA.Runtime/EMMA.Runtime.csproj" />
+    <ProjectReference Include="../EMMA.Api.Contracts/EMMA.Api.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="EMMA.Cli.Tests" />
+  </ItemGroup>
+  <!--
+    The plugin template and the contract are compiled into the tool, so `emma plugin new` needs nothing on disk
+    and always scaffolds against the contract this build understands.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(TemplateDirectory)**"
+                      Exclude="$(TemplateDirectory)target/**;$(TemplateDirectory)wit/**;$(TemplateDirectory)dist/**;$(TemplateDirectory)plugin.wasm"
+                      LogicalName="template/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../EMMA.Contracts/wit/*.wit" LogicalName="wit/%(Filename)%(Extension)" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(NativeArtifacts)lib/*" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+</Project>

@@ -3,6 +3,8 @@ using EMMA.Api.Configuration;
 using EMMA.Api.Endpoints;
 using EMMA.Api.Http;
 using EMMA.Api.Security;
+using EMMA.Domain;
+using EMMA.Runtime;
 
 namespace EMMA.Api;
 
@@ -14,12 +16,12 @@ internal static class ApiHost
 
     /// <summary>Builds the host and prepares it to serve. The caller starts it.</summary>
     /// <param name="args">The command-line arguments, which configuration may read.</param>
-    /// <param name="configureServices">Replaces registrations after the defaults; used by tests to swap a port.</param>
+    /// <param name="configureRuntime">Adjusts the runtime's options; used by tests to swap a port.</param>
     /// <param name="cancellationToken">Cancels the preparation.</param>
     /// <returns>The built application.</returns>
     public static async Task<WebApplication> BuildAsync(
         string[] args,
-        Action<IServiceCollection>? configureServices = null,
+        Func<EmmaRuntimeOptions, EmmaRuntimeOptions>? configureRuntime = null,
         CancellationToken cancellationToken = default)
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(args);
@@ -30,12 +32,15 @@ internal static class ApiHost
             server.AddServerHeader = false;
             server.Limits.MaxRequestBodySize = MaxRequestBodyBytes;
         });
-        builder.Services.AddEmma(settings);
+        builder.Services.AddEmma(settings, configureRuntime);
         builder.Services.AddRateLimiter(limiter => RateLimiting.Configure(limiter, settings.Security.RateLimit));
-        configureServices?.Invoke(builder.Services);
 
         WebApplication app = builder.Build();
-        await app.Services.GetRequiredService<HostInitializer>().InitializeAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<PluginId> quarantined = await app.Services.GetRequiredService<EmmaRuntime>().InitializeAsync(cancellationToken).ConfigureAwait(false);
+        foreach (PluginId plugin in quarantined)
+        {
+            app.Logger.LogError("Quarantined plugin {Plugin}: its stored manifest cannot be read.", plugin.Value);
+        }
 
         // Order matters: failures become JSON, then the caller is identified, and only then are they rate-limited.
         app.UseExceptionHandler(failure => failure.Run(context =>
