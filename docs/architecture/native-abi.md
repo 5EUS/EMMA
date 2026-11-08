@@ -21,8 +21,10 @@ the design and lists every operation.
 - **Ownership.** Every `EmmaBuffer` returned is the caller's; release it with `emma_buffer_free(buffer.data)`. Requests
   are copied before the call returns, so the caller may free its memory at once.
 - **Blocking and async.** `emma_call` blocks the calling (foreign) thread; use it from a background isolate or thread.
-  `emma_call_async` returns at once and delivers the answer to a callback, once, on another thread; the callback owns
-  the buffers. In Dart, the async form pairs with `NativeCallable.listener`.
+  `emma_call_async` returns at once and delivers the answer to a callback, once, on another thread. The callback
+  receives the JSON and the binary content as `(pointer, length)` pairs by value, pointing at heap memory it now owns and
+  frees with `emma_buffer_free`; nothing points at the library's stack, so the values can be handed to another thread
+  (a Dart `NativeCallable.listener` runs later on the event loop and needs exactly that). In Dart, the async form pairs with `NativeCallable.listener`.
 - **One user per handle.** A handle belongs to the `user` in its configuration, and progress and library are always that
   user's. There is no way to name another.
 - **The caller is trusted.** Unlike the HTTP API, the library exposes plugin installation, switching and removal

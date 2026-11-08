@@ -70,14 +70,16 @@ typedef struct {
     EmmaBuffer json;
 } Waiter;
 
-static void on_done(intptr_t user_data, int32_t status, const EmmaBuffer *json, const EmmaBuffer *blob) {
+static void on_done(intptr_t user_data, int32_t status, uint8_t *json, size_t json_length, uint8_t *blob, size_t blob_length) {
+    (void)blob_length;
     Waiter *waiter = (Waiter *)user_data;
-    p_free(blob->data);
+    p_free(blob);
 #ifndef _WIN32
     pthread_mutex_lock(&waiter->lock);
 #endif
     waiter->status = status;
-    waiter->json = *json; /* ownership moves to the waiter */
+    waiter->json.data = json; /* ownership moves to the waiter */
+    waiter->json.length = json_length;
     waiter->finished = 1;
 #ifndef _WIN32
     pthread_cond_signal(&waiter->done);

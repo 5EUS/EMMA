@@ -72,10 +72,15 @@ int32_t emma_call(EmmaRuntime runtime, const uint8_t *operation, size_t operatio
 
 /*
  * Starts an operation and returns at once. Returns EMMA_OK when started; the callback is then called exactly once,
- * from another thread, with user_data, the status and two buffers that the callback now owns and must free.
+ * from another thread, with user_data, the status, and the JSON envelope and binary content as (pointer, length)
+ * pairs. The callback now owns both pointers and must free each non-NULL one with emma_buffer_free.
  * If the return is not EMMA_OK the callback is never called. request is copied before this returns.
+ *
+ * Everything is passed by value and points at heap memory, never at the library's stack, so the callback may
+ * hand the values to another thread and read them later. A Dart NativeCallable.listener does exactly that.
  */
-typedef void (*EmmaCallback)(intptr_t user_data, int32_t status, const EmmaBuffer *json, const EmmaBuffer *blob);
+typedef void (*EmmaCallback)(intptr_t user_data, int32_t status, uint8_t *json, size_t json_length, uint8_t *blob,
+                             size_t blob_length);
 
 int32_t emma_call_async(EmmaRuntime runtime, const uint8_t *operation, size_t operation_length,
                         const uint8_t *request, size_t request_length, EmmaCallback callback, intptr_t user_data);

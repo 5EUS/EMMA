@@ -102,7 +102,7 @@ internal static class NativeExports
     /// <param name="operationLength">Its length.</param>
     /// <param name="request">The UTF-8 JSON request. It is copied; the caller may free it on return.</param>
     /// <param name="requestLength">Its length; zero means <c>{}</c>.</param>
-    /// <param name="callback">Called once with the user data, the status and two buffers the callback owns and must free.</param>
+    /// <param name="callback">Called once with the user data, the status, and the JSON and binary content as pointer and length pairs the callback owns and must free.</param>
     /// <param name="userData">Passed back to the callback untouched.</param>
     /// <returns>Zero when the call was started; otherwise the callback is never called.</returns>
     [UnmanagedCallersOnly(EntryPoint = "emma_call_async", CallConvs = [typeof(CallConvCdecl)])]
@@ -112,7 +112,7 @@ internal static class NativeExports
         nuint operationLength,
         byte* request,
         nuint requestLength,
-        delegate* unmanaged[Cdecl]<nint, int, NativeBuffer*, NativeBuffer*, void> callback,
+        delegate* unmanaged[Cdecl]<nint, int, byte*, nuint, byte*, nuint, void> callback,
         nint userData)
     {
         if (callback is null)
@@ -145,10 +145,11 @@ internal static class NativeExports
 
     private static unsafe void Deliver(nint function, nint userData, int status, NativeResponse response)
     {
-        NativeBuffer json = default;
-        NativeBuffer blob = default;
-        Fill(&json, &blob, response);
-        ((delegate* unmanaged[Cdecl]<nint, int, NativeBuffer*, NativeBuffer*, void>)function)(userData, status, &json, &blob);
+        NativeBuffer json = NativeBuffer.Copy(response.Json);
+        NativeBuffer blob = response.Blob is null ? default : NativeBuffer.Copy(response.Blob);
+
+        // By value, pointing at heap memory the callback now owns: nothing refers to this stack frame once the callback returns.
+        ((delegate* unmanaged[Cdecl]<nint, int, byte*, nuint, byte*, nuint, void>)function)(userData, status, json.Data, json.Length, blob.Data, blob.Length);
     }
 
     private static unsafe void Fill(NativeBuffer* json, NativeBuffer* blob, NativeResponse response)
