@@ -394,6 +394,7 @@ dotnet_naming_style.s_camelcase.capitalization = camel_case
 # Random rules
 
 dotnet_diagnostic.IDE0005.severity = error
+dotnet_diagnostic.IDE1006.severity = none
 
 
 #### Strict additions ####
