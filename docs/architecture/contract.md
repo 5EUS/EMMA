@@ -240,9 +240,12 @@ These live in `EMMA.Domain` / `EMMA.Application` and are never seen by plugins.
 - **Downloads** are a job over `(NodeRef, role, hints)`: the host walks `children` down to
   nodes whose kind declares the role, resolves each, and stores the assets. One executor, no
   paged or video branch.
-- **Storage** is a `nodes` table keyed `(plugin_id, local_id)` with `kind`, `title`,
-  `parent_local_id`, `thumbnail` and `props` (serialized by a source-generated JSON context),
-  plus an `assets` cache table and a `progress` table. Schema is phase 3.
+- **Storage** (built in phase 3, SQLite with STRICT tables): `nodes` keyed `(plugin_id, local_id)`
+  with `kind`, `title`, `parent_local_id`, `thumbnail` and `props` (typed JSON through a
+  source-generated context); `progress` and `library` keyed by user plus the same pair;
+  `download_jobs`. Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no assets table
+  (asset bytes live in the bounded cache) and no foreign key from user state to `nodes`: nodes are
+  a cache that may be purged, while progress and library entries must survive that.
 - All timestamps come from an injected `IClock`; plugins use `host.now-ms`.
 
 ## 9. Limits the host enforces

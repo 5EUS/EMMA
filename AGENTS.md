@@ -60,6 +60,13 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
   `CS9124`, so inject the finished object instead (see `PluginCallExecutor`).
 - **Tests:** use `.ConfigureAwait(true)` in test methods; it satisfies both `CA2007` and
   xUnit's `xUnit1030`.
+- **No raw string literals (`"""`) in C#.** PMD's C# lexer cannot parse them: CPD reports
+  `Lexical error` and skips the file (exit 5), which silently hides duplicates. Use verbatim
+  strings (`@"..."`) for multi-line text.
+- **SQL:** statements are constants (never built from input) and values go in as
+  parameters. `SqliteDatabase` is the only code that sets `CommandText` (its single `CA2100`
+  pragma relies on this). Migrations are scripts under `src/EMMA.Storage/Sql/`; never edit
+  a released one, add the next number and register it in `Migrations.cs`.
 - **Hashing:** no MD5 or SHA1.
 - **Style:** StyleCop is enforced. Public and internal members need XML docs;
   `using` directives go outside the namespace, `System` first; files end with a newline.
