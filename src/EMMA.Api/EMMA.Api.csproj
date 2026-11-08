@@ -8,9 +8,10 @@
     Microsoft.DotNet.ILCompiler 10.0.12, which has GHSA-p3jp-9v83-76w9 (CVE-2026-111497,
     Brotli decoder out-of-bounds write); fixed in 10.0.14. Pinning the package directly
     does not work: the SDK requires the compiler to match its own runtime pack and the
-    publish fails. The real fix is installing a patched SDK (runtime 10.0.14, e.g.
-    10.0.403 / the matching 1xx band release) and bumping global.json, then deleting
-    this item. Do the same for any other project that sets PublishAot.
+    publish fails. The real fix is SDK 10.0.114 (same 1xx band, bundles runtime 10.0.14;
+    as of 2026-11-07 Arch's dotnet-sdk package is still 10.0.12.sdk112): install it,
+    set global.json to 10.0.114, then delete this item. Do the same for any other
+    project that sets PublishAot.
   -->
   <ItemGroup>
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-p3jp-9v83-76w9" />
