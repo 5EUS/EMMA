@@ -220,7 +220,7 @@ public static class ManifestParser
         string path = fields.RequireString("path", ManifestRules.MaxPathLength);
         if (!ManifestRules.IsEntrypointPath(path))
         {
-            fields.Reject("path", "must be a safe relative path ending in .wasm or .cwasm");
+            fields.Reject("path", "must be a safe relative path ending in .wasm");
         }
 
         string sha256 = fields.RequireString("sha256", 64);

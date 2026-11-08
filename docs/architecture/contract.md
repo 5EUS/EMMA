@@ -263,29 +263,30 @@ The numbers are proposals to be fixed in phase 4.
 | inline asset | 1 MiB |
 | nodes of an undeclared `kind` | rejected |
 
-## 10. Risks to check early
+## 10. Risks, and how phase 5 settled them
 
-These are things I could not settle on paper. Each gets a time-boxed spike before the phase
-that depends on it.
+Each was checked against the real host (`native/emma-wasm`, wasmtime 50) with a test that stays
+in the suite.
 
-1. **Optional export probing (phase 5).** The design relies on the host instantiating a
-   component and detecting `search-assist` by export name, using bindings generated for the
-   base world. Needs a spike with wasmtime 34 `component::bindgen!`. The fallback is
-   generating bindings for each world and trying them in order.
-2. **Semver matching of interface ids (phase 5).** Plugins built against `@1.0.0` must run
-   on a host built against `@1.0.x`. Confirm wasmtime resolves compatible versions for
-   exports as it does for imports.
-3. **`host.http-fetch` is a blocking call from the guest's view.** CPU budgeting must not
-   count time spent waiting inside the host, and each call needs its own timeout. Needs
-   design in phase 5.
-4. **Large `list<u8>` copies.** `inline` and `read` copy across the boundary. That is fine
-   for the intended sizes and is why `remote` is preferred; measure once a real plugin exists.
-5. **Extension packs in separate WIT packages.** `search-assist` lives inside
-   `emma:core` for now because separate packages need dependency vendoring. Revisit when a
-   second, independently versioned pack appears.
-6. **No WIT toolchain validator beyond `wit-bindgen`.** `wasm-tools` is not installed here;
-   `wit-bindgen` parses and type-checks, which is enough for phase 1. CI in phase 5 should
-   use `wasm-tools component wit`.
+1. **Optional export probing: works.** The host generates bindings for the base world only and
+   finds `search-assist` through `get_export_index` on the instance. Plugins built for the base
+   world and for `plugin-search-assist` both load, `suggest`/`enrich` return `unsupported` when
+   the export is absent, and the probe works across patch versions too
+   (`optional_search_assist_is_detected_and_used_when_present_and_unsupported_when_absent` in `tests/plugin.rs`, `PluginLoadingTests`).
+2. **Semver matching of interface ids: works.** A plugin built against `emma:core@1.0.1` loads on
+   a host built against `@1.0.0` (imports and exports both resolve by compatible version).
+   The fixture `fixture-newer-patch` is built for this and tested on both sides.
+3. **`host.http-fetch` blocks the guest: budgeted.** CPU is metered by epoch interruption in
+   10 ms ticks; time spent inside a host call is added back, so waiting on the network does not
+   spend the plugin's CPU budget. Every call has its own timeout and an overall wall-clock limit
+   (`limits.callTimeoutMs`, default 60 s). Tested with a slow local server.
+4. **Large `list<u8>` copies: bounded, not yet measured.** `read` returns its bytes in a separate
+   binary buffer, not JSON, and a 5 MiB read round-trips intact. The numbers for real plugins
+   come once more of them exist.
+5. **Extension packs in separate WIT packages.** Unchanged: `search-assist` stays inside
+   `emma:core` until a second independently versioned pack appears.
+6. **WIT validation.** `wit-bindgen` and the wasmtime `bindgen!` macro both parse and type-check
+   the files on every build, which has been enough. `wasm-tools component wit` is not wired in.
 
 ## 11. Decisions and open questions
 
@@ -298,7 +299,9 @@ Decided by the owner (2026-11-07):
    behavior, with `search-assist` as the working example. Revisit if a media type ever needs
    a call that `children`/`resolve` cannot express.
 2. **Settings and secrets stay in v1** (`host.setting`, `setting-spec`). Records are frozen,
-   so adding them later would be a major version.
+   so adding them later would be a major version. In phase 5 (2026-11-07) the owner chose to
+   extend the base contract while it is still unreleased, so settings are typed; see
+   "Typed settings" below.
 3. **`proxied` assets and `read` stay in v1**, as the escape for content only the plugin can
    read.
 4. **Landing pages are `children(none)`**; plugin landing templates, titles and subtitles
@@ -309,3 +312,26 @@ Still open (small; defaults apply unless changed):
 5. **Facets in search results.** Kept as an optional list in `node-page`. Drop if no plugin
    will provide them.
 6. **Rating scale.** `emma.rating` is 0 to 10 as a number (`main` used a string).
+
+## 12. Typed settings
+
+`setting-spec` declares one user setting; the host renders a settings screen from
+`plugin-info.categories` and `plugin-info.settings` and validates values against them
+(`PluginInfoValidator`). Values reach the plugin as **text**, whatever the type:
+
+| `setting-type` | Value |
+| --- | --- |
+| `text` | the text, at most `max-length` characters |
+| `secret` | text the host stores encrypted, never logs, exports or shows back; read in clear through `host.setting` and nowhere else |
+| `boolean` | `true` or `false` |
+| `number` | decimal text with `.` as the separator |
+| `duration` | whole milliseconds |
+| `choice` | the chosen `choice.value` |
+| `multi-choice` | zero or more `choice.value`s, read with `host.setting-values` (`host.setting` returns the first) |
+
+`visible-when` hides a setting while another setting does not have a given value; hidden
+settings are still readable by the plugin. `required` marks a setting the plugin cannot work
+without. Defaults are text values in `default-values`.
+
+Not built yet: the store for the user's values and the encryption of secrets. The host reads
+them through `IPluginSettingsPort`, so the plugin side is complete and tested.

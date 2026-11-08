@@ -72,6 +72,12 @@
       },
       "emma.domain": {
         "type": "Project"
+      },
+      "emma.wasmruntime": {
+        "type": "Project",
+        "dependencies": {
+          "EMMA.Domain": "[1.0.0, )"
+        }
       }
     }
   }

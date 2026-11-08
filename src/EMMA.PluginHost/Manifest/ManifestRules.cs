@@ -55,10 +55,9 @@ internal static partial class ManifestRules
 
     /// <summary>Checks that an entrypoint path names a component file.</summary>
     /// <param name="value">The path.</param>
-    /// <returns><see langword="true"/> when the path is safe and ends in <c>.wasm</c> or <c>.cwasm</c>.</returns>
+    /// <returns><see langword="true"/> when the path is safe and ends in <c>.wasm</c>. Precompiled <c>.cwasm</c> files are machine code the signature cannot vouch for, so the host makes its own and packages never carry one.</returns>
     public static bool IsEntrypointPath(string value) =>
-        IsSafeRelativePath(value)
-        && (value.EndsWith(".wasm", StringComparison.Ordinal) || value.EndsWith(".cwasm", StringComparison.Ordinal));
+        IsSafeRelativePath(value) && value.EndsWith(".wasm", StringComparison.Ordinal);
 
     [GeneratedRegex("^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 250)]
     private static partial Regex SemVer();

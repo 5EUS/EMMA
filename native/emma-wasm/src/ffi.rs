@@ -239,6 +239,9 @@ pub unsafe extern "C" fn emma_plugin_open(
                 format!("the plugin configuration is not valid: {e}"),
             )
         })?;
+        config
+            .validate()
+            .map_err(|message| (EMMA_ERR_ARGUMENT, message))?;
         // SAFETY: `runtime` was checked non-null and is live per the contract.
         let plugin = unsafe { &*runtime }
             .open(&config)

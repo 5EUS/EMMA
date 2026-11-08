@@ -16,5 +16,6 @@
     <Project Path="tests/EMMA.PluginHost.Tests/EMMA.PluginHost.Tests.csproj" />
     <Project Path="tests/EMMA.Storage.Tests/EMMA.Storage.Tests.csproj" />
     <Project Path="tests/EMMA.TestSupport/EMMA.TestSupport.csproj" />
+    <Project Path="tests/EMMA.WasmRuntime.Tests/EMMA.WasmRuntime.Tests.csproj" />
   </Folder>
 </Solution>

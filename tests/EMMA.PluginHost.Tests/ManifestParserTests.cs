@@ -67,6 +67,7 @@ public sealed class ManifestParserTests
     [InlineData("\"path\": \"plugin.wasm\"", "\"path\": \"a\\\\b.wasm\"", "$.entrypoint.path")]
     [InlineData("\"path\": \"plugin.wasm\"", "\"path\": \"C:/b.wasm\"", "$.entrypoint.path")]
     [InlineData("\"path\": \"plugin.wasm\"", "\"path\": \"plugin.exe\"", "$.entrypoint.path")]
+    [InlineData("\"path\": \"plugin.wasm\"", "\"path\": \"plugin.cwasm\"", "$.entrypoint.path")]
     [InlineData("\"path\": \"plugin.wasm\"", "\"path\": \"a//b.wasm\"", "$.entrypoint.path")]
     [InlineData("\"api.example.com\"", "\"API.example.com\"", "$.permissions.network")]
     [InlineData("\"api.example.com\"", "\"*\"", "$.permissions.network")]

@@ -11,6 +11,10 @@
     <ProjectReference Include="../../src/EMMA.Domain/EMMA.Domain.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Shared with the Rust host (native/emma-wasm), so both sides of the network allow-list agree. -->
+    <None Include="../../native/emma-wasm/tests/vectors/network-policy.json" Link="vectors/network-policy.json" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />

@@ -8,11 +8,23 @@
     - The repository catalog client, service and store (browsing and downloading plugins from a
       remote repository over HTTP). Install here takes a package stream and the repository id
       from the caller; the HTTP side belongs with the host and CLI (phase 8).
-    - Failure counting and quarantine thresholds. PluginStatus.Quarantined exists and the
-      installer can set it; deciding when to quarantine belongs with the Wasm host (phase 5).
+  -->
+  <!--
+    TODO(rewrite): PluginLoader hashes the entrypoint and then the native host opens it by path, so a
+    process that can write to the install directory could swap the file in between. The install
+    directory is owned by the host user, so such a process already owns the user, but the clean fix
+    is an open-from-bytes call in the native ABI. Do that if plugins ever install somewhere shared.
+  -->
+  <!--
+    TODO(rewrite): the host recompiles a component every time a plugin is opened. A .cwasm cache would
+    make that fast (and matters on iOS, where only precompiled code can run), but a cached .cwasm is
+    machine code the signature does not cover. Decide the integrity story (for example a MAC keyed by a
+    per-install secret, or recompiling when the install directory is not private) before adding one.
+    WasmRuntimeHost.Precompile and the precompiled open flag already exist and are tested.
   -->
   <ItemGroup>
     <ProjectReference Include="../EMMA.Application/EMMA.Application.csproj" />
+    <ProjectReference Include="../EMMA.WasmRuntime/EMMA.WasmRuntime.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="$(AssemblyName).Tests" />

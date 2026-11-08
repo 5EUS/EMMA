@@ -82,7 +82,14 @@
       "emma.pluginhost": {
         "type": "Project",
         "dependencies": {
-          "EMMA.Application": "[1.0.0, )"
+          "EMMA.Application": "[1.0.0, )",
+          "EMMA.WasmRuntime": "[1.0.0, )"
+        }
+      },
+      "emma.wasmruntime": {
+        "type": "Project",
+        "dependencies": {
+          "EMMA.Domain": "[1.0.0, )"
         }
       }
     }

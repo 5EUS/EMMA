@@ -38,6 +38,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # The .NET integration tests load the native Wasm host and real Wasm plugins; a missing artifact fails
+      # the build on purpose. TODO(rewrite): the Windows and macOS legs of this are untested so far.
+      - name: Install Rust toolchain
+        run: rustup target add wasm32-wasip2
+      - name: Build native Wasm host and test plugins
+        run: |
+          sh native/build-plugins.sh
+          sh native/build-host.sh
       - name: Restore (locked)
         run: dotnet restore --locked-mode
       - name: Verify formatting
@@ -70,10 +78,12 @@ jobs:
           fi
       - name: Install Rust toolchain
         if: steps.detect.outputs.present == 'true'
-        run: rustup component add rustfmt clippy
+        run: rustup component add rustfmt clippy && rustup target add wasm32-wasip2
       - name: Format, lint, test
         if: steps.detect.outputs.present == 'true'
         run: |
+          # The host's tests load the Wasm plugins built here (EMMA-specific; see check.sh).
+          [ -f native/build-plugins.sh ] && sh native/build-plugins.sh
           find native -name Cargo.toml -not -path '*/target/*' | while read -r manifest; do
             cargo fmt --manifest-path "$manifest" --all -- --check
             cargo clippy --manifest-path "$manifest" --all-targets --locked -- -D warnings

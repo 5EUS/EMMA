@@ -133,9 +133,9 @@
       ],
       "properties": {
         "path": {
-          "description": "Relative path, no '..' segments, no leading slash, ends in .wasm or .cwasm. Compared by path-segment, never by string prefix.",
+          "description": "Relative path, no '..' segments, no leading slash, ends in .wasm. Precompiled .cwasm files are refused: they are machine code the signature cannot vouch for, so the host precompiles for itself. Compared by path-segment, never by string prefix.",
           "type": "string",
-          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[A-Za-z0-9._/-]+\\.c?wasm$"
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[A-Za-z0-9._/-]+\\.wasm$"
         },
         "sha256": {
           "$ref": "#/$defs/sha256"

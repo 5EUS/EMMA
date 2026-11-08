@@ -5,6 +5,13 @@
     slimmed Rust wasmtime host (native/emma-wasm). Confirm with the owner that this
     is intended; restore the reference if wasmtime-dotnet is wanted after all.
   -->
+  <PropertyGroup>
+    <!-- Required by the source-generated [LibraryImport] stubs; this project writes no unsafe code of its own. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../EMMA.Domain/EMMA.Domain.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="$(AssemblyName).Tests" />
   </ItemGroup>
