@@ -10,7 +10,7 @@ using Microsoft.Extensions.Time.Testing;
 namespace EMMA.WasmRuntime.Tests;
 
 /// <summary>A complete host over the real native runtime: installer, loader and gateway with fakes for storage.</summary>
-internal sealed class GatewayHarness : IDisposable
+internal sealed class GatewayHarness : IAsyncDisposable
 {
     /// <summary>The id every harness plugin is installed under.</summary>
     internal static readonly PluginId Id = PluginId.Create("com.example.fixture");
@@ -31,7 +31,7 @@ internal sealed class GatewayHarness : IDisposable
         this.source.With(TestPki.RepositoryId, DelegationJson.Write(TestPki.Bundle()));
         PluginSignatureVerifier verifier = new(policy, this.source, this.versions, this.Time);
         this.Installer = new PluginPackageInstaller(this.options, policy, verifier, this.Registry, this.Time);
-        PluginLoader loader = new(this.options, policy, verifier, this.Registry, this.Settings, runtime, this.Time);
+        PluginLoader loader = new(this.options, policy, verifier, this.Registry, this.Settings, new WasmPluginTransport(runtime), this.Time);
         this.Gateway = new WasmPluginGateway(loader, this.Registry, this.Log, this.Time, new WasmGatewayOptions(maxTraps));
     }
 
@@ -57,9 +57,9 @@ internal sealed class GatewayHarness : IDisposable
     internal string InstalledEntrypoint => Path.Combine(this.options.PluginDirectory(Id, "1.0.0"), "plugin.wasm");
 
     /// <inheritdoc/>
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        this.Gateway.Dispose();
+        await this.Gateway.DisposeAsync().ConfigureAwait(false);
         this.root.Delete(recursive: true);
     }
 

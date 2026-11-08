@@ -13,6 +13,7 @@
     <Project Path="tests/EMMA.Application.Tests/EMMA.Application.Tests.csproj" />
     <Project Path="tests/EMMA.Domain.Tests/EMMA.Domain.Tests.csproj" />
     <Project Path="tests/EMMA.Infrastructure.Tests/EMMA.Infrastructure.Tests.csproj" />
+    <Project Path="tests/EMMA.PluginConformance/EMMA.PluginConformance.csproj" />
     <Project Path="tests/EMMA.PluginHost.Tests/EMMA.PluginHost.Tests.csproj" />
     <Project Path="tests/EMMA.Storage.Tests/EMMA.Storage.Tests.csproj" />
     <Project Path="tests/EMMA.TestSupport/EMMA.TestSupport.csproj" />

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The contract every IPluginInstance must honour, as an abstract xUnit suite. A transport's test project
+    derives from PluginInstanceConformance and supplies a factory; the Wasm host and the in-memory fake
+    both run it, and a future out-of-process transport must pass it unchanged.
+  -->
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsAotCompatible>false</IsAotCompatible>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/EMMA.PluginHost/EMMA.PluginHost.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.extensibility.core" />
+    <PackageReference Include="xunit.v3.assert" />
+  </ItemGroup>
+</Project>

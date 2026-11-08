@@ -26,10 +26,17 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
 
 - `src/` holds the EMMA libraries plus the `EMMA.Api` host (the only NativeAOT
   project so far); `tests/` will hold xUnit v3 projects, one per `src/` project.
-- TODO(rewrite): this file is still the generic template text. Replace it with
-  EMMA-specific guidance (hexagonal layering, the `emma:core` WIT contract, the
-  `IPluginInstance` seam) once phase 1 settles the architecture. Its template line
-  `dotnet publish src/*/*.csproj` was wrong for a multi-project repo and is fixed above.
+- Layering is hexagonal and enforced by project references: `EMMA.Domain` (no dependencies) <-
+  `EMMA.Application` (ports and pipelines) <- `EMMA.Infrastructure`, `EMMA.Storage`, `EMMA.PluginHost`
+  <- `EMMA.Api`. `EMMA.WasmRuntime` is the C# binding to the native host and depends only on Domain.
+- The plugin contract is the WIT package `emma:core` in `src/EMMA.Contracts/wit`. The core never switches on
+  a media type; kinds are open strings the plugin declares. Read `docs/architecture/contract.md` before
+  changing the contract, and keep the vendored copies of the WIT (for example in plugin repositories) in step.
+- Plugins run behind `IPluginInstance` (`EMMA.PluginHost/Instances`); the Wasm transport is the only one.
+  Do not let Wasm or native-host types leak into it. New transports must pass `tests/EMMA.PluginConformance`.
+- The native Wasm host (`native/emma-wasm`) and the fixture plugins must be built before the .NET tests:
+  `sh native/build-plugins.sh` and `sh native/build-host.sh` (`check.sh` does both; needs the
+  `wasm32-wasip2` Rust target). A missing artifact fails the build on purpose.
 - TODO(rewrite): `src/EMMA.Api/README.md` has an empty `## Endpoints` heading left
   over from the skeleton; fill it in or delete it in phase 7.
 - All build settings live in `Directory.Build.props`; package versions live in

@@ -1,4 +1,4 @@
-namespace EMMA.WasmRuntime;
+namespace EMMA.Domain;
 
 /// <summary>A plugin's answer to a liveness probe.</summary>
 /// <param name="Ok">Whether the plugin and its upstream are reachable.</param>

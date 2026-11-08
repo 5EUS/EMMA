@@ -2,7 +2,7 @@
   <!--
     TODO(rewrite): not ported from main on purpose, to be decided in later phases:
     - PluginProcessManager, the per-OS sandbox managers, HostPlatformPolicy and the handshake
-      services: out-of-process plugins are deferred behind the IPluginInstance seam (phase 6).
+      services: out-of-process plugins are deferred behind the IPluginInstance seam (docs/architecture/plugin-instance.md).
     - PluginPermissionSanitizer: it sandboxed filesystem paths. A Wasm plugin has no filesystem,
       so the manifest has no paths and there is nothing to sanitize.
     - The repository catalog client, service and store (browsing and downloading plugins from a

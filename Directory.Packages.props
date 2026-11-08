@@ -25,6 +25,9 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <!-- xUnit v3: test assemblies are self-hosting executables. -->
     <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <!-- Shared test libraries (not test assemblies) reference only the core and assertion packages. -->
+    <PackageVersion Include="xunit.v3.extensibility.core" Version="3.2.2" />
+    <PackageVersion Include="xunit.v3.assert" Version="3.2.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
   </ItemGroup>
 </Project>

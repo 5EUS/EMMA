@@ -10,6 +10,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/EMMA.PluginHost/EMMA.PluginHost.csproj" />
     <ProjectReference Include="../EMMA.TestSupport/EMMA.TestSupport.csproj" />
+    <ProjectReference Include="../EMMA.PluginConformance/EMMA.PluginConformance.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

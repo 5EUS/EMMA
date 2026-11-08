@@ -1,6 +1,6 @@
 using EMMA.Application.Ports;
 using EMMA.Domain;
-using EMMA.WasmRuntime;
+using EMMA.PluginHost.Instances;
 
 namespace EMMA.PluginHost.Runtime;
 
@@ -19,7 +19,7 @@ public sealed class WasmPluginGateway(
     IPluginRegistryPort registry,
     IPluginLogPort logs,
     TimeProvider time,
-    WasmGatewayOptions options) : IPluginGateway, IDisposable
+    WasmGatewayOptions options) : IPluginGateway, IAsyncDisposable
 {
     private readonly Dictionary<PluginId, LoadedPlugin> plugins = [];
     private readonly Dictionary<PluginId, int> consecutiveTraps = [];
@@ -64,7 +64,7 @@ public sealed class WasmPluginGateway(
         await this.gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            this.Forget(plugin);
+            await this.ForgetAsync(plugin).ConfigureAwait(false);
         }
         finally
         {
@@ -73,11 +73,11 @@ public sealed class WasmPluginGateway(
     }
 
     /// <inheritdoc/>
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         foreach (LoadedPlugin loaded in this.plugins.Values)
         {
-            loaded.Plugin.Dispose();
+            await loaded.Instance.DisposeAsync().ConfigureAwait(false);
         }
 
         this.plugins.Clear();
@@ -86,7 +86,7 @@ public sealed class WasmPluginGateway(
 
     private async Task<Outcome<T>> CallAsync<T>(
         PluginId plugin,
-        Func<WasmPlugin, CancellationToken, Task<PluginCall<T>>> call,
+        Func<IPluginInstance, CancellationToken, Task<PluginCall<T>>> call,
         CancellationToken cancellationToken)
     {
         Outcome<LoadedPlugin> loaded = await this.LoadedAsync(plugin, cancellationToken).ConfigureAwait(false);
@@ -95,7 +95,7 @@ public sealed class WasmPluginGateway(
             return Outcome.Failure<T>(loaded.Error);
         }
 
-        PluginCall<T> result = await call(loaded.Value.Plugin, cancellationToken).ConfigureAwait(false);
+        PluginCall<T> result = await call(loaded.Value.Instance, cancellationToken).ConfigureAwait(false);
         await this.RecordAsync(plugin, result.Logs, result.Trapped, cancellationToken).ConfigureAwait(false);
         return result.Outcome;
     }
@@ -138,7 +138,7 @@ public sealed class WasmPluginGateway(
             this.consecutiveTraps[plugin] = count;
             if (count >= options.MaxConsecutiveTraps)
             {
-                this.Forget(plugin);
+                await this.ForgetAsync(plugin).ConfigureAwait(false);
                 await registry.SetStatusAsync(plugin, PluginStatus.Quarantined, time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
             }
         }
@@ -148,11 +148,11 @@ public sealed class WasmPluginGateway(
         }
     }
 
-    private void Forget(PluginId plugin)
+    private async Task ForgetAsync(PluginId plugin)
     {
         if (this.plugins.Remove(plugin, out LoadedPlugin? loaded))
         {
-            loaded.Plugin.Dispose();
+            await loaded.Instance.DisposeAsync().ConfigureAwait(false);
         }
 
         this.consecutiveTraps.Remove(plugin);

@@ -1,6 +1,4 @@
-using EMMA.Domain;
-
-namespace EMMA.WasmRuntime;
+namespace EMMA.Domain;
 
 /// <summary>What one call to a plugin produced, besides its result.</summary>
 /// <typeparam name="T">The result type.</typeparam>

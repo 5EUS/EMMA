@@ -4,9 +4,9 @@ using System.Text;
 using EMMA.Application.Ports;
 using EMMA.Domain;
 using EMMA.PluginHost.Install;
+using EMMA.PluginHost.Instances;
 using EMMA.PluginHost.Manifest;
 using EMMA.PluginHost.Signing;
-using EMMA.WasmRuntime;
 
 namespace EMMA.PluginHost.Runtime;
 
@@ -20,7 +20,7 @@ namespace EMMA.PluginHost.Runtime;
 /// <param name="verifier">The signature verifier.</param>
 /// <param name="registry">The installed plugins.</param>
 /// <param name="settings">The user's settings.</param>
-/// <param name="runtime">The native Wasm host.</param>
+/// <param name="transport">Starts the plugin once it is verified.</param>
 /// <param name="time">The clock.</param>
 public sealed class PluginLoader(
     PluginHostOptions options,
@@ -28,7 +28,7 @@ public sealed class PluginLoader(
     PluginSignatureVerifier verifier,
     IPluginRegistryPort registry,
     IPluginSettingsPort settings,
-    WasmRuntimeHost runtime,
+    IPluginTransport transport,
     TimeProvider time)
 {
     /// <summary>Verifies and opens an installed plugin.</summary>
@@ -132,33 +132,27 @@ public sealed class PluginLoader(
         IReadOnlyDictionary<string, IReadOnlyList<string>> values,
         CancellationToken cancellationToken)
     {
-        WasmPluginConfig config = new(
-            path,
-            new WasmLimits(manifest.Limits.CpuBudgetMs, manifest.Limits.MemoryMb),
-            manifest.Permissions.Network,
-            manifest.Permissions.Cache,
-            values);
-        Outcome<WasmPlugin> opened = runtime.Open(config);
+        Outcome<IPluginInstance> opened = await transport.OpenAsync(new PluginLaunch(manifest, path, values), cancellationToken).ConfigureAwait(false);
         if (!opened.IsSuccess)
         {
             return Outcome.Failure<LoadedPlugin>(opened.Error);
         }
 
-        WasmPlugin plugin = opened.Value;
-        PluginCall<PluginInfo> described = await plugin.DescribeAsync(cancellationToken).ConfigureAwait(false);
+        IPluginInstance instance = opened.Value;
+        PluginCall<PluginInfo> described = await instance.DescribeAsync(cancellationToken).ConfigureAwait(false);
         if (!described.Outcome.IsSuccess)
         {
-            plugin.Dispose();
+            await instance.DisposeAsync().ConfigureAwait(false);
             return Outcome.Failure<LoadedPlugin>(described.Outcome.Error);
         }
 
         HashSet<NodeKind> declared = [.. described.Outcome.Value.Kinds.Select(kind => kind.Kind)];
         if (manifest.Kinds.Count > 0 && !declared.SetEquals(manifest.Kinds))
         {
-            plugin.Dispose();
+            await instance.DisposeAsync().ConfigureAwait(false);
             return Refuse(ErrorCode.InvalidArgument, $"The kinds in the manifest of '{manifest.Id}' do not match what the plugin declares.");
         }
 
-        return Outcome.Success(new LoadedPlugin(plugin, manifest, described.Outcome.Value));
+        return Outcome.Success(new LoadedPlugin(instance, manifest, described.Outcome.Value));
     }
 }

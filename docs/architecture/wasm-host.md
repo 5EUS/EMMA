@@ -10,6 +10,7 @@ How EMMA runs plugins. The contract is in [contract.md](contract.md), trust and 
 | `emma-wasm` | `native/emma-wasm/` (Rust, wasmtime) | loads components, runs one call at a time in a fresh instance, enforces limits, does the network |
 | `EMMA.WasmRuntime` | `src/EMMA.WasmRuntime/` | the C# binding: P/Invoke, JSON wire types, typed `WasmPlugin` calls |
 | `PluginLoader`, `WasmPluginGateway` | `src/EMMA.PluginHost/Runtime/` | verify an installed plugin, open it, serve `IPluginGateway`, forward logs, quarantine |
+| `WasmPluginTransport`, `WasmPluginInstance` | `src/EMMA.PluginHost/Runtime/` | the Wasm implementation of the transport-neutral seam in [plugin-instance.md](plugin-instance.md) |
 | fixture plugins | `native/plugins/fixture/` | a Rust component that exercises every contract path; built by `native/build-plugins.sh` |
 
 Nothing links LLVM, wasi-sdk or Docker. Rust plugins compile straight to components with the

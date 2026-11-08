@@ -87,11 +87,12 @@ verified manifest, and nothing to a plugin that is unknown, disabled, quarantine
 
 ## Not done here
 
-- **Out-of-process plugins and sandboxes** (deferred behind the `IPluginInstance` seam, phase 6).
+- **Out-of-process plugins and sandboxes**: deferred behind the `IPluginInstance` seam; see [plugin-instance.md](plugin-instance.md).
 - **Key ceremony tooling**: creating root and delegated keys, publishing and rotating delegation files. `PluginSigner`
   is the building block; the CLI is phase 8.
 - **Fetching** delegation files and packages from a remote repository: the verifier takes an `IDelegationSource`
   and the installer a `Stream`; the HTTP side is the host's.
-- **Verification on load**: install verifies once; the Wasm host (phase 5) should verify again at load, so an
-  expired signature or a revoked key stops a plugin that was installed earlier.
+- **Verification on load** is done: `PluginLoader` re-parses the stored manifest, re-verifies the signature and
+  re-hashes the entrypoint before every load, so an expired signature or a revoked key stops a plugin that was
+  installed earlier. A changed file quarantines the plugin; a failed signature only refuses the load.
 - **A signature expiry policy** (maximum lifetime) is not enforced; signers choose `expiresAt`.
