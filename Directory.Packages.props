@@ -17,6 +17,7 @@
 
   <ItemGroup Label="Test">
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <!-- xUnit v3: test assemblies are self-hosting executables. -->
     <PackageVersion Include="xunit.v3" Version="3.2.2" />

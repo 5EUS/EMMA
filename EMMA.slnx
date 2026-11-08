@@ -9,4 +9,10 @@
     <Project Path="src/EMMA.Storage/EMMA.Storage.csproj" />
     <Project Path="src/EMMA.WasmRuntime/EMMA.WasmRuntime.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EMMA.Application.Tests/EMMA.Application.Tests.csproj" />
+    <Project Path="tests/EMMA.Domain.Tests/EMMA.Domain.Tests.csproj" />
+    <Project Path="tests/EMMA.Infrastructure.Tests/EMMA.Infrastructure.Tests.csproj" />
+    <Project Path="tests/EMMA.TestSupport/EMMA.TestSupport.csproj" />
+  </Folder>
 </Solution>

@@ -50,7 +50,16 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
 - **Async:** await tasks; never `.Wait()`, `.Result` or `Thread.Sleep`. Use
   `.ConfigureAwait(false)` on library awaits (CA2007).
 - **Time:** do not use `DateTime.Now`/`UtcNow` or `DateTimeOffset.Now`/`UtcNow`;
-  inject a clock abstraction.
+  inject `TimeProvider` (tests use `FakeTimeProvider`).
+- **Nulls:** nullable reference types cover non-null parameters (`CA1062` is off in
+  `.editorconfig`), so do not write `ArgumentNullException.ThrowIfNull` for them. Check
+  only where the compiler cannot see: FFI exports, Wasm and JSON input, and invariants a
+  null would silently break (`Outcome.Failure`). Prefer primary constructors; keep an
+  explicit constructor only when it transforms its arguments (`CapabilityPolicy`). A
+  primary-constructor parameter used in a field initializer *and* in methods trips
+  `CS9124`, so inject the finished object instead (see `PluginCallExecutor`).
+- **Tests:** use `.ConfigureAwait(true)` in test methods; it satisfies both `CA2007` and
+  xUnit's `xUnit1030`.
 - **Hashing:** no MD5 or SHA1.
 - **Style:** StyleCop is enforced. Public and internal members need XML docs;
   `using` directives go outside the namespace, `System` first; files end with a newline.
