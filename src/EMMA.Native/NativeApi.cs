@@ -10,7 +10,7 @@ namespace EMMA.Native;
 internal static class NativeApi
 {
     /// <summary>The version of the C ABI. Bumped only for a change that breaks existing callers.</summary>
-    public const int AbiVersion = 1;
+    public const int AbiVersion = 2;
 
     /// <summary>Creates a runtime and opens a handle to it. Blocks until the runtime is ready.</summary>
     /// <param name="config">The UTF-8 JSON configuration.</param>

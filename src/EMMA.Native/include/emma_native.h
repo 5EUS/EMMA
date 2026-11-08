@@ -30,7 +30,7 @@
 extern "C" {
 #endif
 
-#define EMMA_ABI_VERSION 1
+#define EMMA_ABI_VERSION 2
 
 #define EMMA_OK 0
 #define EMMA_INVALID_ARGUMENT 1
@@ -46,7 +46,10 @@ typedef struct EmmaBuffer {
 /* An open runtime. Zero is never a valid handle. */
 typedef intptr_t EmmaRuntime;
 
-/* Version of this ABI. A library whose version differs from EMMA_ABI_VERSION must not be used. */
+/*
+ * Version of this ABI. A library whose version differs from EMMA_ABI_VERSION must not be used.
+ * 1: first draft. 2: EmmaCallback receives (pointer, length) pairs by value instead of pointers to EmmaBuffer.
+ */
 int32_t emma_abi_version(void);
 
 /*
