@@ -1,0 +1,60 @@
+package emma:core@1.0.0;
+
+/// Self-description. Called once after instantiation; the result is cached by
+/// the host. Identity (id, name, version, author) is deliberately NOT here: it
+/// lives in the signed manifest, so a plugin cannot claim to be another one.
+interface meta {
+    use types.{plugin-error, choice, filter-spec};
+
+    /// Declares one kind of node a plugin produces.
+    record kind-info {
+        /// The kind string, as used in `node.kind`.
+        kind: string,
+        /// Human label for the kind ("Chapter").
+        label: string,
+        /// Kinds that may appear as children of this kind. Empty means a leaf.
+        /// This is the schema of the tree, so generic clients can navigate it.
+        children: list<string>,
+        /// Asset roles that `assets.resolve` supports for this kind, e.g.
+        /// `image`, `stream`, `subtitle`, `text`, `audio`.
+        roles: list<string>,
+        /// Optional name of a client profile this kind follows, such as
+        /// `emma.profile.paged@1`. A profile fixes the vocabulary of child
+        /// kinds, roles and well-known props, so clients can offer a typed
+        /// experience (a page reader, a video player) without core changes.
+        profile: option<string>,
+    }
+
+    /// Declares a user setting. Values reach the plugin via `host.setting`.
+    record setting-spec {
+        key: string,
+        label: string,
+        description: option<string>,
+        /// Secret values are stored encrypted and never logged or exported.
+        secret: bool,
+        required: bool,
+        default-value: option<string>,
+    }
+
+    record plugin-info {
+        /// Every kind the plugin can produce. Must include every `node.kind`
+        /// the plugin returns; the host rejects nodes of undeclared kinds.
+        kinds: list<kind-info>,
+        /// Declared search filters. Replaces the old manifest search block.
+        filters: list<filter-spec>,
+        /// Available sort orders for search.
+        sorts: list<choice>,
+        settings: list<setting-spec>,
+    }
+
+    describe: func() -> result<plugin-info, plugin-error>;
+
+    record health-report {
+        ok: bool,
+        /// Shown to the user when `ok` is false.
+        detail: option<string>,
+    }
+
+    /// Cheap liveness and upstream-reachability probe.
+    health: func() -> health-report;
+}

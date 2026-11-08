@@ -1,4 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    TODO(rewrite): wit/*.wit and plugin-manifest.schema.json are the contract, but nothing
+    in the build consumes them yet. Phase 4/5 should (a) run `wit-bindgen`/`wasm-tools
+    component wit` over wit/ in check.sh and CI so a broken WIT fails the build, and
+    (b) embed or package these files for the host. Until then they are only validated by
+    hand (see docs/architecture/contract.md).
+  -->
   <ItemGroup>
     <InternalsVisibleTo Include="$(AssemblyName).Tests" />
   </ItemGroup>

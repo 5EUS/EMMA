@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://emma.invalid/schemas/plugin-manifest/1.json",
+  "title": "EMMA plugin manifest",
+  "description": "Identity, trust and resource limits for one plugin. Everything about what the plugin serves (kinds, filters, sorts, settings) comes from meta.describe() at run time, so it cannot drift from the code. The manifest is the signed part: the host reads it before it executes any plugin code.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "name", "version", "contract", "entrypoint", "permissions", "limits", "signature"],
+  "properties": {
+    "schema": {
+      "description": "Manifest format version. Hosts refuse versions they do not know.",
+      "const": 1
+    },
+    "id": {
+      "description": "Stable plugin identifier: lower-case reverse-DNS style. The host namespaces every node by this id, so it must never change once published.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
+      "maxLength": 128
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "version": {
+      "description": "Semantic version of the plugin.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$"
+    },
+    "description": { "type": "string", "maxLength": 500 },
+    "author": { "type": "string", "maxLength": 120 },
+    "kinds": {
+      "description": "Display-only summary of the kinds the plugin serves, for repository listings that must not load the plugin. The host validates it against meta.describe() when the plugin is installed and again on load, and refuses a mismatch.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)*$" },
+      "uniqueItems": true
+    },
+    "icon": {
+      "description": "How the plugin's own icon is presented. Carried over from the old manifest's thumbnail block.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "aspectRatio": { "type": "number", "exclusiveMinimum": 0 },
+        "fit": { "enum": ["cover", "contain", "fill"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "contract": {
+      "description": "The WIT interfaces the component implements, by interface id. The host checks these against the component's real exports; the exports are authoritative.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required"],
+      "properties": {
+        "required": {
+          "description": "Interfaces the plugin cannot run without. The base world only.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/interfaceId" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "optional": {
+          "description": "Extension interfaces the plugin implements, such as emma:core/search-assist@1.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/interfaceId" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minHostVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" }
+      }
+    },
+    "transport": {
+      "description": "How the host runs the plugin. Only wasm exists today. 'process' is reserved for the deferred out-of-process mode and must be rejected until it is implemented.",
+      "enum": ["wasm"],
+      "default": "wasm"
+    },
+    "entrypoint": {
+      "description": "The component file inside the package, and its digest. The digest is mandatory so the signature covers the code, not just the manifest.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "description": "Relative path, no '..' segments, no leading slash, ends in .wasm or .cwasm. Compared by path-segment, never by string prefix.",
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[A-Za-z0-9._/-]+\\.c?wasm$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "permissions": {
+      "description": "What the plugin may ask the host for. Anything not listed is denied. There is deliberately no filesystem permission: a Wasm plugin has no filesystem.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["network", "cache"],
+      "properties": {
+        "network": {
+          "description": "Exact host names (lower-case) or '*.example.com' wildcards the plugin may fetch. Empty means no network.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" },
+          "uniqueItems": true
+        },
+        "cache": { "description": "Whether host.cache-get/put are available.", "type": "boolean" }
+      }
+    },
+    "limits": {
+      "description": "Resource ceilings enforced by the Wasm runtime.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpuBudgetMs", "memoryMb"],
+      "properties": {
+        "cpuBudgetMs": { "description": "Per-call CPU budget.", "type": "integer", "minimum": 1, "maximum": 600000 },
+        "memoryMb": { "type": "integer", "minimum": 1, "maximum": 4096 }
+      }
+    },
+    "signature": {
+      "description": "Repository signature over the manifest. Fields are mandatory; the signed payload is length-prefixed per field so values cannot be shifted between fields.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "value", "keyId", "repositoryId", "issuedAt", "expiresAt", "manifestSha256"],
+      "properties": {
+        "algorithm": { "const": "rsa-sha256" },
+        "value": { "description": "Base64 signature.", "type": "string", "contentEncoding": "base64" },
+        "keyId": { "type": "string", "minLength": 1 },
+        "repositoryId": { "type": "string", "minLength": 1 },
+        "issuedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "manifestSha256": {
+          "description": "SHA-256 of the canonical manifest with the signature block removed.",
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "interfaceId": {
+      "description": "A WIT interface id with its major version, e.g. emma:core/catalog@1.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*/[a-z][a-z0-9-]*@\\d+$"
+    }
+  }
+}
