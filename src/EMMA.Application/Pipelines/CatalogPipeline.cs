@@ -171,8 +171,14 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         return page;
     }
 
-    private Task<Outcome<PluginInfo>> DescribeAsync(PluginId plugin, CancellationToken cancellationToken) =>
-        executor.ExecuteAsync(token => gateway.DescribeAsync(plugin, token), cancellationToken);
+    private async Task<Outcome<PluginInfo>> DescribeAsync(PluginId plugin, CancellationToken cancellationToken)
+    {
+        Outcome<PluginInfo> info = await executor.ExecuteAsync(token => gateway.DescribeAsync(plugin, token), cancellationToken).ConfigureAwait(false);
+        string? problem = info.IsSuccess ? PluginInfoValidator.FindProblem(info.Value) : null;
+        return problem is null
+            ? info
+            : Outcome.Failure<PluginInfo>(ErrorCode.Internal, $"Plugin {plugin} {problem}.");
+    }
 
     private Task RememberAsync(IReadOnlyList<Node> nodes, CancellationToken cancellationToken) =>
         nodes.Count == 0 ? Task.CompletedTask : store.UpsertAsync(nodes, cancellationToken);

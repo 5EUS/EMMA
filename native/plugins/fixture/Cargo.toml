@@ -1,0 +1,32 @@
+[package]
+name = "emma_fixture"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+description = "A deterministic test plugin for the EMMA Wasm host. Never shipped."
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# Also implement the optional search-assist extension (world plugin-search-assist).
+assist = []
+# Built against a copy of the contract whose version is 1.0.1, to prove a host built for 1.0.0 still
+# loads it. native/build-plugins.sh prepares that copy under target/wit-newer-patch.
+newer-patch = ["assist"]
+
+[dependencies]
+wit-bindgen = "0.63"
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+strip = "symbols"

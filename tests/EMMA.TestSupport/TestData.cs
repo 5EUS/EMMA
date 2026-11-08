@@ -65,6 +65,7 @@ public static class TestData
         [Kind("series", ["chapter"]), Kind("chapter", ["page"]), Kind("page", roles: ["image"])],
         filters ?? [],
         sorts ?? [],
+        [],
         []);
 
     /// <summary>Builds a simple filter declaration.</summary>

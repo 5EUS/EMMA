@@ -4,11 +4,13 @@ namespace EMMA.Domain;
 /// <param name="Kinds">Every kind the plugin can produce.</param>
 /// <param name="Filters">Declared search filters.</param>
 /// <param name="Sorts">Available sort orders.</param>
+/// <param name="Categories">Groups for the settings screen, in display order.</param>
 /// <param name="Settings">Declared user settings.</param>
 public sealed record PluginInfo(
     IReadOnlyList<KindInfo> Kinds,
     IReadOnlyList<FilterSpec> Filters,
     IReadOnlyList<Choice> Sorts,
+    IReadOnlyList<SettingCategory> Categories,
     IReadOnlyList<SettingSpec> Settings)
 {
     /// <summary>Finds the declaration of a kind.</summary>

@@ -1,0 +1,23 @@
+{
+  "description": "Shared by the Rust host (src/network.rs) and the C# CapabilityPolicy tests. A host pattern is an exact host name or a *.suffix wildcard. Wildcards match subdomains at any depth, never the apex, and never IP literals. Only http and https are ever allowed.",
+  "cases": [
+    { "patterns": ["api.example.com"], "url": "https://api.example.com/v1/x?y=1", "allowed": true },
+    { "patterns": ["api.example.com"], "url": "https://API.Example.com:8443/", "allowed": true },
+    { "patterns": ["api.example.com"], "url": "http://api.example.com/", "allowed": true },
+    { "patterns": ["api.example.com"], "url": "https://api.example.com.evil.net/", "allowed": false },
+    { "patterns": ["api.example.com"], "url": "https://evilapi.example.com/", "allowed": false },
+    { "patterns": ["api.example.com"], "url": "https://example.com/", "allowed": false },
+    { "patterns": ["api.example.com"], "url": "https://xapi.example.com/", "allowed": false },
+    { "patterns": ["*.cdn.example.com"], "url": "https://a.cdn.example.com/", "allowed": true },
+    { "patterns": ["*.cdn.example.com"], "url": "https://a.b.cdn.example.com/", "allowed": true },
+    { "patterns": ["*.cdn.example.com"], "url": "https://cdn.example.com/", "allowed": false },
+    { "patterns": ["*.cdn.example.com"], "url": "https://evilcdn.example.com/", "allowed": false },
+    { "patterns": ["*.cdn.example.com"], "url": "https://a.cdn.example.com.evil.net/", "allowed": false },
+    { "patterns": ["*.0.1"], "url": "http://127.0.0.1/", "allowed": false },
+    { "patterns": ["127.0.0.1"], "url": "http://127.0.0.1/", "allowed": true },
+    { "patterns": ["api.example.com"], "url": "ftp://api.example.com/file", "allowed": false },
+    { "patterns": ["api.example.com"], "url": "file://api.example.com/etc/passwd", "allowed": false },
+    { "patterns": ["api.example.com"], "url": "ws://api.example.com/", "allowed": false },
+    { "patterns": [], "url": "https://example.com/", "allowed": false }
+  ]
+}

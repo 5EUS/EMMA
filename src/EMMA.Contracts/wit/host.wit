@@ -51,7 +51,13 @@ interface host {
     /// `ttl-ms` or under pressure, whichever comes first.
     cache-put: func(key: string, value: list<u8>, ttl-ms: u32);
 
-    /// Reads a user setting declared in `plugin-info.settings`. Secret
+    /// Reads a user setting declared in `plugin-info.settings`, as text (see
+    /// `meta.setting-type` for the encoding). Absent when the user has set nothing and there
+    /// is no default. For a `multi-choice` setting this is the first chosen value. Secret
     /// settings are returned in clear here and nowhere else.
     setting: func(key: string) -> option<string>;
+
+    /// Reads every value of a setting: the chosen values of a `multi-choice`, or the single
+    /// value of any other type. Empty when nothing is set and there is no default.
+    setting-values: func(key: string) -> list<string>;
 }

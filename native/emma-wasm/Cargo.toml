@@ -1,0 +1,30 @@
+[package]
+name = "emma_wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+[lib]
+name = "emma_wasm"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+wasmtime = { version = "50", default-features = false, features = ["component-model", "runtime", "std", "cranelift", "pulley", "parallel-compilation"] }
+wasmtime-wasi = "50"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
