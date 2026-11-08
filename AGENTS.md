@@ -65,8 +65,9 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
   strings (`@"..."`) for multi-line text.
 - **SQL:** statements are constants (never built from input) and values go in as
   parameters. `SqliteDatabase` is the only code that sets `CommandText` (its single `CA2100`
-  pragma relies on this). Migrations are scripts under `src/EMMA.Storage/Sql/`; never edit
-  a released one, add the next number and register it in `Migrations.cs`.
+  pragma relies on this). The schema is one script, `src/EMMA.Storage/Sql/001_initial.sql`,
+  edited in place until the first release (no deployed database exists). After release,
+  never edit a released script: add the next number and register it in `Migrations.cs`.
 - **Hashing:** no MD5 or SHA1.
 - **Style:** StyleCop is enforced. Public and internal members need XML docs;
   `using` directives go outside the namespace, `System` first; files end with a newline.

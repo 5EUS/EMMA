@@ -53,3 +53,19 @@ CREATE TABLE download_jobs (
 ) STRICT;
 
 CREATE INDEX idx_download_jobs_state ON download_jobs (state, updated_at DESC);
+
+CREATE TABLE plugins (
+    id            TEXT    NOT NULL PRIMARY KEY,
+    version       TEXT    NOT NULL,
+    status        INTEGER NOT NULL CHECK (status BETWEEN 0 AND 2),
+    manifest_json TEXT    NOT NULL,
+    signer        TEXT,
+    installed_at  INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE trusted_delegation_versions (
+    repository_id TEXT    NOT NULL PRIMARY KEY,
+    version       INTEGER NOT NULL CHECK (version >= 0),
+    updated_at    INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;

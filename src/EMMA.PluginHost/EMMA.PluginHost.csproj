@@ -1,4 +1,19 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    TODO(rewrite): not ported from main on purpose, to be decided in later phases:
+    - PluginProcessManager, the per-OS sandbox managers, HostPlatformPolicy and the handshake
+      services: out-of-process plugins are deferred behind the IPluginInstance seam (phase 6).
+    - PluginPermissionSanitizer: it sandboxed filesystem paths. A Wasm plugin has no filesystem,
+      so the manifest has no paths and there is nothing to sanitize.
+    - The repository catalog client, service and store (browsing and downloading plugins from a
+      remote repository over HTTP). Install here takes a package stream and the repository id
+      from the caller; the HTTP side belongs with the host and CLI (phase 8).
+    - Failure counting and quarantine thresholds. PluginStatus.Quarantined exists and the
+      installer can set it; deciding when to quarantine belongs with the Wasm host (phase 5).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="../EMMA.Application/EMMA.Application.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="$(AssemblyName).Tests" />
   </ItemGroup>

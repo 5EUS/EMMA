@@ -78,6 +78,12 @@
       },
       "emma.domain": {
         "type": "Project"
+      },
+      "emma.pluginhost": {
+        "type": "Project",
+        "dependencies": {
+          "EMMA.Application": "[1.0.0, )"
+        }
       }
     }
   }

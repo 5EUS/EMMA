@@ -16,9 +16,9 @@ public sealed class StorageInitializerTests : StorageTestBase
     public async Task CreatesTheSchema()
     {
         long tables = (long)(await this.ScalarAsync(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('nodes','progress','library','download_jobs','schema_migrations')").ConfigureAwait(true))!;
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('nodes','progress','library','download_jobs','schema_migrations','plugins','trusted_delegation_versions')").ConfigureAwait(true))!;
 
-        Assert.Equal(5, tables);
+        Assert.Equal(7, tables);
     }
 
     /// <summary>Running again changes nothing and records each migration once, with the clock's time.</summary>
@@ -28,7 +28,7 @@ public sealed class StorageInitializerTests : StorageTestBase
     {
         await new StorageInitializer(this.Options, new FakeTimeProvider(DateTimeOffset.UnixEpoch)).InitializeAsync(CancellationToken.None).ConfigureAwait(true);
 
-        Assert.Equal(1L, await this.ScalarAsync("SELECT COUNT(*) FROM schema_migrations").ConfigureAwait(true));
+        Assert.Equal((long)Migrations.RegisteredScriptNames.Count, await this.ScalarAsync("SELECT COUNT(*) FROM schema_migrations").ConfigureAwait(true));
         Assert.Equal(this.Time.GetUtcNow().ToUnixTimeMilliseconds(), await this.ScalarAsync("SELECT applied_at FROM schema_migrations WHERE version = 1").ConfigureAwait(true));
         Assert.Equal("initial", await this.ScalarAsync("SELECT name FROM schema_migrations WHERE version = 1").ConfigureAwait(true));
     }
@@ -82,7 +82,7 @@ public sealed class StorageInitializerTests : StorageTestBase
             await using (command.ConfigureAwait(true))
             {
                 command.CommandText = "SELECT COUNT(*) FROM schema_migrations";
-                Assert.Equal(1L, await command.ExecuteScalarAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
+                Assert.Equal((long)Migrations.RegisteredScriptNames.Count, await command.ExecuteScalarAsync(TestContext.Current.CancellationToken).ConfigureAwait(true));
             }
         }
     }

@@ -3,8 +3,10 @@ namespace EMMA.Storage;
 /// <summary>
 /// The schema, in order. Each migration is a script under <c>Sql/</c>, embedded in the
 /// assembly under a fixed name and registered here by number, so the order is explicit
-/// (never inferred from file names) and nothing is discovered by reflection. Never edit a
-/// released script: add the next number.
+/// (never inferred from file names) and nothing is discovered by reflection.
+/// Until the first release the whole schema is the single script <c>001_initial.sql</c>,
+/// edited in place: there is no deployed database to migrate. From the first release on,
+/// never edit a released script; add the next number.
 /// </summary>
 /// <remarks>
 /// Tables are STRICT (the engine rejects a value of the wrong type), identity columns are
