@@ -1,0 +1,102 @@
+name: Continuous integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  NUGET_XMLDOC_MODE: skip
+
+jobs:
+  # NativeAOT cannot cross-compile, so each RID needs its own runner. A build that
+  # is green on `dotnet build` can still fail at AOT publish, which is why publish
+  # runs here rather than only at release.
+  dotnet:
+    name: .NET ${{ matrix.rid }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    rid: linux-x64 }
+          - { runner: ubuntu-24.04-arm, rid: linux-arm64 }
+          - { runner: windows-latest,   rid: win-x64 }
+          - { runner: windows-11-arm,   rid: win-arm64 }
+          # TODO(rewrite): macos-13 was retired by GitHub. Verify the Intel macOS runner
+          # label (likely macos-15-intel) and fix it here and in ../strict-csharp.
+          - { runner: macos-13,         rid: osx-x64 }
+          - { runner: macos-latest,     rid: osx-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Restore (locked)
+        run: dotnet restore --locked-mode
+      - name: Verify formatting
+        run: dotnet format whitespace --no-restore --verify-no-changes
+      - name: Build
+        run: dotnet build -c Release --no-restore
+      - name: Test
+        run: dotnet test -c Release --no-build
+      - name: Publish NativeAOT
+        # TODO(rewrite): only EMMA.Api is published for now. Add EMMA.Native (shared
+        # library for Flutter FFI) when it exists.
+        run: dotnet publish src/EMMA.Api/EMMA.Api.csproj -c Release -r ${{ matrix.rid }} --self-contained
+      - name: Vulnerable packages
+        run: dotnet list package --vulnerable --include-transitive
+
+  # Rust is optional: every step after detection is skipped unless a Cargo manifest
+  # exists under native/, so the job passes trivially in a pure C# repository.
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect Rust sources
+        id: detect
+        run: |
+          if find native -name Cargo.toml -not -path '*/target/*' 2>/dev/null | grep -q .; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Rust toolchain
+        if: steps.detect.outputs.present == 'true'
+        run: rustup component add rustfmt clippy
+      - name: Format, lint, test
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          find native -name Cargo.toml -not -path '*/target/*' | while read -r manifest; do
+            cargo fmt --manifest-path "$manifest" --all -- --check
+            cargo clippy --manifest-path "$manifest" --all-targets --locked -- -D warnings
+            cargo test --manifest-path "$manifest" --locked
+          done
+
+  # Token-based copy/paste detection (C# and Rust profiles). Kept separate from the
+  # build matrix: it only needs the sources, so one Linux runner is enough.
+  duplicates:
+    name: Duplicate code (CPD)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install PMD
+        env:
+          PMD_VERSION: "7.7.0"
+        run: |
+          curl -fsSL -o pmd.zip "https://github.com/pmd/pmd/releases/download/pmd_releases%2F${PMD_VERSION}/pmd-dist-${PMD_VERSION}-bin.zip"
+          unzip -q pmd.zip
+          echo "$PWD/pmd-bin-${PMD_VERSION}/bin" >> "$GITHUB_PATH"
+      - name: Detect duplicates
+        run: sh scripts/development/cpd.sh

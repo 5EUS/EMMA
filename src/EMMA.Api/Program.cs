@@ -1,6 +1,6 @@
-var builder = WebApplication.CreateBuilder(args);
-var app = builder.Build();
+WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(args);
+WebApplication app = builder.Build();
 
-app.MapGet("/", () => "Hello World!");
+app.MapGet("/", () => Results.Text("EMMA", "text/plain"));
 
-app.Run();
+await app.RunAsync().ConfigureAwait(false);

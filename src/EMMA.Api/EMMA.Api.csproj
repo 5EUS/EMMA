@@ -1,9 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
+    <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;win-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
+    <PublishAot>true</PublishAot>
   </PropertyGroup>
+  <!--
+    TODO(rewrite): temporary, advisory-specific audit suppression. SDK 10.0.112 bundles
+    Microsoft.DotNet.ILCompiler 10.0.12, which has GHSA-p3jp-9v83-76w9 (CVE-2026-111497,
+    Brotli decoder out-of-bounds write); fixed in 10.0.14. Pinning the package directly
+    does not work: the SDK requires the compiler to match its own runtime pack and the
+    publish fails. The real fix is installing a patched SDK (runtime 10.0.14, e.g.
+    10.0.403 / the matching 1xx band release) and bumping global.json, then deleting
+    this item. Do the same for any other project that sets PublishAot.
+  -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-p3jp-9v83-76w9" />
+  </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="$(AssemblyName).Tests" />
+  </ItemGroup>
 </Project>

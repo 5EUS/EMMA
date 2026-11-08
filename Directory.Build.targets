@@ -1,0 +1,22 @@
+<Project>
+  <!--
+    Guards that a single .csproj cannot quietly opt out of. Property assertions only.
+  -->
+  <Target Name="StrictAssertBuildPosture" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(Nullable)' != 'enable'"
+           Code="STRICT0001"
+           Text="Nullable must stay enabled. Null-state is load-bearing." />
+
+    <Error Condition="'$(TreatWarningsAsErrors)' != 'true'"
+           Code="STRICT0002"
+           Text="TreatWarningsAsErrors must stay true: the trim and AOT analyzers report as warnings, so disabling this silently removes the NativeAOT guarantees." />
+
+    <Error Condition="'$(EnableTrimAnalyzer)' != 'true' Or '$(EnableAotAnalyzer)' != 'true'"
+           Code="STRICT0003"
+           Text="The trim and AOT analyzers must stay enabled. AOT breakage is invisible to 'dotnet build' without them and only surfaces at publish time." />
+
+    <Error Condition="'$(RestorePackagesWithLockFile)' != 'true'"
+           Code="STRICT0004"
+           Text="Lock files must stay enabled so CI can restore with --locked-mode and builds stay reproducible." />
+  </Target>
+</Project>

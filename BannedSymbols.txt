@@ -1,0 +1,36 @@
+# Microsoft.CodeAnalysis.BannedApiAnalyzers. Entries are documentation-comment IDs:
+#   T:Namespace.Type   P:Namespace.Type.Property   M:Namespace.Type.Method   N:Namespace
+# A malformed line is reported as RS0002, so a typo fails the build rather than
+# silently disabling the ban.
+#
+# Escape hatch: #pragma warning disable RS0030 with a comment naming the reason.
+
+# --- NativeAOT: runtime codegen and reflection instantiation ------------------
+N:System.Reflection.Emit;Runtime code generation does not exist under NativeAOT.
+T:System.Reflection.Emit.DynamicMethod;Runtime code generation does not exist under NativeAOT.
+M:System.Activator.CreateInstance;Reflection instantiation is trim-unsafe. Construct explicitly, or use a source-generated factory.
+
+# --- NativeAOT: reflection-based serialization --------------------------------
+# Every RPC DTO belongs to a JsonSerializerContext; the reflection overloads are
+# the ones that compile fine and then throw on a published AOT build.
+M:System.Text.Json.JsonSerializer.Serialize;Use the JsonSerializerContext overload.
+M:System.Text.Json.JsonSerializer.Deserialize;Use the JsonSerializerContext overload.
+
+# --- Async correctness --------------------------------------------------------
+# Blocking calls deadlock or starve the thread pool; ban them at compile time.
+M:System.Threading.Tasks.Task.Wait;Blocking on a Task risks deadlock and thread-pool starvation. Await it.
+M:System.Threading.Tasks.Task.WaitAll;Blocking on a Task risks deadlock and thread-pool starvation. Use Task.WhenAll.
+M:System.Threading.Tasks.Task.WaitAny;Blocking on a Task risks deadlock and thread-pool starvation. Use Task.WhenAny.
+P:System.Threading.Tasks.Task`1.Result;Blocking on a Task risks deadlock and thread-pool starvation. Await it.
+M:System.Threading.Thread.Sleep;Use Task.Delay.
+T:System.Threading.Thread;Use the task scheduler rather than raw threads.
+
+# --- Determinism ---------------------------------------------------------------
+P:System.DateTime.Now;Inject IClock. Local time is untestable and reproducible artifacts must not embed it.
+P:System.DateTime.UtcNow;Inject IClock so tests are deterministic.
+P:System.DateTimeOffset.Now;Inject IClock.
+P:System.DateTimeOffset.UtcNow;Inject IClock so tests are deterministic.
+
+# --- Weak hashes -------------------------------------------------------------
+T:System.Security.Cryptography.MD5;Broken. Use SHA-256 or stronger.
+T:System.Security.Cryptography.SHA1;Broken. Use SHA-256 or stronger.
