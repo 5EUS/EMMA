@@ -1,9 +1,30 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
+  <!--
+    TODO(rewrite): installing, upgrading, enabling and removing plugins is deliberately not an HTTP
+    endpoint: installing code over the network is the most dangerous thing the host does, and the
+    keys this API issues are for clients, not administrators. The CLI (phase 8) does it. Until the
+    host can reload (see README), restart the API after changing plugins.
+  -->
   <PropertyGroup>
     <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;win-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
     <PublishAot>true</PublishAot>
+    <NativeArtifacts>$(MSBuildThisFileDirectory)../../artifacts/native/</NativeArtifacts>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../EMMA.Application/EMMA.Application.csproj" />
+    <ProjectReference Include="../EMMA.Infrastructure/EMMA.Infrastructure.csproj" />
+    <ProjectReference Include="../EMMA.Storage/EMMA.Storage.csproj" />
+    <ProjectReference Include="../EMMA.PluginHost/EMMA.PluginHost.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="$(AssemblyName).Tests" />
+  </ItemGroup>
+  <!--
+    The native Wasm host ships beside the executable. Unlike the test projects, a missing library is
+    not a build error here: the API starts without it and reports a clear message the first time a
+    plugin is opened (WasmRuntimeHost.Create).
+  -->
+  <ItemGroup>
+    <None Include="$(NativeArtifacts)lib/*" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 </Project>

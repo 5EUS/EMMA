@@ -37,8 +37,13 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
 - The native Wasm host (`native/emma-wasm`) and the fixture plugins must be built before the .NET tests:
   `sh native/build-plugins.sh` and `sh native/build-host.sh` (`check.sh` does both; needs the
   `wasm32-wasip2` Rust target). A missing artifact fails the build on purpose.
-- TODO(rewrite): `src/EMMA.Api/README.md` has an empty `## Endpoints` heading left
-  over from the skeleton; fill it in or delete it in phase 7.
+- `EMMA.Api` is REST plus source-generated JSON only (no gRPC) and the composition root
+  (`Composition/EmmaServices.cs`). Read `docs/architecture/api.md` before changing authentication, rate
+  limiting or a response shape. Authentication is default-deny and runs before the rate limiter, which is
+  keyed by the authenticated client; never key anything on a claim the caller can make up. Every response,
+  including errors, is built by `ApiResults`; every wire type lives in `Contracts/` and `ApiJsonContext`.
+  Nodes travel as `ref` query parameters, not path segments. `tests/EMMA.Api.Tests` runs the real host on a
+  loopback port around a fake gateway (`ApiTestServer`); `WasmEndToEndTests` also needs the native artifacts.
 - All build settings live in `Directory.Build.props`; package versions live in
   `Directory.Packages.props`. A `.csproj` should stay nearly empty.
 - `BannedSymbols.txt` lists banned APIs; `.editorconfig` sets analyzer severities.

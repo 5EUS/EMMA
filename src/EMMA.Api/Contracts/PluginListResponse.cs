@@ -1,0 +1,6 @@
+namespace EMMA.Api.Contracts;
+
+/// <summary>The installed plugins.</summary>
+/// <param name="Plugins">The plugins, by id.</param>
+internal sealed record PluginListResponse(
+    IReadOnlyList<PluginSummary> Plugins);

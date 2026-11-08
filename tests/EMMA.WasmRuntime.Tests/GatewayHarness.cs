@@ -63,19 +63,13 @@ internal sealed class GatewayHarness : IAsyncDisposable
         this.root.Delete(recursive: true);
     }
 
-    /// <summary>Builds a signed (or unsigned) package around a fixture component.</summary>
-    /// <param name="fixture">The fixture name.</param>
-    /// <param name="sign">Whether to sign it.</param>
-    /// <param name="adjust">Changes the manifest before signing.</param>
-    /// <returns>The zip.</returns>
-    internal static async Task<byte[]> PackageAsync(string fixture, bool sign = true, Func<PluginManifest, PluginManifest>? adjust = null)
-    {
-        byte[] component = await File.ReadAllBytesAsync(NativeArtifacts.Plugin(fixture)).ConfigureAwait(false);
-        PluginManifest manifest = TestPackages.Manifest(component, Id.Value, sign: false);
-        manifest = manifest with { Kinds = [], Permissions = manifest.Permissions with { Network = [] } };
-        manifest = adjust?.Invoke(manifest) ?? manifest;
-        return TestPackages.Standard(sign ? TestPki.Sign(manifest) : manifest, component);
-    }
+    /// <summary>Packages a built fixture plugin under the harness's plugin id.</summary>
+    /// <param name="fixture">The built component's file name without extension.</param>
+    /// <param name="sign">Whether to sign the manifest.</param>
+    /// <param name="adjust">Changes the manifest before it is signed.</param>
+    /// <returns>The archive bytes.</returns>
+    internal static Task<byte[]> PackageAsync(string fixture, bool sign = true, Func<PluginManifest, PluginManifest>? adjust = null) =>
+        TestPackages.FixtureAsync(fixture, Id.Value, sign, adjust);
 
     /// <summary>Installs a package.</summary>
     /// <param name="package">The zip.</param>

@@ -1,12 +1,12 @@
-namespace EMMA.WasmRuntime.Tests;
+namespace EMMA.TestSupport;
 
 /// <summary>Finds the built plugin components and fails loudly when they are missing.</summary>
-internal static class NativeArtifacts
+public static class NativeArtifacts
 {
     /// <summary>Gets the path of a built fixture plugin.</summary>
     /// <param name="name">The file name without extension, such as <c>fixture</c>.</param>
     /// <returns>The component path.</returns>
-    internal static string Plugin(string name)
+    public static string Plugin(string name)
     {
         string path = Path.Combine(RepositoryRoot(), "artifacts", "native", "plugins", name + ".wasm");
         return File.Exists(path)

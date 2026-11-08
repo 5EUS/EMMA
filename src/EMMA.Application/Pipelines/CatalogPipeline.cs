@@ -87,6 +87,19 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
             [.. references.Where(found.ContainsKey).Select(reference => found[reference])]);
     }
 
+    /// <summary>Gets what a plugin says about itself, checked against the contract.</summary>
+    /// <param name="plugin">The plugin.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The plugin's declaration, or why it could not be had or was rejected.</returns>
+    public async Task<Outcome<PluginInfo>> DescribeAsync(PluginId plugin, CancellationToken cancellationToken)
+    {
+        Outcome<PluginInfo> info = await executor.ExecuteAsync(token => gateway.DescribeAsync(plugin, token), cancellationToken).ConfigureAwait(false);
+        string? problem = info.IsSuccess ? PluginInfoValidator.FindProblem(info.Value) : null;
+        return problem is null
+            ? info
+            : Outcome.Failure<PluginInfo>(ErrorCode.Internal, $"Plugin {plugin} {problem}.");
+    }
+
     private async Task<Outcome<IReadOnlyList<Node>>> GetFromPluginAsync(
         PluginId plugin,
         IReadOnlyList<NodeRef> requested,
@@ -169,15 +182,6 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         }
 
         return page;
-    }
-
-    private async Task<Outcome<PluginInfo>> DescribeAsync(PluginId plugin, CancellationToken cancellationToken)
-    {
-        Outcome<PluginInfo> info = await executor.ExecuteAsync(token => gateway.DescribeAsync(plugin, token), cancellationToken).ConfigureAwait(false);
-        string? problem = info.IsSuccess ? PluginInfoValidator.FindProblem(info.Value) : null;
-        return problem is null
-            ? info
-            : Outcome.Failure<PluginInfo>(ErrorCode.Internal, $"Plugin {plugin} {problem}.");
     }
 
     private Task RememberAsync(IReadOnlyList<Node> nodes, CancellationToken cancellationToken) =>

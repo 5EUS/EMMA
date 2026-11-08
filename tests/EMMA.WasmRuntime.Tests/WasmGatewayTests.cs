@@ -1,6 +1,7 @@
 using EMMA.Domain;
 using EMMA.PluginHost.Manifest;
 using EMMA.PluginHost.Runtime;
+using EMMA.TestSupport;
 
 using Xunit;
 

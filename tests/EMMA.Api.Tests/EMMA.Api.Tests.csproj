@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <!-- xUnit v3 test assemblies are self-hosting executables. -->
+    <OutputType>Exe</OutputType>
+    <!-- Tests are not published AOT; they exercise the same code the AOT build ships. -->
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>false</IsAotCompatible>
+    <NativeArtifacts>$(MSBuildThisFileDirectory)../../artifacts/native/</NativeArtifacts>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/EMMA.Api/EMMA.Api.csproj" />
+    <ProjectReference Include="../EMMA.TestSupport/EMMA.TestSupport.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+  <!--
+    WasmEndToEndTests drive the real native host and a real Wasm component. A missing artifact is a failed
+    build, not a skipped test (see EMMA.WasmRuntime.Tests). The API project copies the library beside its
+    output; this target only makes its absence loud.
+  -->
+  <Target Name="RequireNativeArtifacts" BeforeTargets="BeforeBuild">
+    <ItemGroup>
+      <NativeHostFile Include="$(NativeArtifacts)lib/*" />
+    </ItemGroup>
+    <Error Condition="'@(NativeHostFile)' == ''"
+           Code="EMMA0001"
+           Text="The native Wasm host is not built. Run: sh native/build-host.sh and sh native/build-plugins.sh" />
+  </Target>
+</Project>

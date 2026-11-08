@@ -10,6 +10,7 @@
     <Project Path="src/EMMA.WasmRuntime/EMMA.WasmRuntime.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/EMMA.Api.Tests/EMMA.Api.Tests.csproj" />
     <Project Path="tests/EMMA.Application.Tests/EMMA.Application.Tests.csproj" />
     <Project Path="tests/EMMA.Domain.Tests/EMMA.Domain.Tests.csproj" />
     <Project Path="tests/EMMA.Infrastructure.Tests/EMMA.Infrastructure.Tests.csproj" />

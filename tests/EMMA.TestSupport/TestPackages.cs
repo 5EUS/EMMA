@@ -35,6 +35,21 @@ public static class TestPackages
         return sign ? TestPki.Sign(manifest) : manifest;
     }
 
+    /// <summary>Packages a built fixture plugin (see <see cref="NativeArtifacts"/>) as an installable archive.</summary>
+    /// <param name="fixture">The built component's file name without extension, such as <c>fixture</c>.</param>
+    /// <param name="id">The plugin id to install it under.</param>
+    /// <param name="sign">Whether to sign the manifest with the test signer.</param>
+    /// <param name="adjust">Changes the manifest before it is signed.</param>
+    /// <returns>The archive bytes.</returns>
+    public static async Task<byte[]> FixtureAsync(string fixture, string id, bool sign = true, Func<PluginManifest, PluginManifest>? adjust = null)
+    {
+        byte[] component = await File.ReadAllBytesAsync(NativeArtifacts.Plugin(fixture)).ConfigureAwait(false);
+        PluginManifest manifest = Manifest(component, id, sign: false);
+        manifest = manifest with { Kinds = [], Permissions = manifest.Permissions with { Network = [] } };
+        manifest = adjust?.Invoke(manifest) ?? manifest;
+        return Standard(sign ? TestPki.Sign(manifest) : manifest, component);
+    }
+
     /// <summary>Builds a well-formed package: the manifest and the entrypoint.</summary>
     /// <param name="manifest">The manifest.</param>
     /// <param name="component">The component bytes.</param>

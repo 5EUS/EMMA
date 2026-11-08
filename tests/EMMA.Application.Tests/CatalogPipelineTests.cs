@@ -40,6 +40,19 @@ public sealed class CatalogPipelineTests
         Assert.NotNull(await this.store.GetAsync(TestData.Ref("s1"), CancellationToken.None).ConfigureAwait(true));
     }
 
+    /// <summary>Describing returns a valid declaration and rejects one that breaks the contract.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task DescribeReturnsOnlyValidDeclarations()
+    {
+        Outcome<PluginInfo> valid = await this.pipeline.DescribeAsync(TestData.Plugin, CancellationToken.None).ConfigureAwait(true);
+        this.gateway.OnDescribe = _ => Outcome.Success(TestData.Info() with { Kinds = [TestData.Kind("series", ["ghost"])] });
+        Outcome<PluginInfo> invalid = await this.pipeline.DescribeAsync(TestData.Plugin, CancellationToken.None).ConfigureAwait(true);
+
+        Assert.True(valid.IsSuccess);
+        Assert.Equal(ErrorCode.Internal, invalid.Error?.Code);
+    }
+
     /// <summary>A query that does not match the plugin's declaration never reaches the plugin.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]

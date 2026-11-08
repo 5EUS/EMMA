@@ -1,3 +1,5 @@
+using EMMA.TestSupport;
+
 namespace EMMA.WasmRuntime.Tests;
 
 /// <summary>Plugin configurations for the tests.</summary>
