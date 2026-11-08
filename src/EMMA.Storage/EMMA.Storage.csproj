@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    TODO(rewrite): main's initial schema also had `plugins`, `plugin_failures`,
-    `media_migration_candidates` and `media_migration_map` tables. The plugin registry and
-    failure log belong with the plugin host (phase 4). The migration tables backed a feature
-    that moved a library entry from one plugin to another by matching titles; it is not
-    ported, and would be rebuilt on NodeRef (map old ref to new ref) if it is still wanted.
+    TODO(rewrite): main's initial schema also had `media_migration_candidates` and `media_migration_map` tables. They
+    backed a feature that moved a library entry from one plugin to another by matching titles; it is not ported, and
+    is rebuilt on NodeRef (map old ref to new ref) in the migrations work. main's `plugin_failures` table is gone on
+    purpose: failures are reported through IPluginLogPort and a failing plugin is quarantined in memory, so there is
+    nothing to persist.
   -->
   <!--
     TODO(rewrite): NativeAOT and SQLite. Verified on linux-x64 (2026-11-07): a NativeAOT
@@ -14,8 +14,8 @@
     SQLitePCLRaw static or per-ABI libraries.
   -->
   <!--
-    TODO(rewrite): the default database path (main read EMMA_STORAGE_DATABASE_PATH inside
-    StorageOptions) is deliberately gone. The host resolves configuration and passes the path in.
+    There is no default database path. main read EMMA_STORAGE_DATABASE_PATH inside StorageOptions; now every host
+    resolves its own data directory and EmmaRuntime puts the database at <data>/emma.db (docs/architecture/native-abi.md).
   -->
   <PropertyGroup>
     <!-- SqliteNativeLibrary loads SQLite with dlopen (RTLD_DEEPBIND) through a source-generated P/Invoke. -->

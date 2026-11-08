@@ -29,9 +29,7 @@ jobs:
           - { runner: ubuntu-24.04-arm, rid: linux-arm64 }
           - { runner: windows-latest,   rid: win-x64 }
           - { runner: windows-11-arm,   rid: win-arm64 }
-          # TODO(rewrite): macos-13 was retired by GitHub. Verify the Intel macOS runner
-          # label (likely macos-15-intel) and fix it here and in ../strict-csharp.
-          - { runner: macos-13,         rid: osx-x64 }
+          - { runner: macos-15-intel,   rid: osx-x64 }
           - { runner: macos-latest,     rid: osx-arm64 }
     steps:
       - uses: actions/checkout@v4

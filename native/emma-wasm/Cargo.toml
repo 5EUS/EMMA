@@ -17,6 +17,10 @@ ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] 
 wasmtime = { version = "50", default-features = false, features = ["component-model", "runtime", "std", "cranelift", "pulley", "parallel-compilation"] }
 wasmtime-wasi = "50"
 
+[dev-dependencies]
+# Parses the WIT contract in tests/contract.rs; already in the lock file through wasmtime.
+wit-parser = "0.261"
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "warn"

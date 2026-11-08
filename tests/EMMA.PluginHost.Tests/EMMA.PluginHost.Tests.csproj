@@ -13,6 +13,10 @@
     <ProjectReference Include="../EMMA.PluginConformance/EMMA.PluginConformance.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The schema is documentation of the signed manifest; ManifestSchemaTests keeps it in step with the writer. -->
+    <None Include="../../src/EMMA.Contracts/plugin-manifest.schema.json" Link="plugin-manifest.schema.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />

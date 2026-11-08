@@ -1,10 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!--
-    TODO(rewrite): the original stub referenced the `Wasmtime` NuGet package 44.0.0
-    (wasmtime-dotnet). It was removed in phase 0 because the agreed design is the
-    slimmed Rust wasmtime host (native/emma-wasm). Confirm with the owner that this
-    is intended; restore the reference if wasmtime-dotnet is wanted after all.
-  -->
   <PropertyGroup>
     <!-- Required by the source-generated [LibraryImport] stubs; this project writes no unsafe code of its own. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

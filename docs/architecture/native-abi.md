@@ -45,7 +45,8 @@ the design and lists every operation.
 }
 ```
 
-`data_dir` is required. `user` defaults to `local`. `trust` defaults to `require_signed` with no repositories, which
+`data_dir` is required: the library keeps everything under it (the database is `emma.db`), and there is no default
+location. `user` defaults to `local`. `trust` defaults to `require_signed` with no repositories, which
 means nothing can be installed until a repository is trusted. `require_signed: false` is honoured because the embedding
 app writes this document; do not build it from user-editable input.
 

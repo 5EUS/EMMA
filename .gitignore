@@ -44,13 +44,6 @@ msbuild.err
 msbuild.wrn
 artifacts/
 
-# Node.js build artifacts
-# TODO(rewrite): this repo has no Node code, so ignoring package.json looks like a
-# leftover from an old template and could hide a real file. Confirm and remove.
-node_modules/
-package-lock.json
-package.json
-
 # VS Code settings
 .vscode/
 

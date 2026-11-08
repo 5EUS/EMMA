@@ -59,6 +59,15 @@ file for development.
 The network allow-list is implemented twice (what the manifest grants in `CapabilityPolicy`,
 what is enforced in Rust). Both read `native/emma-wasm/tests/vectors/network-policy.json`.
 
+## The plugin cache
+
+`host.cache-get` and `host.cache-put` are owned by the Rust host (`native/emma-wasm/src/cache.rs`) and nothing else.
+The cache is in memory, private to one opened plugin, bounded (256 entries, 8 MiB in total, 1 MiB a value) and
+expiring, so a lookup never crosses the FFI boundary and a plugin cannot fill the user's disk. It does not survive the
+instance: closing or reloading a plugin empties it, which is also how a user clears it. There is deliberately no
+.NET-side port, because a second implementation would have to enforce the same limits to be interchangeable. Anything
+that must outlive a restart is a node prop or a setting, not a cache entry.
+
 ## Open items
 
 - TODO(rewrite): iOS needs `pulley64` (no JIT). The runtime option and the precompile path exist
@@ -69,8 +78,6 @@ what is enforced in Rust). Both read `native/emma-wasm/tests/vectors/network-pol
   if the install directory is writable by others. An open-from-bytes call would close it.
 - TODO(rewrite): the binary lane exists only for `read`. If `inline` assets or other results grow
   large, move them there too.
-- TODO(rewrite): `host.cache` is implemented in Rust and duplicates `IPluginCachePort`. Decide
-  which owns plugin cache storage when the Storage layer meets the host.
 - TODO(rewrite): a plugin-author test harness (run a component against canned HTTP responses
   without the whole app). The Rust tests have the pieces.
 - TODO(rewrite): the user-settings store and secret encryption behind `IPluginSettingsPort`.

@@ -397,6 +397,7 @@ dependencies = [
  "ureq",
  "wasmtime",
  "wasmtime-wasi",
+ "wit-parser",
 ]
 
 [[package]]
