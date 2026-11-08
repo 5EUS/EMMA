@@ -1,9 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!--
-    TODO(rewrite): no plugin settings store exists, so the host uses EmptyPluginSettings and every plugin runs
-    on its declared defaults. A plugin with a required setting (an API token, say) cannot be configured until
-    the store is built, with encryption at rest for `secret` settings (docs/architecture/contract.md section 12).
-  -->
   <ItemGroup>
     <ProjectReference Include="../EMMA.Application/EMMA.Application.csproj" />
   </ItemGroup>

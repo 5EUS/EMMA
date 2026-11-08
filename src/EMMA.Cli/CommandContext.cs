@@ -22,6 +22,9 @@ internal sealed record CommandContext(Arguments Arguments, TextWriter Output, Te
     /// <summary>The exit code for a command line that is wrong.</summary>
     public const int Usage = 2;
 
+    /// <summary>Gets standard input, from which a command reads what must not appear on a command line, such as a secret.</summary>
+    public TextReader Input { get; init; } = TextReader.Null;
+
     /// <summary>Gets the directory EMMA keeps its state in: <c>--data-dir</c>, else the same default the HTTP API uses, so a plugin installed here is the one the API serves.</summary>
     public string DataDirectory
     {

@@ -24,7 +24,8 @@ internal sealed class RuntimeHarness : IAsyncDisposable
     /// <summary>Gets the current runtime; <see cref="ReopenAsync"/> replaces it.</summary>
     internal EmmaRuntime Runtime { get; private set; }
 
-    private string DataDirectory => this.root.FullName;
+    /// <summary>Gets the directory the runtime keeps its state in.</summary>
+    internal string DataDirectory => this.root.FullName;
 
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()

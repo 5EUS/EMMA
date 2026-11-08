@@ -8,6 +8,6 @@ Console.CancelKeyPress += (_, eventArgs) =>
     cancelled = interrupt.CancelAsync();
 };
 
-int exitCode = await CliApp.RunAsync(args, Console.Out, Console.Error, interrupt.Token).ConfigureAwait(false);
+int exitCode = await CliApp.RunAsync(args, Console.Out, Console.Error, interrupt.Token, Console.In).ConfigureAwait(false);
 await cancelled.ConfigureAwait(false);
 return exitCode;

@@ -11,6 +11,7 @@ namespace EMMA.Cli;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 [JsonSerializable(typeof(PluginListResponse))]
 [JsonSerializable(typeof(PluginDetailResponse))]
+[JsonSerializable(typeof(PluginSettingsResponse))]
 [JsonSerializable(typeof(PluginSummary))]
 [JsonSerializable(typeof(NodePageResponse))]
 [JsonSerializable(typeof(NodeListResponse))]

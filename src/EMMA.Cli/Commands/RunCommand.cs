@@ -18,7 +18,7 @@ namespace EMMA.Cli.Commands;
 internal static class RunCommand
 {
     private const string Repository = "dev";
-    private const string OperationHelp = "Operations: describe | search [text] | children [node] | get <node>... | assets <node> <role> | content <node> <role> [--index n] [--out file].";
+    private const string OperationHelp = "Operations: describe | search [text] | children [node] | get <node>... | assets <node> <role> | content <node> <role> [--index n] [--out file]. Add --settings <file.json> to give the plugin values for its settings.";
 
     /// <summary>Runs one operation against a plugin.</summary>
     /// <param name="context">The command.</param>
@@ -43,9 +43,15 @@ internal static class RunCommand
                 await runtime.InitializeAsync(context.CancellationToken).ConfigureAwait(false);
                 using MemoryStream stream = new(package.Value);
                 Outcome<InstalledPlugin> installed = await runtime.InstallAsync(stream, Repository, context.CancellationToken).ConfigureAwait(false);
-                return installed.IsSuccess
+                if (!installed.IsSuccess)
+                {
+                    return await context.FailAsync(installed.Error).ConfigureAwait(false);
+                }
+
+                PluginError? unusable = await ApplySettingsAsync(context, runtime, installed.Value.Id).ConfigureAwait(false);
+                return unusable is null
                     ? await ExecuteAsync(context, runtime, installed.Value.Id, operation, operands).ConfigureAwait(false)
-                    : await context.FailAsync(installed.Error).ConfigureAwait(false);
+                    : await context.FailAsync(unusable).ConfigureAwait(false);
             }
         }
         finally
@@ -53,6 +59,24 @@ internal static class RunCommand
             SqliteConnection.ClearAllPools();
             scratch.Delete(recursive: true);
         }
+    }
+
+    /// <summary>Gives the plugin the values from <c>--settings</c>, if given, checked against what the plugin declares like any other change.</summary>
+    private static async Task<PluginError?> ApplySettingsAsync(CommandContext context, EmmaRuntime runtime, PluginId plugin)
+    {
+        if (context.Arguments.Option("settings") is not { } path)
+        {
+            return null;
+        }
+
+        Outcome<IReadOnlyList<SettingChange>> changes = await SettingsFile.ReadAsync(path, context.CancellationToken).ConfigureAwait(false);
+        if (!changes.IsSuccess)
+        {
+            return changes.Error;
+        }
+
+        Outcome<IReadOnlyList<SettingState>> applied = await runtime.SetPluginSettingsAsync(plugin, changes.Value, context.CancellationToken).ConfigureAwait(false);
+        return applied.IsSuccess ? null : applied.Error;
     }
 
     private static async Task<Outcome<byte[]>> PackageAsync(string source, CancellationToken cancellationToken)

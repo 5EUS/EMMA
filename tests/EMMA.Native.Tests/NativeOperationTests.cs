@@ -43,6 +43,61 @@ public sealed class NativeOperationTests
         }
     }
 
+    /// <summary>Settings are listed from what the plugin declared, changed through the library and seen by the real plugin on its next call.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task PluginSettingsRoundTripThroughTheLibrary()
+    {
+        NativeHarness host = await NativeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.InstallFixtureAsync().ConfigureAwait(true);
+            JsonObject plugin = new() { ["plugin"] = NativeHarness.Plugin };
+
+            CallResult before = host.Call("plugins.settings_get", plugin);
+            CallResult changed = host.Call(
+                "plugins.settings_set",
+                new JsonObject
+                {
+                    ["plugin"] = NativeHarness.Plugin,
+                    ["changes"] = new JsonArray(
+                        new JsonObject { ["key"] = "connection.token", ["values"] = new JsonArray("abc") },
+                        new JsonObject { ["key"] = "connection.user", ["values"] = new JsonArray("me") }),
+                });
+            CallResult seen = host.Call("catalog.search", Search("setting:connection.token"));
+
+            JsonArray states = before.Ok["settings"]!.AsArray();
+            Assert.Contains(states, state => string.Equals(state!["key"]!.GetValue<string>(), "connection.token", StringComparison.Ordinal) && state["missing"]!.GetValue<bool>());
+            Assert.Equal(NativeStatus.Ok, changed.Status);
+            Assert.DoesNotContain("abc", changed.Json.ToJsonString(), StringComparison.Ordinal);
+            Assert.Equal("abc", seen.Ok["items"]![0]!["title"]!.GetValue<string>());
+        }
+    }
+
+    /// <summary>A bad settings request fails with a reason: an undeclared key, a value of the wrong type, a malformed change.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task BadSettingsRequestsAreRefused()
+    {
+        NativeHarness host = await NativeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.InstallFixtureAsync().ConfigureAwait(true);
+
+            CallResult undeclared = host.Call("plugins.settings_set", Change("nope", "x"));
+            CallResult wrongType = host.Call("plugins.settings_set", Change("advanced.verbose", "maybe"));
+            CallResult noChanges = host.Call("plugins.settings_set", new JsonObject { ["plugin"] = NativeHarness.Plugin });
+            CallResult noKey = host.Call("plugins.settings_set", new JsonObject { ["plugin"] = NativeHarness.Plugin, ["changes"] = new JsonArray(new JsonObject { ["values"] = new JsonArray("x") }) });
+            CallResult unknownPlugin = host.Call("plugins.settings_get", new JsonObject { ["plugin"] = "com.example.nope" });
+
+            Assert.Equal("invalid_argument", undeclared.ErrorCode);
+            Assert.Equal("invalid_argument", wrongType.ErrorCode);
+            Assert.Equal("invalid_argument", noChanges.ErrorCode);
+            Assert.Equal("invalid_argument", noKey.ErrorCode);
+            Assert.Equal("not_found", unknownPlugin.ErrorCode);
+        }
+    }
+
     /// <summary>Installing garbage, an unsigned package or a missing file fails with a reason and installs nothing.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
@@ -202,6 +257,12 @@ public sealed class NativeOperationTests
             Assert.Equal("not_found", removedAgain.ErrorCode);
         }
     }
+
+    private static JsonObject Change(string key, string value) => new()
+    {
+        ["plugin"] = NativeHarness.Plugin,
+        ["changes"] = new JsonArray(new JsonObject { ["key"] = key, ["values"] = new JsonArray(value) }),
+    };
 
     private static JsonObject Search(string text, int? limit = null, string? cursor = null)
     {

@@ -333,5 +333,17 @@ Still open (small; defaults apply unless changed):
 settings are still readable by the plugin. `required` marks a setting the plugin cannot work
 without. Defaults are text values in `default-values`.
 
-Not built yet: the store for the user's values and the encryption of secrets. The host reads
-them through `IPluginSettingsPort`, so the plugin side is complete and tested.
+### Where the values live
+
+The host keeps the user's values in the `plugin_settings` table, one row per value, and passes the plugin a snapshot
+when it is opened; a change closes the plugin so its next call reopens with the new values. What may be set is exactly
+what the plugin declared: `PluginSettingsPipeline` checks every change against the `setting-spec` (type, choices, length,
+`multi-choice` distinctness) before anything is stored, and a request is applied whole or not at all. Settings belong to
+the install, not to a user, and a plugin's settings go when it is uninstalled but survive an upgrade.
+
+A `secret` is stored encrypted (AES-256-GCM, `FileSecretBox`) under a random key in `<data>/secret.key`, with the plugin
+and setting key as associated data so a ciphertext cannot be moved to another row. It is decrypted only to build the
+plugin's snapshot, and no operation returns it: a client sees that it is set and nothing more. The key file is the one
+thing that makes the secrets readable, so a backup of `emma.db` needs `secret.key` beside it; without the key a secret
+reads as not set and the user is asked again. The key file protects against a copied database, not against someone who
+can read the user's own files; keeping the key in the platform keychain is a later step.

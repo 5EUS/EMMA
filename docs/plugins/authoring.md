@@ -79,6 +79,10 @@ manifest that disagrees with the component. Operations: `describe`, `search [tex
 `assets <node> <role>`, `content <node> <role> [--out file]`. Nodes may be given as the plugin's own id or the full
 `plugin.id:local-id`. `--json` output is the same JSON the HTTP API serves.
 
+If your plugin declares settings (an account name, an API token), `--settings settings.json` gives it values the way a
+user's screen would: a JSON object of setting key to text, number, boolean or (for a multi-choice) a list of text. The
+values are checked against your declaration like a user's, so this also tests the declaration itself.
+
 For automated tests, a plugin is a function from requests to responses: unit-test it natively in Rust, and use `emma
 plugin run` in CI as an end-to-end check against the real host.
 

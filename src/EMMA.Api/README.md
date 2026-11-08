@@ -51,6 +51,8 @@ A bad value in any setting stops the host at startup with a message naming it.
 | `GET /health` | Liveness. The only unauthenticated endpoint. |
 | `GET /v1/plugins` | Installed plugins: `id`, `version`, `status` (`enabled`, `disabled`, `quarantined`), `signer`. |
 | `GET /v1/plugins/{plugin}` | One plugin and, when enabled, what it declares: kinds (the tree schema), filters, sorts, settings. |
+| `GET /v1/plugins/{plugin}/settings` | Where each setting the plugin declared stands: `key`, `is_set`, `values` (never for a secret) and `missing` (required, unset, no default). The labels, types and defaults are in the plugin detail. |
+| `PUT /v1/plugins/{plugin}/settings` | Change settings, all or none. Body: `changes`, a list of `key` and `values` (an empty list clears the setting). Answers like `GET`. The plugin reopens with the new values on its next call. |
 | `GET /v1/plugins/{plugin}/browse` | The plugin's landing content. `cursor`, `limit`. |
 | `POST /v1/plugins/{plugin}/search` | Search. Body: `text`, `kinds`, `filters` (`id`, `values`), `sort`, `cursor`, `limit`. All optional. |
 | `GET /v1/nodes?ref=…&ref=…` | Fetch up to 500 nodes by reference, in the order asked. Unknown ones are omitted. |

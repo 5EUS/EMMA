@@ -60,4 +60,7 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
   that shows up in measurements.
 - TODO(rewrite): API keys carry no scopes or expiry; every client may use every endpoint. A read-only key is easy to add
   to `ApiClientKey` when a client needs one.
-- Out of scope for the API: plugin management (CLI), plugin settings (no store yet), downloads (no executor yet).
+- TODO(rewrite): plugin settings are host-wide, not per client, and every client key may read and change them (a secret
+  can be set but never read back). That is the same "keys carry no scopes" gap as above: once keys have scopes, changing
+  settings should need one that reading does not.
+- Out of scope for the API: plugin management (CLI), downloads (no executor yet).

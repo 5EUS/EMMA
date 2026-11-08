@@ -21,6 +21,7 @@ namespace EMMA.Native.Requests;
 [JsonSerializable(typeof(RecentCall))]
 [JsonSerializable(typeof(InstallCall))]
 [JsonSerializable(typeof(StatusCall))]
+[JsonSerializable(typeof(SettingsCall))]
 [JsonSerializable(typeof(ContentInfo))]
 internal sealed partial class NativeJsonContext : JsonSerializerContext
 {

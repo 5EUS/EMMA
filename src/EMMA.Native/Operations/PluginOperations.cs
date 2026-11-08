@@ -38,6 +38,47 @@ internal static class PluginOperations
             : Envelope.Failure(detail.Error);
     }
 
+    /// <summary>Gets where each of a plugin's declared settings stands.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> SettingsGetAsync(OperationContext context)
+    {
+        Outcome<PluginId> id = ReadPlugin(context);
+        if (!id.IsSuccess)
+        {
+            return Envelope.Failure(id.Error);
+        }
+
+        Outcome<IReadOnlyList<SettingState>> states = await context.Runtime.GetPluginSettingsAsync(id.Value, context.CancellationToken).ConfigureAwait(false);
+        return states.IsSuccess
+            ? Envelope.Ok(SettingsMapper.ToResponse(states.Value), ApiJsonContext.Default.PluginSettingsResponse)
+            : Envelope.Failure(states.Error);
+    }
+
+    /// <summary>Changes some of a plugin's settings, all or none.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> SettingsSetAsync(OperationContext context)
+    {
+        Outcome<SettingsCall> call = context.Read(NativeJsonContext.Default.SettingsCall);
+        Outcome<PluginId> id = call.IsSuccess ? RequestParsing.Plugin(call.Value.Plugin) : Outcome.Failure<PluginId>(call.Error);
+        if (!id.IsSuccess)
+        {
+            return Envelope.Failure(id.Error);
+        }
+
+        Outcome<IReadOnlyList<SettingChange>> changes = SettingsMapper.ToChanges(call.Value.Changes);
+        if (!changes.IsSuccess)
+        {
+            return Envelope.Failure(changes.Error);
+        }
+
+        Outcome<IReadOnlyList<SettingState>> states = await context.Runtime.SetPluginSettingsAsync(id.Value, changes.Value, context.CancellationToken).ConfigureAwait(false);
+        return states.IsSuccess
+            ? Envelope.Ok(SettingsMapper.ToResponse(states.Value), ApiJsonContext.Default.PluginSettingsResponse)
+            : Envelope.Failure(states.Error);
+    }
+
     /// <summary>Installs a plugin from a package file.</summary>
     /// <param name="context">The call.</param>
     /// <returns>The response.</returns>

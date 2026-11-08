@@ -8,7 +8,7 @@ using EMMA.Runtime;
 
 namespace EMMA.Api.Endpoints;
 
-/// <summary>Lists installed plugins and searches within one. Managing plugins is not an HTTP concern.</summary>
+/// <summary>Lists installed plugins, searches within one and reads or changes its settings. Managing plugins is not an HTTP concern.</summary>
 internal static class PluginEndpoints
 {
     /// <summary>Maps the endpoints.</summary>
@@ -17,6 +17,8 @@ internal static class PluginEndpoints
     {
         routes.MapGet("/plugins", ListAsync);
         routes.MapGet("/plugins/{plugin}", DetailAsync);
+        routes.MapGet("/plugins/{plugin}/settings", SettingsAsync);
+        routes.MapPut("/plugins/{plugin}/settings", SetSettingsAsync);
         routes.MapGet("/plugins/{plugin}/browse", BrowseAsync);
         routes.MapPost("/plugins/{plugin}/search", SearchAsync);
     }
@@ -41,6 +43,45 @@ internal static class PluginEndpoints
         return detail.IsSuccess
             ? ApiResults.Ok(PluginMapper.ToDetail(detail.Value.Plugin, detail.Value.Info), ApiJsonContext.Default.PluginDetailResponse)
             : ApiResults.Failure(detail.Error);
+    }
+
+    private static async Task<IResult> SettingsAsync(string plugin, EmmaRuntime runtime, CancellationToken cancellationToken)
+    {
+        Outcome<PluginId> id = RequestReader.Plugin(plugin);
+        if (!id.IsSuccess)
+        {
+            return ApiResults.Failure(id.Error);
+        }
+
+        Outcome<IReadOnlyList<SettingState>> states = await runtime.GetPluginSettingsAsync(id.Value, cancellationToken).ConfigureAwait(false);
+        return states.IsSuccess
+            ? ApiResults.Ok(SettingsMapper.ToResponse(states.Value), ApiJsonContext.Default.PluginSettingsResponse)
+            : ApiResults.Failure(states.Error);
+    }
+
+    private static async Task<IResult> SetSettingsAsync(
+        string plugin,
+        HttpContext context,
+        EmmaRuntime runtime,
+        CancellationToken cancellationToken)
+    {
+        Outcome<PluginId> id = RequestReader.Plugin(plugin);
+        if (!id.IsSuccess)
+        {
+            return ApiResults.Failure(id.Error);
+        }
+
+        Outcome<SetSettingsRequest> body = await RequestReader.BodyAsync(context.Request, ApiJsonContext.Default.SetSettingsRequest, cancellationToken).ConfigureAwait(false);
+        Outcome<IReadOnlyList<SettingChange>> changes = body.IsSuccess ? SettingsMapper.ToChanges(body.Value.Changes) : Outcome.Failure<IReadOnlyList<SettingChange>>(body.Error);
+        if (!changes.IsSuccess)
+        {
+            return ApiResults.Failure(changes.Error);
+        }
+
+        Outcome<IReadOnlyList<SettingState>> states = await runtime.SetPluginSettingsAsync(id.Value, changes.Value, cancellationToken).ConfigureAwait(false);
+        return states.IsSuccess
+            ? ApiResults.Ok(SettingsMapper.ToResponse(states.Value), ApiJsonContext.Default.PluginSettingsResponse)
+            : ApiResults.Failure(states.Error);
     }
 
     private static async Task<IResult> BrowseAsync(

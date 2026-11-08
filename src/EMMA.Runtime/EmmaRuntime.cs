@@ -3,7 +3,7 @@ using EMMA.Application.Ports;
 using EMMA.Domain;
 using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Http;
-using EMMA.Infrastructure.Settings;
+using EMMA.Infrastructure.Secrets;
 using EMMA.PluginHost.Install;
 using EMMA.PluginHost.Policy;
 using EMMA.PluginHost.Runtime;
@@ -22,6 +22,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 {
     private readonly StorageInitializer storage;
     private readonly BoundedAssetCache cache;
+    private readonly FileSecretBox secretBox;
     private readonly HttpClient? http;
     private readonly LazyWasmTransport? transport;
     private readonly WasmPluginGateway? wasmGateway;
@@ -42,6 +43,8 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.Nodes = new SqliteNodeStore(storageOptions, this.Time);
         this.ProgressStore = new SqliteProgressStore(storageOptions);
         this.Library = new SqliteLibraryStore(storageOptions);
+        this.secretBox = new FileSecretBox(Path.Combine(data, "secret.key"));
+        IPluginSettingsPort settings = new SqlitePluginSettings(storageOptions, this.secretBox, this.Time);
         this.Policies = new ManifestCapabilityPolicyProvider();
         this.Verifier = new PluginSignatureVerifier(
             options.Trust,
@@ -74,7 +77,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         else
         {
             this.transport = new LazyWasmTransport();
-            PluginLoader loader = new(this.HostOptions, options.Trust, this.Verifier, this.Registry, new EmptyPluginSettings(), this.transport, this.Time);
+            PluginLoader loader = new(this.HostOptions, options.Trust, this.Verifier, this.Registry, settings, this.transport, this.Time);
             this.wasmGateway = new WasmPluginGateway(loader, this.Registry, options.PluginLog, this.Time, options.Gateway);
             this.Gateway = this.wasmGateway;
         }
@@ -82,6 +85,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.Catalog = new CatalogPipeline(this.Gateway, this.Nodes, executor);
         this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, executor, AssetPipelineOptions.Default, this.Time);
         this.Progress = new ProgressPipeline(this.ProgressStore, this.Time);
+        this.PluginSettings = new PluginSettingsPipeline(this.Gateway, settings);
     }
 
     /// <summary>Gets the time source.</summary>
@@ -125,6 +129,9 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 
     /// <summary>Gets progress.</summary>
     public ProgressPipeline Progress { get; }
+
+    /// <summary>Gets the user's plugin settings. Prefer <see cref="SetPluginSettingsAsync"/> for changes, which also reopens the plugin.</summary>
+    public PluginSettingsPipeline PluginSettings { get; }
 
     /// <summary>Creates and migrates the database, prepares the asset cache and builds each plugin's permissions.</summary>
     /// <param name="cancellationToken">Cancels the preparation.</param>
@@ -176,6 +183,32 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         return found;
     }
 
+    /// <summary>Gets where each of a plugin's declared settings stands.</summary>
+    /// <param name="plugin">The plugin, which must be enabled.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>One state per declared setting, or why the plugin could not be asked.</returns>
+    public Task<Outcome<IReadOnlyList<SettingState>>> GetPluginSettingsAsync(PluginId plugin, CancellationToken cancellationToken) =>
+        this.PluginSettings.GetAsync(plugin, cancellationToken);
+
+    /// <summary>Changes a plugin's settings, effective on its next call: the plugin is closed and reopens with the new values.</summary>
+    /// <param name="plugin">The plugin, which must be enabled.</param>
+    /// <param name="changes">The settings to change; see <see cref="PluginSettingsPipeline.SetAsync"/>.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The settings as they now stand, or why nothing was changed.</returns>
+    public async Task<Outcome<IReadOnlyList<SettingState>>> SetPluginSettingsAsync(
+        PluginId plugin,
+        IReadOnlyList<SettingChange> changes,
+        CancellationToken cancellationToken)
+    {
+        Outcome<IReadOnlyList<SettingState>> states = await this.PluginSettings.SetAsync(plugin, changes, cancellationToken).ConfigureAwait(false);
+        if (states.IsSuccess && changes.Count > 0)
+        {
+            await this.UnloadAsync(plugin, cancellationToken).ConfigureAwait(false);
+        }
+
+        return states;
+    }
+
     /// <summary>Removes a plugin: closes it, forgets it and deletes its files.</summary>
     /// <param name="plugin">The plugin.</param>
     /// <param name="cancellationToken">Cancels the removal.</param>
@@ -216,6 +249,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 
         this.transport?.Dispose();
         this.http?.Dispose();
+        this.secretBox.Dispose();
     }
 
     private static void ConfigureNativeLibraries(string? directory)

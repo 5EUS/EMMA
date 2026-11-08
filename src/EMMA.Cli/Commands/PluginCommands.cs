@@ -161,7 +161,13 @@ internal static class PluginCommands
         await context.SayAsync($"Settings: {(info.Settings.Count == 0 ? "none" : string.Join(", ", info.Settings.Select(setting => setting.Key)))}").ConfigureAwait(false);
     }
 
-    private static Task<int> ChangeAsync(CommandContext context, string id, Func<EmmaRuntime, PluginId, Task<bool>> change, string done) =>
+    /// <summary>Runs a change to one plugin and reports it done, or reports that the plugin is not installed.</summary>
+    /// <param name="context">The command.</param>
+    /// <param name="id">The plugin id.</param>
+    /// <param name="change">Makes the change; returns whether the plugin was installed.</param>
+    /// <param name="done">What to say when it worked.</param>
+    /// <returns>The exit code.</returns>
+    internal static Task<int> ChangeAsync(CommandContext context, string id, Func<EmmaRuntime, PluginId, Task<bool>> change, string done) =>
         WithPluginAsync(
             context,
             id,
@@ -177,7 +183,11 @@ internal static class PluginCommands
             });
 
     /// <summary>Runs a command that acts on one plugin: checks the id, opens EMMA, and disposes it afterwards.</summary>
-    private static async Task<int> WithPluginAsync(CommandContext context, string id, Func<EmmaRuntime, PluginId, Task<int>> command)
+    /// <param name="context">The command.</param>
+    /// <param name="id">The plugin id.</param>
+    /// <param name="command">What to do with the opened runtime and the checked id.</param>
+    /// <returns>The exit code.</returns>
+    internal static async Task<int> WithPluginAsync(CommandContext context, string id, Func<EmmaRuntime, PluginId, Task<int>> command)
     {
         Outcome<PluginId> plugin = RequestParsing.Plugin(id);
         return plugin.IsSuccess

@@ -10,7 +10,7 @@ internal sealed class Arguments
 
     private static readonly HashSet<string> Valued = new(StringComparer.Ordinal)
     {
-        "data-dir", "repository", "out", "sign-key", "key-id", "valid-days", "id", "name", "index", "cursor", "limit",
+        "data-dir", "repository", "out", "sign-key", "key-id", "valid-days", "id", "name", "index", "cursor", "limit", "settings",
     };
 
     private readonly Dictionary<string, string> options = new(StringComparer.Ordinal);

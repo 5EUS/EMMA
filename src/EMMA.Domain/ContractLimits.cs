@@ -35,4 +35,7 @@ public static class ContractLimits
 
     /// <summary>Maximum length of a plugin id, in characters.</summary>
     public const int MaxPluginIdLength = 128;
+
+    /// <summary>Maximum length of one value of a user setting, in characters, whatever the setting's own limit.</summary>
+    public const int MaxSettingValueLength = 4096;
 }

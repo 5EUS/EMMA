@@ -16,6 +16,8 @@ internal static class Dispatcher
         {
             ["plugins.list"] = PluginOperations.ListAsync,
             ["plugins.get"] = PluginOperations.GetAsync,
+            ["plugins.settings_get"] = PluginOperations.SettingsGetAsync,
+            ["plugins.settings_set"] = PluginOperations.SettingsSetAsync,
             ["plugins.install"] = PluginOperations.InstallAsync,
             ["plugins.set_status"] = PluginOperations.SetStatusAsync,
             ["plugins.uninstall"] = PluginOperations.UninstallAsync,

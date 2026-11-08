@@ -62,6 +62,8 @@ Requests are JSON objects; an empty request means `{}`. `ref` is a node referenc
 |---|---|---|
 | `plugins.list` | none | `{plugins: [{id, version, status, signer}]}` |
 | `plugins.get` | `plugin` | plugin detail with its declared kinds, filters, sorts, settings |
+| `plugins.settings_get` | `plugin` | `{settings: [{key, is_set, values, missing}]}`, one per declared setting; a secret is `is_set` with no `values` |
+| `plugins.settings_set` | `plugin`, `changes` (`[{key, values}]`; empty `values` clears) | the same as `plugins.settings_get`, after the change. All or none is applied; the plugin reopens on its next call |
 | `plugins.install` | `package_path`, `repository` | the installed plugin |
 | `plugins.set_status` | `plugin`, `status` (`enabled`, `disabled`, `quarantined`) | `{}` |
 | `plugins.uninstall` | `plugin` | `{}` |

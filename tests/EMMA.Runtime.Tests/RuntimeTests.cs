@@ -78,6 +78,94 @@ public sealed class RuntimeTests
         }
     }
 
+    /// <summary>
+    /// A value the user sets reaches the real plugin (a secret in clear, since only the plugin may see it), and a change
+    /// is seen on the very next call without restarting anything.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SettingsReachThePluginAndChangesApplyAtOnce()
+    {
+        RuntimeHarness host = await RuntimeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.Runtime.InitializeAsync(Ct).ConfigureAwait(true);
+            await host.InstallAsync().ConfigureAwait(true);
+            Assert.Equal("<none>", await ReadSettingAsync(host, "connection.token").ConfigureAwait(true));
+
+            Outcome<IReadOnlyList<SettingState>> first = await host.Runtime.SetPluginSettingsAsync(Fixture, [new SettingChange("connection.token", ["abc"]), new SettingChange("connection.user", ["me"])], Ct).ConfigureAwait(true);
+            Assert.True(first.IsSuccess, first.Error?.Message);
+            Assert.Equal("abc", await ReadSettingAsync(host, "connection.token").ConfigureAwait(true));
+            Assert.Equal("me", await ReadSettingAsync(host, "connection.user").ConfigureAwait(true));
+
+            await host.Runtime.SetPluginSettingsAsync(Fixture, [new SettingChange("connection.token", ["def"])], Ct).ConfigureAwait(true);
+            Assert.Equal("def", await ReadSettingAsync(host, "connection.token").ConfigureAwait(true));
+
+            await host.Runtime.SetPluginSettingsAsync(Fixture, [new SettingChange("connection.user", [])], Ct).ConfigureAwait(true);
+            Assert.Equal("<none>", await ReadSettingAsync(host, "connection.user").ConfigureAwait(true));
+        }
+    }
+
+    /// <summary>Settings survive a restart, and what is on disk does not contain the secret.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SettingsSurviveARestartAndSecretsAreNotOnDiskInClear()
+    {
+        RuntimeHarness host = await RuntimeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.Runtime.InitializeAsync(Ct).ConfigureAwait(true);
+            await host.InstallAsync().ConfigureAwait(true);
+            await host.Runtime.SetPluginSettingsAsync(Fixture, [new SettingChange("connection.token", ["s3cret-token-value"])], Ct).ConfigureAwait(true);
+
+            await host.ReopenAsync().ConfigureAwait(true);
+            await host.Runtime.InitializeAsync(Ct).ConfigureAwait(true);
+
+            Assert.Equal("s3cret-token-value", await ReadSettingAsync(host, "connection.token").ConfigureAwait(true));
+            byte[] database = await File.ReadAllBytesAsync(Path.Combine(host.DataDirectory, "emma.db"), Ct).ConfigureAwait(true);
+            Assert.DoesNotContain("s3cret-token-value", System.Text.Encoding.UTF8.GetString(database), StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>Removing a plugin removes what the user set for it, so a reinstall starts clean.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task UninstallForgetsSettings()
+    {
+        RuntimeHarness host = await RuntimeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.Runtime.InitializeAsync(Ct).ConfigureAwait(true);
+            await host.InstallAsync().ConfigureAwait(true);
+            await host.Runtime.SetPluginSettingsAsync(Fixture, [new SettingChange("connection.user", ["me"])], Ct).ConfigureAwait(true);
+
+            await host.Runtime.UninstallAsync(Fixture, Ct).ConfigureAwait(true);
+            await host.InstallAsync().ConfigureAwait(true);
+
+            Assert.Equal("<none>", await ReadSettingAsync(host, "connection.user").ConfigureAwait(true));
+        }
+    }
+
+    /// <summary>A disabled plugin cannot say what it declares, so its settings cannot be read or changed.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task DisabledPluginHasNoSettingsToChange()
+    {
+        RuntimeHarness host = await RuntimeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.Runtime.InitializeAsync(Ct).ConfigureAwait(true);
+            await host.InstallAsync().ConfigureAwait(true);
+            await host.Runtime.SetStatusAsync(Fixture, PluginStatus.Disabled, Ct).ConfigureAwait(true);
+
+            Outcome<IReadOnlyList<SettingState>> read = await host.Runtime.GetPluginSettingsAsync(Fixture, Ct).ConfigureAwait(true);
+            Outcome<IReadOnlyList<SettingState>> write = await host.Runtime.SetPluginSettingsAsync(Fixture, [new SettingChange("connection.user", ["me"])], Ct).ConfigureAwait(true);
+
+            Assert.Equal(ErrorCode.Unsupported, read.Error?.Code);
+            Assert.Equal(ErrorCode.Unsupported, write.Error?.Code);
+        }
+    }
+
     /// <summary>An unsigned package is refused under the production trust policy and leaves nothing behind.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
@@ -136,5 +224,12 @@ public sealed class RuntimeTests
                 Assert.Equal(TestData.Ref("s1"), Assert.Single(page.Value.Items).Ref);
             }
         }
+    }
+
+    private static async Task<string> ReadSettingAsync(RuntimeHarness host, string key)
+    {
+        Outcome<PluginNodePage> page = await host.Runtime.Gateway.SearchAsync(Fixture, TestData.TextQuery($"setting:{key}"), Ct).ConfigureAwait(true);
+        Assert.True(page.IsSuccess, page.Error?.Message);
+        return page.Value.Items.Single().Title;
     }
 }

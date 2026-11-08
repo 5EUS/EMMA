@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 using EMMA.Domain;
@@ -142,7 +141,7 @@ internal static partial class PluginInfoValidator
 
         foreach (string value in setting.DefaultValues)
         {
-            if (!IsValidValue(setting, value))
+            if (!SettingValues.IsValid(setting, value))
             {
                 return $"the default '{value}' is not a valid {setting.Type} value";
             }
@@ -168,20 +167,10 @@ internal static partial class PluginInfoValidator
             return $"it is shown depending on '{condition.Key}', which is not declared";
         }
 
-        return IsValidValue(other, condition.Value)
+        return SettingValues.IsValid(other, condition.Value)
             ? null
             : $"it is shown when '{condition.Key}' is '{condition.Value}', which that setting cannot have";
     }
-
-    private static bool IsValidValue(SettingSpec setting, string value) => setting.Type switch
-    {
-        SettingType.Boolean => value is "true" or "false",
-        SettingType.Number => double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double number) && double.IsFinite(number),
-        SettingType.Duration => long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out _),
-        SettingType.Choice or SettingType.MultiChoice => setting.Choices.Any(choice => string.Equals(choice.Value, value, StringComparison.Ordinal)),
-        SettingType.Text or SettingType.Secret => setting.MaxLength is not { } max || value.Length <= max,
-        _ => false,
-    };
 
     private static string? FindVisibilityCycle(IReadOnlyList<SettingSpec> settings)
     {

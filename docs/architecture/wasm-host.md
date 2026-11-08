@@ -78,7 +78,9 @@ that must outlive a restart is a node prop or a setting, not a cache entry.
   if the install directory is writable by others. An open-from-bytes call would close it.
 - TODO(rewrite): the binary lane exists only for `read`. If `inline` assets or other results grow
   large, move them there too.
-- TODO(rewrite): a plugin-author test harness (run a component against canned HTTP responses
-  without the whole app). The Rust tests have the pieces.
-- TODO(rewrite): the user-settings store and secret encryption behind `IPluginSettingsPort`.
+- TODO(rewrite): canned HTTP responses for a plugin author (`emma plugin run --canned <file>`), so a plugin that calls
+  `host.http-fetch` can be tried without its real upstream. `--settings` already gives a plugin its settings. What is
+  missing is a `testing.canned` list in the Rust plugin config that `Network::fetch` answers from (after the usual
+  allow-list check, so the manifest is still tested), carried through `WasmTestingOptions`, `PluginLaunch` and
+  `EmmaRuntimeOptions` to the CLI. Remote asset bytes go through the .NET fetcher, which would need the same list.
 - TODO(rewrite): the Windows and macOS legs of CI build the native host but have never run.

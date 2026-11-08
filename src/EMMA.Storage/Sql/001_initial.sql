@@ -64,6 +64,20 @@ CREATE TABLE plugins (
     updated_at    INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID;
 
+-- The user's values for what a plugin declared in meta.describe. One row per value: a multi-choice setting has
+-- several, ordered by position. A secret has exactly one, stored as the text ISecretBox made (never in clear), so
+-- `value` is not readable for secret = 1. Settings go when the plugin is uninstalled, secrets with them, but survive
+-- an upgrade (the registry updates the plugins row in place rather than replacing it).
+CREATE TABLE plugin_settings (
+    plugin_id   TEXT    NOT NULL REFERENCES plugins (id) ON DELETE CASCADE,
+    setting_key TEXT    NOT NULL,
+    position    INTEGER NOT NULL CHECK (position >= 0),
+    value       TEXT    NOT NULL,
+    secret      INTEGER NOT NULL CHECK (secret IN (0, 1)),
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (plugin_id, setting_key, position)
+) STRICT, WITHOUT ROWID;
+
 CREATE TABLE trusted_delegation_versions (
     repository_id TEXT    NOT NULL PRIMARY KEY,
     version       INTEGER NOT NULL CHECK (version >= 0),
