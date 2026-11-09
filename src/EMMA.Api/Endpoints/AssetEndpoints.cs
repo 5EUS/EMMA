@@ -32,12 +32,13 @@ internal static class AssetEndpoints
     private static async Task<IResult> ListAsync(HttpContext context, AssetPipeline assets, CancellationToken cancellationToken)
     {
         Outcome<(NodeRef Node, AssetRole Role)> target = ReadTarget(context.Request);
-        if (!target.IsSuccess)
+        Outcome<string?> hint = ReadHint(context.Request);
+        if (!target.IsSuccess || !hint.IsSuccess)
         {
-            return ApiResults.Failure(target.Error);
+            return ApiResults.Failure((target.Error ?? hint.Error)!);
         }
 
-        Outcome<IReadOnlyList<Asset>> resolved = await assets.ResolveAsync(target.Value.Node, target.Value.Role, [], cancellationToken).ConfigureAwait(false);
+        Outcome<IReadOnlyList<Asset>> resolved = await assets.ResolveAsync(target.Value.Node, target.Value.Role, AssetHint.ToProps(hint.Value), cancellationToken).ConfigureAwait(false);
         return resolved.IsSuccess
             ? ApiResults.Ok(AssetMapper.ToResponse(resolved.Value), ApiJsonContext.Default.AssetListResponse)
             : ApiResults.Failure(resolved.Error);
@@ -47,13 +48,14 @@ internal static class AssetEndpoints
     {
         Outcome<(NodeRef Node, AssetRole Role)> target = ReadTarget(context.Request);
         Outcome<int> index = ReadIndex(context.Request);
-        if (!target.IsSuccess || !index.IsSuccess)
+        Outcome<string?> hint = ReadHint(context.Request);
+        if (!target.IsSuccess || !index.IsSuccess || !hint.IsSuccess)
         {
-            return ApiResults.Failure((target.Error ?? index.Error)!);
+            return ApiResults.Failure((target.Error ?? index.Error ?? hint.Error)!);
         }
 
         Outcome<AssetBytes> content = await runtime
-            .ReadAssetAsync(target.Value.Node, target.Value.Role, index.Value, ReadRange(context.Request), cancellationToken)
+            .ReadAssetAsync(target.Value.Node, target.Value.Role, index.Value, ReadRange(context.Request), hint.Value, cancellationToken)
             .ConfigureAwait(false);
         if (!content.IsSuccess)
         {
@@ -82,6 +84,12 @@ internal static class AssetEndpoints
         return AssetRole.TryCreate(role.Value, out AssetRole parsed)
             ? Outcome.Success((node.Value, parsed))
             : Outcome.Failure<(NodeRef, AssetRole)>(ErrorCode.InvalidArgument, "'role' is not a valid asset role.");
+    }
+
+    private static Outcome<string?> ReadHint(HttpRequest request)
+    {
+        Outcome<string?> hint = RequestReader.Optional(request, "hint");
+        return hint.IsSuccess ? RequestParsing.Hint(hint.Value) : hint;
     }
 
     private static Outcome<int> ReadIndex(HttpRequest request)

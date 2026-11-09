@@ -63,6 +63,14 @@ public static class RequestParsing
             ? Outcome.Success(role)
             : Outcome.Failure<AssetRole>(ErrorCode.InvalidArgument, "'role' is not a valid asset role.");
 
+    /// <summary>Reads an optional asset hint, such as a quality.</summary>
+    /// <param name="text">The hint text, or <see langword="null"/> for none.</param>
+    /// <returns>The hint, or why it is invalid.</returns>
+    public static Outcome<string?> Hint(string? text) =>
+        AssetHint.IsValid(text)
+            ? Outcome.Success(text)
+            : Outcome.Failure<string?>(ErrorCode.InvalidArgument, $"'hint' must be 1 to {AssetHint.MaxLength} characters without control characters.");
+
     /// <summary>Checks a page-size hint.</summary>
     /// <param name="limit">The hint, if any.</param>
     /// <param name="max">The largest accepted value.</param>

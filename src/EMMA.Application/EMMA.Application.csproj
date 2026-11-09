@@ -4,11 +4,6 @@
     were not ported. Compression becomes an asset transform if it is still wanted; decide
     in phase 8 once there are real assets to measure.
   -->
-  <!--
-    TODO(rewrite): the download executor is not written yet. It walks children down to
-    the nodes whose kind declares the job's role, resolves each, and stores the assets.
-    IDownloadPort and DownloadJob exist; the executor belongs with the host (phase 4).
-  -->
   <ItemGroup>
     <ProjectReference Include="../EMMA.Domain/EMMA.Domain.csproj" />
   </ItemGroup>

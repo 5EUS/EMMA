@@ -17,9 +17,13 @@ internal sealed class NativeSession(EmmaRuntime runtime, UserId user) : IAsyncDi
     private int inFlight;
     private bool closed;
 
-    /// <summary>Prepares the runtime: creates the database, the cache and each plugin's permissions.</summary>
+    /// <summary>Prepares the runtime: creates the database, the cache and each plugin's permissions, then starts the download executor.</summary>
     /// <returns>A task that completes when the runtime is ready.</returns>
-    public Task InitializeAsync() => runtime.InitializeAsync(CancellationToken.None);
+    public async Task InitializeAsync()
+    {
+        await runtime.InitializeAsync(CancellationToken.None).ConfigureAwait(false);
+        runtime.Downloads.Start();
+    }
 
     /// <summary>Runs an operation. It never throws: a failure becomes an error envelope.</summary>
     /// <param name="operation">The operation name.</param>

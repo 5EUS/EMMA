@@ -196,7 +196,10 @@ internal static class PluginCommands
     }
 
     /// <summary>Opens EMMA over the data directory, runs a command and disposes it, or reports why EMMA could not be opened.</summary>
-    private static async Task<int> WithRuntimeAsync(CommandContext context, Func<EmmaRuntime, Task<int>> command)
+    /// <param name="context">The command.</param>
+    /// <param name="command">What to do with the opened runtime.</param>
+    /// <returns>The exit code.</returns>
+    internal static async Task<int> WithRuntimeAsync(CommandContext context, Func<EmmaRuntime, Task<int>> command)
     {
         Outcome<EmmaRuntime> opened = await context.OpenAsync().ConfigureAwait(false);
         if (!opened.IsSuccess)

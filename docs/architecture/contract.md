@@ -252,14 +252,18 @@ These live in `EMMA.Domain` / `EMMA.Application` and are never seen by plugins.
 - **App settings** are small text choices the app asks the host to remember, per user, under a
   scope (`series:<ref>` for a series' sort order, say). They are not plugin settings (a plugin
   declares those). Scopes starting with `emma.` are the host's own and clients cannot write them.
-- **Downloads** are a job over `(NodeRef, role, hints)`: the host walks `children` down to
-  nodes whose kind declares the role, resolves each, and stores the assets. One executor, no
-  paged or video branch.
+- **Downloads** are a job over `(NodeRef, role, hint)`: the host walks `children` down to
+  nodes whose kind declares the role, resolves each (the hint travels as `emma.quality`), and
+  stores the first asset it is offered under a name derived from the leaf. One executor, no
+  paged or video branch. A leaf is stored once however many jobs cover it, a stored leaf is
+  served before the plugin is asked, and a job a killed process left running is queued again.
+  What the executor never does is interpret the asset: a video stream that is a playlist of
+  segments is not downloadable until the video pack (phase 8) says what to fetch.
 - **Storage** (built in phase 3, SQLite with STRICT tables): `nodes` keyed `(plugin_id, local_id)`
   with `kind`, `title`, `parent_local_id`, `thumbnail` and `props` (typed JSON through a
   source-generated context); `progress` and `library` keyed by user plus the same pair (`library`
   also names the library the entry is in, with `libraries` holding the names); `app_settings` keyed
-  by user, scope and key; `download_jobs`. Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no assets table
+  by user, scope and key; `download_jobs` and `download_items` (the leaves each job stores). Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no assets table
   (asset bytes live in the bounded cache) and no foreign key from user state to `nodes`: nodes are
   a cache that may be purged, while progress and library entries must survive that.
 - All timestamps come from an injected `IClock`; plugins use `host.now-ms`.

@@ -35,6 +35,7 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
 | Rate limiting runs *after* authentication and is partitioned by the authenticated client id. | A caller cannot get a fresh bucket by inventing a key or a header. A flood of invalid keys is rejected cheaply before the limiter and spends no real client's allowance. |
 | A global concurrency limit runs alongside the per-client window. | One slow plugin cannot be used to tie up every worker. |
 | Progress, libraries and remembered choices are filed under the authenticated client; no route takes a user. | There is no cross-user access to get wrong. |
+| Downloads are the host's, not a client's: every client key sees and controls the whole queue, and a download names only a node and a role. | A download is a copy of a plugin's content on the host's disk, shared by every client of that host. It is not user data, so there is nothing to file under a client. It carries the same "keys have no scopes" gap as plugin settings: any key may delete a download. |
 | Asset listings never reveal remote URLs, request headers or proxied tokens. | Those can carry cookies, referer rules and capabilities private to the plugin. The host fetches under the plugin's network policy. |
 | Content responses are `nosniff` with `Content-Security-Policy: sandbox`, and the plugin's type is re-parsed. | Bytes and type come from a plugin. Without this, a plugin could serve a page that runs with the API's origin, or inject headers through its `mime`. |
 | Request bodies are limited to 64 KiB and unknown fields are refused. | Every body is a small document; a typo should fail, not be ignored. |
@@ -53,16 +54,15 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
   proxies (`X-Forwarded-For` is caller-controlled), so it waits for a deployment that needs it.
 - TODO(rewrite): TLS is left to the deployment (reverse proxy or Kestrel certificate configuration). The host does not
   refuse plain HTTP on a non-loopback address.
-- TODO(rewrite): asset hints (for example `emma.quality`) are accepted by the pipeline but not exposed; add a `hint`
-  query parameter if a client needs to ask for a quality.
 - TODO(rewrite): `GET /v1/assets/content` re-resolves the node on every call. Remote bytes are cached by URL, but a
-  video player seeking through a proxied asset resolves once per range request. Cache resolutions per request key if
-  that shows up in measurements.
+  video player seeking through a proxied asset resolves once per range request. Downloads do not need a resolution
+  cache (they resolve each leaf once, and a stored leaf is served without resolving). Cache resolutions per request key
+  when the video player (phase 8) shows it in measurements.
 - TODO(rewrite): API keys carry no scopes or expiry; every client may use every endpoint. A read-only key is easy to add
   to `ApiClientKey` when a client needs one.
 - TODO(rewrite): plugin settings are host-wide, not per client, and every client key may read and change them (a secret
   can be set but never read back). That is the same "keys carry no scopes" gap as above: once keys have scopes, changing
   settings should need one that reading does not.
-- Out of scope for the API: plugin management (CLI), downloads (no executor yet).
+- Out of scope for the API: plugin management (CLI).
 - Progress, libraries and remembered choices have no scopes of their own: any client key may use them, but only its own
   data, which is why the "keys carry no scopes" gap above does not apply to them.

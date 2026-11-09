@@ -26,6 +26,15 @@ Usage:
                                             Package (and optionally sign) a plugin directory
   emma plugin run <dir|package.zip> <describe|search|children|get|assets|content> [args] [--settings <file.json>]
                                             Try a plugin in a throwaway host, reporting what EMMA would refuse
+  emma downloads list                       List downloads and how far along they are
+  emma downloads add <ref> --role <role> [--hint <quality>]
+                                            Queue a download of a node (and everything beneath it)
+  emma downloads pause <id> | resume <id> | retry <id> | cancel <id> | delete <id>
+  emma downloads clear <state>...           Delete the downloads in these states (queued, running, paused,
+                                            completed, failed, canceled)
+  emma downloads retry-failed               Queue every failed download again
+  emma downloads parallel [<n>]             Show or set how many downloads run at once (1 to 8)
+  emma downloads run                        Work through the queue now, then exit (an app or server does this itself)
 
 Options:
   --data-dir <dir>   Where EMMA keeps its state (default: the same place the HTTP API uses)
@@ -89,6 +98,18 @@ Plugins installed here are served by the HTTP API and the native library after t
         ["plugin", "new", var directory] => NewCommand.RunAsync(context, directory),
         ["plugin", "pack", var directory] => PackCommand.RunAsync(context, directory),
         ["plugin", "run", var source, var operation, .. var operands] => RunCommand.RunAsync(context, source, operation, operands),
+        ["downloads", "list"] => DownloadCommands.ListAsync(context),
+        ["downloads", "add", var reference] => DownloadCommands.AddAsync(context, reference),
+        ["downloads", "pause", var id] => DownloadCommands.ChangeAsync(context, id, (downloads, job, token) => downloads.PauseAsync(job, token)),
+        ["downloads", "resume", var id] => DownloadCommands.ChangeAsync(context, id, (downloads, job, token) => downloads.ResumeAsync(job, token)),
+        ["downloads", "retry", var id] => DownloadCommands.ChangeAsync(context, id, (downloads, job, token) => downloads.RetryAsync(job, token)),
+        ["downloads", "cancel", var id] => DownloadCommands.ChangeAsync(context, id, (downloads, job, token) => downloads.CancelAsync(job, token)),
+        ["downloads", "delete", var id] => DownloadCommands.DeleteAsync(context, id),
+        ["downloads", "clear", .. var states] when states.Length > 0 => DownloadCommands.ClearAsync(context, states),
+        ["downloads", "retry-failed"] => DownloadCommands.RetryFailedAsync(context),
+        ["downloads", "parallel"] => DownloadCommands.ParallelAsync(context, null),
+        ["downloads", "parallel", var count] => DownloadCommands.ParallelAsync(context, count),
+        ["downloads", "run"] => DownloadCommands.RunAsync(context),
         _ => context.MisuseAsync($"Unknown command '{string.Join(' ', words)}'."),
     };
 }

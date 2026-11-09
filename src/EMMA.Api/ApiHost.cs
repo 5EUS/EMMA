@@ -36,11 +36,14 @@ internal static class ApiHost
         builder.Services.AddRateLimiter(limiter => RateLimiting.Configure(limiter, settings.Security.RateLimit));
 
         WebApplication app = builder.Build();
-        IReadOnlyList<PluginId> quarantined = await app.Services.GetRequiredService<EmmaRuntime>().InitializeAsync(cancellationToken).ConfigureAwait(false);
+        EmmaRuntime runtime = app.Services.GetRequiredService<EmmaRuntime>();
+        IReadOnlyList<PluginId> quarantined = await runtime.InitializeAsync(cancellationToken).ConfigureAwait(false);
         foreach (PluginId plugin in quarantined)
         {
             app.Logger.LogError("Quarantined plugin {Plugin}: its stored manifest cannot be read.", plugin.Value);
         }
+
+        runtime.Downloads.Start();
 
         // Order matters: failures become JSON, then the caller is identified, and only then are they rate-limited.
         app.UseExceptionHandler(failure => failure.Run(context =>
@@ -57,6 +60,7 @@ internal static class ApiHost
         ProgressEndpoints.Map(v1);
         LibraryEndpoints.Map(v1);
         AppSettingsEndpoints.Map(v1);
+        DownloadEndpoints.Map(v1);
         return app;
     }
 }

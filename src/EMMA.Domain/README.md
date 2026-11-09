@@ -12,7 +12,7 @@ chapter, an episode or a recipe step.
   `ProxiedDelivery`), `AssetPayload`, `AssetKey`.
 - **User state:** `Progress` with an open-unit `ProgressLocator`, `ProgressGroup` and
   `SeriesProgress` (history by series), `LibraryName`, `LibraryEntry` and `LibrarySummary`
-  (named libraries), `AppSettingChange`, `DownloadJob`.
+  (named libraries), `AppSettingChange`, `DownloadJob`, `DownloadItem`.
 - **Failures:** `Outcome<T>` and `PluginError` for expected failures; exceptions are
   reserved for bugs.
 - **Trust:** `CapabilityPolicy` (what one plugin may reach) and `ContractLimits`.

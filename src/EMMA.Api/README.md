@@ -57,8 +57,8 @@ A bad value in any setting stops the host at startup with a message naming it.
 | `POST /v1/plugins/{plugin}/search` | Search. Body: `text`, `kinds`, `filters` (`id`, `values`), `sort`, `cursor`, `limit`. All optional. |
 | `GET /v1/nodes?ref=…&ref=…` | Fetch up to 500 nodes by reference, in the order asked. Unknown ones are omitted. |
 | `GET /v1/nodes/children?ref=…` | Children of a node in natural order (chapters, pages, episodes). `cursor`, `limit`. |
-| `GET /v1/assets?ref=…&role=…` | What a node offers for a role (`image`, `stream`, `subtitle`, …): `index`, `mime`, `size`, `delivery`, `props`. |
-| `GET /v1/assets/content?ref=…&role=…&index=0` | The bytes of one asset. A proxied asset also honours a single `Range: bytes=start-end` header. |
+| `GET /v1/assets?ref=…&role=…&hint=…` | What a node offers for a role (`image`, `stream`, `subtitle`, …): `index`, `mime`, `size`, `delivery`, `props`. `hint` (optional) is a quality such as `1080p`, passed to the plugin as `emma.quality`; a plugin may ignore it. |
+| `GET /v1/assets/content?ref=…&role=…&index=0&hint=…` | The bytes of one asset. A downloaded leaf (index 0) is served from its stored file before the plugin is asked. A stored or proxied asset also honours a single `Range: bytes=start-end` header. |
 | `PUT /v1/progress?ref=…` | Record the caller's position. Body: `unit` (`page`, `ms`, …), `value`, `total`, `completed`. |
 | `GET /v1/progress?ref=…` | The caller's progress in a node. |
 | `GET /v1/progress/continue?ref=…` | The latest progress anywhere beneath a container: "continue reading". |
@@ -80,8 +80,19 @@ A bad value in any setting stops the host at startup with a message naming it.
 | `DELETE /v1/libraries?name=…` | Delete a library and its entries. The default library cannot be deleted. |
 | `GET /v1/app-settings?scope=…` | What the app remembered for the caller under a scope: `values`, text by key. |
 | `PUT /v1/app-settings?scope=…` | Change it, all or none. Body: `changes`, a list of `key` and `value` (no `value` forgets the key). Scopes starting with `emma.` are the host's. |
+| `POST /v1/downloads?ref=…&role=…&hint=…` | Queue a download of a node (a chapter, a season, a series or one leaf) for an asset role; `hint` is optional. Answers the download. An existing download of the same node and role is returned as it is (a failed or cancelled one is queued again). The node must have been served. |
+| `GET /v1/downloads?state=…&limit=…` | Downloads, the most recently changed first (default 200, at most 1000). `state` may repeat: `queued`, `running`, `paused`, `completed`, `failed`, `canceled`. |
+| `GET /v1/downloads/{id}` | A download and its leaves (`ref`, `position`, `stored`, `mime`, `bytes`, `error`) in the order the plugin lists them. |
+| `POST /v1/downloads/{id}/pause`, `/resume`, `/retry`, `/cancel` | Change a download's state; `400` when its state does not allow it. |
+| `DELETE /v1/downloads/{id}` | Delete a download and the stored files no other download uses. |
+| `DELETE /v1/downloads?state=…` | Delete every download in the given states (at least one is required). Answers `count`. |
+| `POST /v1/downloads/retry-failed` | Queue every failed download again. Answers `count`. |
+| `GET /v1/downloads/settings`, `PUT /v1/downloads/settings` | How many downloads run at once: `parallel`, 1 to 8 (default 2). |
 
 Progress, libraries and remembered choices always belong to the authenticated client; there is no parameter to name another user.
+Downloads belong to the host: every client sees and controls the same queue, which is the same for the CLI (`emma downloads`)
+and the native library working on the same data directory. A download runs on its own once queued; the host's executor works
+the queue in the background.
 
 Asset listings say how an asset is delivered but never where it lives. A remote URL may carry cookies or referer
 rules and a proxied token is private to the plugin, so clients ask for an asset by `index` and the host fetches it
@@ -109,4 +120,4 @@ under the plugin's network policy. Content responses carry `X-Content-Type-Optio
 
 - **Managing plugins** (install, upgrade, enable, disable, remove) is not an endpoint. Installing code over the network
   is the most dangerous thing the host does, and the keys issued here are for clients. The CLI (phase 8) does it.
-- **Plugin settings and downloads** have no endpoints yet: the settings store and the download executor are not built.
+- **Plugin repositories** (browsing and installing plugins from a catalog) have no endpoints yet.

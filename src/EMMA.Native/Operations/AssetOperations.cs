@@ -20,14 +20,14 @@ internal static class AssetOperations
     public static async Task<NativeResponse> ListAsync(OperationContext context)
     {
         Outcome<AssetCall> call = context.Read(NativeJsonContext.Default.AssetCall);
-        Outcome<(NodeRef Node, AssetRole Role)> target = ReadTarget(call);
+        Outcome<(NodeRef Node, AssetRole Role, string? Hint)> target = ReadTarget(call);
         if (!target.IsSuccess)
         {
             return Envelope.Failure(target.Error);
         }
 
         Outcome<IReadOnlyList<Asset>> resolved = await context.Runtime.Assets
-            .ResolveAsync(target.Value.Node, target.Value.Role, [], context.CancellationToken)
+            .ResolveAsync(target.Value.Node, target.Value.Role, AssetHint.ToProps(target.Value.Hint), context.CancellationToken)
             .ConfigureAwait(false);
         return resolved.IsSuccess
             ? Envelope.Ok(AssetMapper.ToResponse(resolved.Value), ApiJsonContext.Default.AssetListResponse)
@@ -40,7 +40,7 @@ internal static class AssetOperations
     public static async Task<NativeResponse> ContentAsync(OperationContext context)
     {
         Outcome<AssetCall> call = context.Read(NativeJsonContext.Default.AssetCall);
-        Outcome<(NodeRef Node, AssetRole Role)> target = ReadTarget(call);
+        Outcome<(NodeRef Node, AssetRole Role, string? Hint)> target = ReadTarget(call);
         if (!target.IsSuccess)
         {
             return Envelope.Failure(target.Error);
@@ -64,7 +64,7 @@ internal static class AssetOperations
         }
 
         Outcome<AssetBytes> content = await context.Runtime
-            .ReadAssetAsync(target.Value.Node, target.Value.Role, index, range, context.CancellationToken)
+            .ReadAssetAsync(target.Value.Node, target.Value.Role, index, range, target.Value.Hint, context.CancellationToken)
             .ConfigureAwait(false);
         if (!content.IsSuccess)
         {
@@ -81,17 +81,18 @@ internal static class AssetOperations
         return Envelope.Ok(info, NativeJsonContext.Default.ContentInfo, bytes.Bytes.ToArray());
     }
 
-    private static Outcome<(NodeRef Node, AssetRole Role)> ReadTarget(Outcome<AssetCall> call)
+    private static Outcome<(NodeRef Node, AssetRole Role, string? Hint)> ReadTarget(Outcome<AssetCall> call)
     {
         if (!call.IsSuccess)
         {
-            return Outcome.Failure<(NodeRef, AssetRole)>(call.Error);
+            return Outcome.Failure<(NodeRef, AssetRole, string?)>(call.Error);
         }
 
         Outcome<NodeRef> node = RequestParsing.Node(call.Value.Ref, "ref");
         Outcome<AssetRole> role = RequestParsing.Role(call.Value.Role);
-        return node.IsSuccess && role.IsSuccess
-            ? Outcome.Success((node.Value, role.Value))
-            : Outcome.Failure<(NodeRef, AssetRole)>((node.Error ?? role.Error)!);
+        Outcome<string?> hint = RequestParsing.Hint(call.Value.Hint);
+        return node.IsSuccess && role.IsSuccess && hint.IsSuccess
+            ? Outcome.Success((node.Value, role.Value, hint.Value))
+            : Outcome.Failure<(NodeRef, AssetRole, string?)>((node.Error ?? role.Error ?? hint.Error)!);
     }
 }

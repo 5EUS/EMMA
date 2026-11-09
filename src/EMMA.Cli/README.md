@@ -17,6 +17,10 @@ Run `emma --help` for the full list. In short:
 | `emma plugin new <dir> --id com.me.thing` | Scaffold a Rust plugin from the template, with the contract |
 | `emma plugin pack <dir> [--sign-key ...]` | Fill in the component's digest, validate, optionally sign, and zip |
 | `emma plugin run <dir\|zip> <op> ... [--settings <file>]` | Try a plugin in a throwaway host, with the same checks the real one applies, optionally with values for its settings |
+| `emma downloads list` / `add <ref> --role <role> [--hint <q>]` | The download queue, and queueing a node (everything beneath it) |
+| `emma downloads pause` / `resume` / `retry` / `cancel` / `delete <id>` | Control one download |
+| `emma downloads clear <state>...` / `retry-failed` / `parallel [<n>]` | Bulk operations and how many run at once |
+| `emma downloads run` | Work through the queue now and exit (an app or the HTTP API does this on its own) |
 
 `--json` prints the same shapes as the HTTP API (`EMMA.Api.Contracts`). `--data-dir` picks the state directory; by
 default it is the one the HTTP API uses, so what you install here is what the API serves after it restarts.

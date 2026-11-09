@@ -71,8 +71,8 @@ Requests are JSON objects; an empty request means `{}`. `ref` is a node referenc
 | `catalog.browse` | `plugin`, `cursor`, `limit` | a node page |
 | `catalog.children` | `ref`, `cursor`, `limit` | a node page |
 | `catalog.get` | `refs` | `{nodes: [...]}` |
-| `assets.list` | `ref`, `role` | `{assets: [{index, mime, size, delivery, props}]}` |
-| `assets.content` | `ref`, `role`, `index`, `range` (`start`, `length`) | `{mime, length, range_start, total, accepts_ranges}`, with the bytes in the blob |
+| `assets.list` | `ref`, `role`, `hint` (optional) | `{assets: [{index, mime, size, delivery, props}]}`. `hint` is a quality such as `1080p`, passed to the plugin as `emma.quality`; a plugin may ignore it |
+| `assets.content` | `ref`, `role`, `index`, `range` (`start`, `length`), `hint` (optional) | `{mime, length, range_start, total, accepts_ranges}`, with the bytes in the blob. A leaf that was downloaded (index 0) is served from its stored file before the plugin is asked, and then honours `range` whatever it is |
 | `progress.set` | `ref`, `unit`, `value`, `total`, `completed` | the stored progress |
 | `progress.get` | `ref` | the caller's progress, or `not_found` |
 | `progress.continue` | `ref` | the latest progress beneath a container |
@@ -92,10 +92,27 @@ Requests are JSON objects; an empty request means `{}`. `ref` is a node referenc
 | `library.libraries` | none | `{libraries: [{name, created_at, count, is_default}]}`, the default library first, then by name |
 | `library.create` | `name` | the new library; names are 1 to 64 characters, unique ignoring case |
 | `library.delete` | `name` | `{}`; deletes the library and the entries in it (progress and the nodes are untouched). The default library cannot be deleted |
+| `downloads.enqueue` | `ref`, `role`, `hint` (optional) | the download `{id, ref, role, hint, state, items_completed, items_total, bytes_downloaded, error, created_at, updated_at, started_at, completed_at}`. The node (a chapter, a season, a whole series or one leaf) must have been served; the executor walks its children down to the nodes whose kind declares `role`, resolves each (passing `hint`) and keeps the first asset. A queued, running, paused or completed download for the same node and role is returned as it is; a failed or cancelled one is queued again |
+| `downloads.list` | `states` (optional, any of `queued`, `running`, `paused`, `completed`, `failed`, `canceled`), `limit` (default 200, at most 1000) | `{items: [download]}`, the most recently changed first |
+| `downloads.get` | `id` | `{download, items: [{ref, position, stored, mime, bytes, error}]}`: the leaves in the order the plugin lists them, empty until the download has walked its node. A client reads a download offline by asking `assets.content` for each stored leaf (`role` of the download, index 0) |
+| `downloads.pause` | `id` | the download. A queued or running download stops after the leaf in flight and keeps what is stored |
+| `downloads.resume` | `id` | the download, queued again; only a paused one |
+| `downloads.retry` | `id` | the download, queued again; only a failed or cancelled one. Leaves that are stored are not fetched again |
+| `downloads.cancel` | `id` | the download; only a queued, running or paused one. What is stored is kept until the download is deleted |
+| `downloads.delete` | `id` | `{}`; deletes the download and the stored files no other download's leaves name |
+| `downloads.clear` | `states` (at least one) | `{count}`: deletes every download in those states, with their files |
+| `downloads.retry_failed` | none | `{count}`: queues every failed download again |
+| `downloads.settings_get` | none | `{parallel}`: how many downloads run at once (default 2) |
+| `downloads.settings_set` | `parallel` (1 to 8) | `{parallel}`; applied before the executor starts the next download |
 | `app_settings.get` | `scope` | `{scope, values}`: the small text choices the app remembered under a scope, such as `series:<ref>` |
 | `app_settings.set` | `scope`, `changes` (`[{key, value}]`; no `value` forgets the key) | the same as `app_settings.get`, after the change. All or none is applied. Keys are 1 to 64 of `a-z 0-9 . _ -`, values at most 4096 characters, a scope holds at most 100 keys, and scopes starting with `emma.` belong to the host and are refused |
 
-`assets.content` honours `range` only for assets the plugin serves itself (proxied); other assets are read whole. A range
+Downloads belong to the host, not to the handle's user: the queue, the stored files and the parallel limit are the same
+for everyone who uses the data directory. The executor starts when the handle is created and stops when it is closed; a
+download that was running when the process died is queued again at the next start. `emma downloads run` does the same
+work from the command line.
+
+`assets.content` honours `range` for a stored download and for assets the plugin serves itself (proxied); other assets are read whole. A range
 that starts past the end is the error `range_not_satisfiable`. As over HTTP, asset listings never reveal where an asset
 lives: ask for one by `index`.
 

@@ -7,6 +7,7 @@ namespace EMMA.Domain;
 /// <param name="Id">The job id.</param>
 /// <param name="Node">The node to download (everything beneath it is included).</param>
 /// <param name="Role">The asset role to download.</param>
+/// <param name="Hint">A preference passed to the plugin when each asset is resolved (a quality such as <c>1080p</c>), or <see langword="null"/>.</param>
 /// <param name="State">The lifecycle state.</param>
 /// <param name="ItemsCompleted">How many leaf nodes are done.</param>
 /// <param name="ItemsTotal">How many leaf nodes there are, once known.</param>
@@ -20,6 +21,7 @@ public sealed record DownloadJob(
     Guid Id,
     NodeRef Node,
     AssetRole Role,
+    string? Hint,
     DownloadState State,
     int ItemsCompleted,
     int ItemsTotal,

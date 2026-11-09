@@ -28,6 +28,11 @@ namespace EMMA.Native.Requests;
 [JsonSerializable(typeof(LibraryNameCall))]
 [JsonSerializable(typeof(RetentionCall))]
 [JsonSerializable(typeof(AppSettingsCall))]
+[JsonSerializable(typeof(DownloadEnqueueCall))]
+[JsonSerializable(typeof(DownloadIdCall))]
+[JsonSerializable(typeof(DownloadListCall))]
+[JsonSerializable(typeof(DownloadStatesCall))]
+[JsonSerializable(typeof(DownloadSettingsCall))]
 [JsonSerializable(typeof(ContentInfo))]
 internal sealed partial class NativeJsonContext : JsonSerializerContext
 {

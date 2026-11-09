@@ -67,6 +67,7 @@ CREATE TABLE download_jobs (
     plugin_id        TEXT    NOT NULL,
     local_id         TEXT    NOT NULL,
     role             TEXT    NOT NULL,
+    hint             TEXT,
     state            INTEGER NOT NULL CHECK (state BETWEEN 0 AND 5),
     items_completed  INTEGER NOT NULL CHECK (items_completed >= 0),
     items_total      INTEGER NOT NULL CHECK (items_total >= 0),
@@ -79,6 +80,26 @@ CREATE TABLE download_jobs (
 ) STRICT;
 
 CREATE INDEX idx_download_jobs_state ON download_jobs (state, updated_at DESC);
+CREATE INDEX idx_download_jobs_node ON download_jobs (plugin_id, local_id, role);
+
+-- The leaves a job downloads, in the order the node tree lists them. An item with a file is stored: `file` names
+-- a file in the downloads directory (a hash of the leaf, so two jobs that cover the same leaf share one file and the
+-- file goes when no item names it). Deleting a job deletes its items.
+CREATE TABLE download_items (
+    job_id        TEXT    NOT NULL REFERENCES download_jobs (id) ON DELETE CASCADE,
+    position      INTEGER NOT NULL CHECK (position >= 0),
+    plugin_id     TEXT    NOT NULL,
+    local_id      TEXT    NOT NULL,
+    role          TEXT    NOT NULL,
+    file          TEXT,
+    mime          TEXT,
+    bytes         INTEGER NOT NULL CHECK (bytes >= 0),
+    error_message TEXT,
+    PRIMARY KEY (job_id, position)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX idx_download_items_leaf ON download_items (plugin_id, local_id, role) WHERE file IS NOT NULL;
+CREATE INDEX idx_download_items_file ON download_items (file) WHERE file IS NOT NULL;
 
 CREATE TABLE plugins (
     id            TEXT    NOT NULL PRIMARY KEY,

@@ -2,6 +2,7 @@ using EMMA.Application.Pipelines;
 using EMMA.Application.Ports;
 using EMMA.Domain;
 using EMMA.Infrastructure.Cache;
+using EMMA.Infrastructure.Downloads;
 using EMMA.Infrastructure.Http;
 using EMMA.Infrastructure.Secrets;
 using EMMA.PluginHost.Install;
@@ -22,6 +23,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 {
     private readonly StorageInitializer storage;
     private readonly BoundedAssetCache cache;
+    private readonly DownloadFileStore downloadFiles;
     private readonly FileSecretBox secretBox;
     private readonly HttpClient? http;
     private readonly LazyWasmTransport? transport;
@@ -55,19 +57,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.Installer = new PluginPackageInstaller(this.HostOptions, options.Trust, this.Verifier, this.Registry, this.Time);
 
         this.cache = new BoundedAssetCache(AssetCacheOptions.Default with { DiskRoot = Path.Combine(data, "cache", "assets") }, this.Time);
-        IAssetFetcherPort fetcher;
-        if (options.FetcherOverride is { } custom)
-        {
-            fetcher = custom;
-        }
-        else
-        {
-            // The client owns the handler and the runtime owns the client; the analyzer cannot see the hand-over.
-#pragma warning disable CA2000
-            this.http = new HttpClient(HttpAssetFetcher.CreateHandler());
-#pragma warning restore CA2000
-            fetcher = new HttpAssetFetcher(this.http, this.Time);
-        }
+        (IAssetFetcherPort fetcher, this.http) = CreateFetcher(options.FetcherOverride, this.Time);
 
         PluginCallExecutor executor = new(options.CallOptions, this.Time);
 
@@ -87,6 +77,8 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, executor, AssetPipelineOptions.Default, this.Time);
         this.Progress = new ProgressPipeline(this.ProgressStore, appSettings, this.Time);
         this.Library = new LibraryPipeline(this.LibraryStore, this.Nodes, this.Time);
+        this.downloadFiles = new DownloadFileStore(Path.Combine(data, "downloads"));
+        this.Downloads = new DownloadPipeline(new SqliteDownloadStore(storageOptions), this.downloadFiles, this.Catalog, this.Assets, this.Nodes, appSettings, this.Time);
         this.AppSettings = new AppSettingsPipeline(appSettings, this.Time);
         this.PluginSettings = new PluginSettingsPipeline(this.Gateway, settings);
     }
@@ -136,6 +128,12 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     /// <summary>Gets each user's libraries and the nodes saved in them.</summary>
     public LibraryPipeline Library { get; }
 
+    /// <summary>
+    /// Gets the download queue and its executor. The executor does nothing until a host calls
+    /// <see cref="DownloadPipeline.Start"/> (a server or an app) or <see cref="DownloadPipeline.RunUntilIdleAsync"/> (a command line).
+    /// </summary>
+    public DownloadPipeline Downloads { get; }
+
     /// <summary>Gets what the app remembers for each user, such as how a series is sorted.</summary>
     public AppSettingsPipeline AppSettings { get; }
 
@@ -149,6 +147,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     {
         await this.storage.InitializeAsync(cancellationToken).ConfigureAwait(false);
         await this.cache.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        await this.downloadFiles.InitializeAsync().ConfigureAwait(false);
 
         // A plugin whose stored manifest cannot be read is denied everything by the policy snapshot; take it out of service too.
         IReadOnlyList<PluginId> unreadable = await this.Policies.RefreshAsync(this.Registry, cancellationToken).ConfigureAwait(false);
@@ -251,6 +250,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
+        await this.Downloads.DisposeAsync().ConfigureAwait(false);
         if (this.wasmGateway is not null)
         {
             await this.wasmGateway.DisposeAsync().ConfigureAwait(false);
@@ -259,6 +259,21 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.transport?.Dispose();
         this.http?.Dispose();
         this.secretBox.Dispose();
+    }
+
+    private static (IAssetFetcherPort Fetcher, HttpClient? Http) CreateFetcher(IAssetFetcherPort? custom, TimeProvider time)
+    {
+        if (custom is not null)
+        {
+            return (custom, null);
+        }
+
+        // The client owns the handler and the runtime owns the client; the analyzer cannot see the hand-over.
+#pragma warning disable CA2000, IDISP004
+        HttpClient client = new(HttpAssetFetcher.CreateHandler());
+#pragma warning restore CA2000, IDISP004
+        HttpAssetFetcher fetcher = new(client, time);
+        return (fetcher, client);
     }
 
     private static void ConfigureNativeLibraries(string? directory)

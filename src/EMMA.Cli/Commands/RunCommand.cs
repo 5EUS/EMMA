@@ -189,7 +189,7 @@ internal static class RunCommand
         }
 
         int index = int.TryParse(context.Arguments.Option("index") ?? "0", NumberStyles.None, CultureInfo.InvariantCulture, out int parsed) && parsed >= 0 ? parsed : 0;
-        Outcome<AssetBytes> bytes = await runtime.ReadAssetAsync(node.Value, role.Value, index, range: null, context.CancellationToken).ConfigureAwait(false);
+        Outcome<AssetBytes> bytes = await runtime.ReadAssetAsync(node.Value, role.Value, index, range: null, hint: null, context.CancellationToken).ConfigureAwait(false);
         if (!bytes.IsSuccess)
         {
             return await context.FailAsync(bytes.Error).ConfigureAwait(false);
