@@ -14,6 +14,7 @@ namespace EMMA.WasmRuntime.Wire;
 /// <param name="Choices">The options.</param>
 /// <param name="Range">The bounds.</param>
 /// <param name="Lookup">The lookup behaviour.</param>
+/// <param name="Role">What the filter means.</param>
 internal sealed record WireFilter(
     string Id,
     string Label,
@@ -25,4 +26,5 @@ internal sealed record WireFilter(
     string? Description,
     IReadOnlyList<WireChoice> Choices,
     WireRange? Range,
-    WireLookup? Lookup);
+    WireLookup? Lookup,
+    string? Role);

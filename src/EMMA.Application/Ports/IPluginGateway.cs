@@ -45,6 +45,30 @@ public interface IPluginGateway
         IReadOnlyList<LocalNodeId> ids,
         CancellationToken cancellationToken);
 
+    /// <summary>Suggests values for a lookup filter from partly typed text.</summary>
+    /// <param name="plugin">The plugin to ask.</param>
+    /// <param name="filterId">The lookup filter being completed.</param>
+    /// <param name="text">The partial text.</param>
+    /// <param name="limit">The most suggestions wanted.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The suggestions; <see cref="ErrorCode.Unsupported"/> when the plugin does not assist.</returns>
+    Task<Outcome<IReadOnlyList<Choice>>> SuggestAsync(
+        PluginId plugin,
+        string filterId,
+        string text,
+        int limit,
+        CancellationToken cancellationToken);
+
+    /// <summary>Adds detail to nodes the host already holds.</summary>
+    /// <param name="plugin">The plugin to ask.</param>
+    /// <param name="ids">The plugin-local ids.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The raw enriched nodes; <see cref="ErrorCode.Unsupported"/> when the plugin does not assist.</returns>
+    Task<Outcome<IReadOnlyList<PluginNode>>> EnrichAsync(
+        PluginId plugin,
+        IReadOnlyList<LocalNodeId> ids,
+        CancellationToken cancellationToken);
+
     /// <summary>Resolves a node to its assets for a role.</summary>
     /// <param name="plugin">The plugin to ask.</param>
     /// <param name="request">What to resolve.</param>

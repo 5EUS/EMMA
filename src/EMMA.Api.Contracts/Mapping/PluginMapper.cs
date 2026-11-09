@@ -19,6 +19,12 @@ public static class PluginMapper
     public static PluginDetailResponse ToDetail(InstalledPlugin plugin, PluginInfo? info) =>
         new(plugin.Id.Value, plugin.Version, SnakeCase.Of(plugin.Status), plugin.Signer, info is null ? null : ToDto(info));
 
+    /// <summary>Maps suggested filter values to their wire form.</summary>
+    /// <param name="suggestions">The suggestions.</param>
+    /// <returns>The wire form.</returns>
+    public static SuggestionsResponse ToSuggestions(IReadOnlyList<Choice> suggestions) =>
+        new([.. suggestions.Select(ToDto)]);
+
     private static PluginInfoDto ToDto(PluginInfo info) => new(
         [.. info.Kinds.Select(kind => new KindDto(
             kind.Kind.Value,
@@ -44,7 +50,8 @@ public static class PluginMapper
         filter.Description,
         [.. filter.Choices.Select(ToDto)],
         filter.Range is { } range ? new RangeDto(range.Min, range.Max, range.Step, range.Unit) : null,
-        filter.Lookup is { } lookup ? new LookupDto(lookup.MinQueryLength, lookup.MaxResults, lookup.DebounceMs, lookup.AllowCustomValues) : null);
+        filter.Lookup is { } lookup ? new LookupDto(lookup.MinQueryLength, lookup.MaxResults, lookup.DebounceMs, lookup.AllowCustomValues) : null,
+        filter.Role);
 
     private static SettingDto ToDto(SettingSpec setting) => new(
         setting.Key,

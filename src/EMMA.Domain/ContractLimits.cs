@@ -30,6 +30,12 @@ public static class ContractLimits
     /// <summary>Maximum length of search text or a filter value, in characters.</summary>
     public const int MaxQueryTextLength = 512;
 
+    /// <summary>Maximum number of suggestions asked for in one <c>suggest</c> call.</summary>
+    public const int MaxSuggestions = 50;
+
+    /// <summary>Suggestions returned when the caller gives no limit.</summary>
+    public const int DefaultSuggestions = 10;
+
     /// <summary>Maximum number of node ids in one <c>get</c> call.</summary>
     public const int MaxIdsPerGet = 500;
 

@@ -72,13 +72,14 @@ public sealed class WasmPlugin : IDisposable
     public Task<PluginCall<IReadOnlyList<Asset>>> ResolveAsync(ResolveRequest request, CancellationToken cancellationToken) =>
         this.InvokeAsync("resolve", JsonSerializer.SerializeToUtf8Bytes(WireWriter.Resolve(request), WireJsonContext.Default.WireResolveRequest), WireJsonContext.Default.WireEnvelopeIReadOnlyListWireAsset, Assets, cancellationToken);
 
-    /// <summary>Suggests completions for partly typed search text. The plugin must export search-assist.</summary>
+    /// <summary>Suggests values for a lookup filter from partly typed text. The plugin must export search-assist.</summary>
+    /// <param name="filterId">The lookup filter being completed.</param>
     /// <param name="text">The partial text.</param>
     /// <param name="limit">The most suggestions wanted.</param>
     /// <param name="cancellationToken">Cancels the call before it starts.</param>
     /// <returns>The suggestions; <see cref="ErrorCode.Unsupported"/> when the plugin does not assist.</returns>
-    public Task<PluginCall<IReadOnlyList<string>>> SuggestAsync(string text, int limit, CancellationToken cancellationToken) =>
-        this.InvokeAsync("suggest", JsonSerializer.SerializeToUtf8Bytes(new WireSuggestRequest(text, (uint)Math.Max(limit, 0)), WireJsonContext.Default.WireSuggestRequest), WireJsonContext.Default.WireEnvelopeIReadOnlyListString, texts => texts, cancellationToken);
+    public Task<PluginCall<IReadOnlyList<Choice>>> SuggestAsync(string filterId, string text, int limit, CancellationToken cancellationToken) =>
+        this.InvokeAsync("suggest", JsonSerializer.SerializeToUtf8Bytes(new WireSuggestRequest(filterId, text, (uint)Math.Max(limit, 0)), WireJsonContext.Default.WireSuggestRequest), WireJsonContext.Default.WireEnvelopeIReadOnlyListWireChoice, Choices, cancellationToken);
 
     /// <summary>Adds detail to nodes the host already holds. The plugin must export search-assist.</summary>
     /// <param name="ids">The plugin-local ids.</param>
@@ -110,6 +111,8 @@ public sealed class WasmPlugin : IDisposable
         JsonSerializer.SerializeToUtf8Bytes(new WireIdsRequest([.. ids.Select(id => id.Value)]), WireJsonContext.Default.WireIdsRequest);
 
     private static IReadOnlyList<PluginNode> Nodes(IReadOnlyList<WireNode> nodes) => [.. nodes.Select(WireReader.Node)];
+
+    private static IReadOnlyList<Choice> Choices(IReadOnlyList<WireChoice> choices) => [.. choices.Select(WireReader.Choice)];
 
     private static IReadOnlyList<Asset> Assets(IReadOnlyList<WireAsset> assets) => [.. assets.Select(WireReader.Asset)];
 

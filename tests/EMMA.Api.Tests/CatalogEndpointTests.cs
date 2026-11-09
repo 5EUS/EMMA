@@ -121,6 +121,62 @@ public sealed class CatalogEndpointTests
         Assert.Equal(1, server.Gateway.SearchCalls);
     });
 
+    /// <summary>Suggestions come back as choices, and a bad request never reaches the plugin.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public Task SuggestReturnsChoicesForLookupFilters() => ApiTests.WithServerAsync(async server =>
+    {
+        server.Gateway.OnDescribe = _ => Outcome.Success(TestData.Info([TestData.Filter("tag", FilterType.Lookup) with { Lookup = new LookupSpec(2, 5, 100, false), Role = "emma.filter.tag" }]));
+        server.Gateway.OnSuggest = (_, _, text, _) => Outcome.Success<IReadOnlyList<Choice>>([new Choice("action", "Action", null, false)]);
+
+        ApiResponse good = await server.GetAsync($"{PluginPath}/suggest?filter=tag&text=act").ConfigureAwait(true);
+        ApiResponse described = await server.GetAsync(PluginPath).ConfigureAwait(true);
+        ApiResponse noFilter = await server.GetAsync($"{PluginPath}/suggest?text=act").ConfigureAwait(true);
+        ApiResponse badLimit = await server.GetAsync($"{PluginPath}/suggest?filter=tag&limit=999").ConfigureAwait(true);
+
+        Assert.Equal(HttpStatusCode.OK, good.Status);
+        Assert.Equal("action", good.Json["suggestions"]![0]!["value"]!.GetValue<string>());
+        Assert.Equal("Action", good.Json["suggestions"]![0]!["label"]!.GetValue<string>());
+        Assert.Equal("emma.filter.tag", described.Json["info"]!["filters"]![0]!["role"]!.GetValue<string>());
+        Assert.Equal(HttpStatusCode.BadRequest, noFilter.Status);
+        Assert.Equal(HttpStatusCode.BadRequest, badLimit.Status);
+        Assert.Equal(1, server.Gateway.SuggestCalls);
+    });
+
+    /// <summary>A plugin without search assist answers 501 to suggest and enrich.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public Task SuggestAndEnrichAreUnsupportedWithoutSearchAssist() => ApiTests.WithServerAsync(async server =>
+    {
+        server.Gateway.OnDescribe = _ => Outcome.Success(TestData.Info([TestData.Filter("tag", FilterType.Lookup) with { Lookup = new LookupSpec(0, 5, 100, false) }]));
+        server.Gateway.OnSearch = (_, _) => Outcome.Success(TestData.RawPage(null, TestData.RawNode("s1")));
+        await server.SendAsync(HttpMethod.Post, $"{PluginPath}/search", json: "{}").ConfigureAwait(true);
+
+        ApiResponse suggest = await server.GetAsync($"{PluginPath}/suggest?filter=tag").ConfigureAwait(true);
+        ApiResponse enrich = await server.SendAsync(HttpMethod.Post, "/v1/nodes/enrich?ref=com.example.test:s1").ConfigureAwait(true);
+
+        Assert.Equal(HttpStatusCode.NotImplemented, suggest.Status);
+        Assert.Equal(HttpStatusCode.NotImplemented, enrich.Status);
+    });
+
+    /// <summary>Enrichment merges the plugin's props into nodes already served.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public Task EnrichMergesPropsIntoServedNodes() => ApiTests.WithServerAsync(async server =>
+    {
+        server.Gateway.OnSearch = (_, _) => Outcome.Success(TestData.RawPage(null, TestData.RawNode("s1", title: "Berserk")));
+        server.Gateway.OnEnrich = (_, ids) => Outcome.Success<IReadOnlyList<PluginNode>>([TestData.RawNode("s1") with { Props = [new Prop("emma.rating", PropValue.FromNumber(9))] }]);
+        await server.SendAsync(HttpMethod.Post, $"{PluginPath}/search", json: "{}").ConfigureAwait(true);
+
+        ApiResponse response = await server.SendAsync(HttpMethod.Post, "/v1/nodes/enrich?ref=com.example.test:s1").ConfigureAwait(true);
+        ApiResponse missing = await server.SendAsync(HttpMethod.Post, "/v1/nodes/enrich").ConfigureAwait(true);
+
+        Assert.Equal(HttpStatusCode.OK, response.Status);
+        Assert.Equal("Berserk", response.Json["nodes"]![0]!["title"]!.GetValue<string>());
+        Assert.Equal("emma.rating", response.Json["nodes"]![0]!["props"]![0]!["key"]!.GetValue<string>());
+        Assert.Equal(HttpStatusCode.BadRequest, missing.Status);
+    });
+
     /// <summary>A body with a field the API does not know, or that is not JSON, is refused before any plugin is called.</summary>
     /// <param name="body">The request body.</param>
     /// <param name="contentType">The content type to send.</param>

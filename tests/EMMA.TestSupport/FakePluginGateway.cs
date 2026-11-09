@@ -13,6 +13,8 @@ public sealed class FakePluginGateway : IPluginGateway
     private int searchCalls;
     private int childrenCalls;
     private int getCalls;
+    private int suggestCalls;
+    private int enrichCalls;
     private int resolveCalls;
     private int readCalls;
 
@@ -27,6 +29,12 @@ public sealed class FakePluginGateway : IPluginGateway
 
     /// <summary>Gets or sets the answer to get.</summary>
     public Func<PluginId, IReadOnlyList<LocalNodeId>, Outcome<IReadOnlyList<PluginNode>>> OnGet { get; set; } = (_, _) => Unsupported<IReadOnlyList<PluginNode>>();
+
+    /// <summary>Gets or sets the answer to suggest.</summary>
+    public Func<PluginId, string, string, int, Outcome<IReadOnlyList<Choice>>> OnSuggest { get; set; } = (_, _, _, _) => Unsupported<IReadOnlyList<Choice>>();
+
+    /// <summary>Gets or sets the answer to enrich.</summary>
+    public Func<PluginId, IReadOnlyList<LocalNodeId>, Outcome<IReadOnlyList<PluginNode>>> OnEnrich { get; set; } = (_, _) => Unsupported<IReadOnlyList<PluginNode>>();
 
     /// <summary>Gets or sets the answer to resolve.</summary>
     public Func<PluginId, ResolveRequest, Outcome<IReadOnlyList<Asset>>> OnResolve { get; set; } = (_, _) => Unsupported<IReadOnlyList<Asset>>();
@@ -45,6 +53,12 @@ public sealed class FakePluginGateway : IPluginGateway
 
     /// <summary>Gets how many get calls arrived.</summary>
     public int GetCalls => this.getCalls;
+
+    /// <summary>Gets how many suggest calls arrived.</summary>
+    public int SuggestCalls => this.suggestCalls;
+
+    /// <summary>Gets how many enrich calls arrived.</summary>
+    public int EnrichCalls => this.enrichCalls;
 
     /// <summary>Gets how many resolve calls arrived.</summary>
     public int ResolveCalls => this.resolveCalls;
@@ -85,6 +99,28 @@ public sealed class FakePluginGateway : IPluginGateway
     {
         Interlocked.Increment(ref this.getCalls);
         return Task.FromResult(this.OnGet(plugin, ids));
+    }
+
+    /// <inheritdoc/>
+    public Task<Outcome<IReadOnlyList<Choice>>> SuggestAsync(
+        PluginId plugin,
+        string filterId,
+        string text,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref this.suggestCalls);
+        return Task.FromResult(this.OnSuggest(plugin, filterId, text, limit));
+    }
+
+    /// <inheritdoc/>
+    public Task<Outcome<IReadOnlyList<PluginNode>>> EnrichAsync(
+        PluginId plugin,
+        IReadOnlyList<LocalNodeId> ids,
+        CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref this.enrichCalls);
+        return Task.FromResult(this.OnEnrich(plugin, ids));
     }
 
     /// <inheritdoc/>

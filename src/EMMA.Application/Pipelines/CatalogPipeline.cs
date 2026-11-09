@@ -39,6 +39,100 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         return await this.FinishPageAsync(plugin, info.Value, contextParent: null, raw, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>Suggests values for one of a plugin's lookup filters from partly typed text.</summary>
+    /// <param name="plugin">The plugin.</param>
+    /// <param name="filterId">The id of a filter the plugin declares with the lookup type.</param>
+    /// <param name="text">The partial text. Text shorter than the filter's minimum query length yields no suggestions.</param>
+    /// <param name="limit">The most suggestions wanted; capped at the filter's maximum.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The suggestions, or why they could not be had; <see cref="ErrorCode.Unsupported"/> when the plugin does not assist.</returns>
+    public async Task<Outcome<IReadOnlyList<Choice>>> SuggestAsync(
+        PluginId plugin,
+        string filterId,
+        string text,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        Outcome<PluginInfo> info = await this.DescribeAsync(plugin, cancellationToken).ConfigureAwait(false);
+        if (!info.IsSuccess)
+        {
+            return Outcome.Failure<IReadOnlyList<Choice>>(info.Error);
+        }
+
+        FilterSpec? spec = info.Value.Filters.FirstOrDefault(filter => string.Equals(filter.Id, filterId, StringComparison.Ordinal));
+        if (spec is not { Type: FilterType.Lookup, Lookup: { } lookup })
+        {
+            return Outcome.Failure<IReadOnlyList<Choice>>(ErrorCode.InvalidArgument, $"The plugin has no lookup filter '{filterId}'.");
+        }
+
+        if (text.Length > ContractLimits.MaxQueryTextLength)
+        {
+            return Outcome.Failure<IReadOnlyList<Choice>>(ErrorCode.InvalidArgument, $"Suggestion text is longer than {ContractLimits.MaxQueryTextLength} characters.");
+        }
+
+        if (limit < 1)
+        {
+            return Outcome.Failure<IReadOnlyList<Choice>>(ErrorCode.InvalidArgument, "The limit must be at least 1.");
+        }
+
+        if (text.Length < lookup.MinQueryLength)
+        {
+            return Outcome.Success<IReadOnlyList<Choice>>([]);
+        }
+
+        int wanted = lookup.MaxResults > 0 ? Math.Min(limit, lookup.MaxResults) : limit;
+        Outcome<IReadOnlyList<Choice>> raw = await executor
+            .ExecuteAsync(token => gateway.SuggestAsync(plugin, filterId, text, wanted, token), cancellationToken)
+            .ConfigureAwait(false);
+        if (!raw.IsSuccess)
+        {
+            return raw;
+        }
+
+        if (raw.Value.Any(choice => string.IsNullOrWhiteSpace(choice.Value) || string.IsNullOrWhiteSpace(choice.Label)))
+        {
+            return Outcome.Failure<IReadOnlyList<Choice>>(ErrorCode.Internal, $"Plugin {plugin} returned a suggestion with a blank value or label.");
+        }
+
+        return Outcome.Success<IReadOnlyList<Choice>>([.. raw.Value.Take(wanted)]);
+    }
+
+    /// <summary>
+    /// Fills in expensive props (ratings, counts) of nodes the host has already seen, typically search results,
+    /// and remembers the merged result. The plugin's props replace the stored props with the same key; every other
+    /// stored prop, and the title and thumbnail, stay as they were. Nodes the host has not seen are omitted.
+    /// </summary>
+    /// <param name="references">The nodes to enrich; they may belong to different plugins.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The merged nodes in the order requested, or why a plugin failed; <see cref="ErrorCode.Unsupported"/> when a plugin does not assist.</returns>
+    public async Task<Outcome<IReadOnlyList<Node>>> EnrichAsync(IReadOnlyList<NodeRef> references, CancellationToken cancellationToken)
+    {
+        if (references.Count > ContractLimits.MaxIdsPerGet)
+        {
+            return Outcome.Failure<IReadOnlyList<Node>>(
+                ErrorCode.InvalidArgument,
+                $"At most {ContractLimits.MaxIdsPerGet} nodes can be enriched at once.");
+        }
+
+        Dictionary<NodeRef, Node> merged = [];
+        foreach (IGrouping<PluginId, NodeRef> group in references.GroupBy(reference => reference.Plugin))
+        {
+            Outcome<IReadOnlyList<Node>> nodes = await this.EnrichFromPluginAsync(group.Key, [.. group.Distinct()], cancellationToken).ConfigureAwait(false);
+            if (!nodes.IsSuccess)
+            {
+                return nodes;
+            }
+
+            foreach (Node node in nodes.Value)
+            {
+                merged[node.Ref] = node;
+            }
+        }
+
+        return Outcome.Success<IReadOnlyList<Node>>(
+            [.. references.Where(merged.ContainsKey).Select(reference => merged[reference])]);
+    }
+
     /// <summary>Lists a plugin's browse root: its landing sections or top-level content.</summary>
     /// <param name="plugin">The plugin.</param>
     /// <param name="request">Cursor and limit.</param>
@@ -98,6 +192,66 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         return problem is null
             ? info
             : Outcome.Failure<PluginInfo>(ErrorCode.Internal, $"Plugin {plugin} {problem}.");
+    }
+
+    private static Node MergeProps(Node original, Node enriched)
+    {
+        HashSet<string> replaced = [.. enriched.Props.Select(prop => prop.Key)];
+        return original with { Props = [.. original.Props.Where(prop => !replaced.Contains(prop.Key)), .. enriched.Props] };
+    }
+
+    private async Task<Outcome<IReadOnlyList<Node>>> EnrichFromPluginAsync(
+        PluginId plugin,
+        IReadOnlyList<NodeRef> requested,
+        CancellationToken cancellationToken)
+    {
+        Dictionary<NodeRef, Node> originals = [];
+        foreach (NodeRef reference in requested)
+        {
+            Node? seen = await store.GetAsync(reference, cancellationToken).ConfigureAwait(false);
+            if (seen is not null)
+            {
+                originals[reference] = seen;
+            }
+        }
+
+        if (originals.Count == 0)
+        {
+            return Outcome.Success<IReadOnlyList<Node>>([]);
+        }
+
+        Outcome<PluginInfo> info = await this.DescribeAsync(plugin, cancellationToken).ConfigureAwait(false);
+        if (!info.IsSuccess)
+        {
+            return Outcome.Failure<IReadOnlyList<Node>>(info.Error);
+        }
+
+        List<LocalNodeId> ids = [.. originals.Keys.Select(reference => reference.Id)];
+        Outcome<IReadOnlyList<PluginNode>> raw = await executor
+            .ExecuteAsync(token => gateway.EnrichAsync(plugin, ids, token), cancellationToken)
+            .ConfigureAwait(false);
+        if (!raw.IsSuccess)
+        {
+            return Outcome.Failure<IReadOnlyList<Node>>(raw.Error);
+        }
+
+        Outcome<IReadOnlyList<Node>> enriched = NodeValidator.ValidateNodes(plugin, info.Value, contextParent: null, raw.Value);
+        if (!enriched.IsSuccess)
+        {
+            return enriched;
+        }
+
+        Node? unrequested = enriched.Value.FirstOrDefault(node => !originals.ContainsKey(node.Ref));
+        if (unrequested is not null)
+        {
+            return Outcome.Failure<IReadOnlyList<Node>>(
+                ErrorCode.Internal,
+                $"Plugin {plugin} returned node '{unrequested.Ref.Id}', which was not requested.");
+        }
+
+        List<Node> results = [.. enriched.Value.Select(node => MergeProps(originals[node.Ref], node))];
+        await this.RememberAsync(results, cancellationToken).ConfigureAwait(false);
+        return Outcome.Success<IReadOnlyList<Node>>(results);
     }
 
     private async Task<Outcome<IReadOnlyList<Node>>> GetFromPluginAsync(

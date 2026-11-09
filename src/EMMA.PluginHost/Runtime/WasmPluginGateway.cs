@@ -45,6 +45,14 @@ public sealed class WasmPluginGateway(
         this.CallAsync(plugin, (open, token) => open.GetAsync(ids, token), cancellationToken);
 
     /// <inheritdoc/>
+    public Task<Outcome<IReadOnlyList<Choice>>> SuggestAsync(PluginId plugin, string filterId, string text, int limit, CancellationToken cancellationToken) =>
+        this.CallAsync(plugin, (open, token) => open.SuggestAsync(filterId, text, limit, token), cancellationToken);
+
+    /// <inheritdoc/>
+    public Task<Outcome<IReadOnlyList<PluginNode>>> EnrichAsync(PluginId plugin, IReadOnlyList<LocalNodeId> ids, CancellationToken cancellationToken) =>
+        this.CallAsync(plugin, (open, token) => open.EnrichAsync(ids, token), cancellationToken);
+
+    /// <inheritdoc/>
     public Task<Outcome<IReadOnlyList<Asset>>> ResolveAsync(PluginId plugin, ResolveRequest request, CancellationToken cancellationToken) =>
         this.CallAsync(plugin, (open, token) => open.ResolveAsync(request, token), cancellationToken);
 

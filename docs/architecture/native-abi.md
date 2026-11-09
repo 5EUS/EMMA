@@ -71,6 +71,8 @@ Requests are JSON objects; an empty request means `{}`. `ref` is a node referenc
 | `catalog.browse` | `plugin`, `cursor`, `limit` | a node page |
 | `catalog.children` | `ref`, `cursor`, `limit` | a node page |
 | `catalog.get` | `refs` | `{nodes: [...]}` |
+| `catalog.suggest` | `plugin`, `filter` (a filter declared with type `lookup`), `text`, `limit` (optional, up to 50, default 10) | `{suggestions: [{value, label, description, is_default}]}`. `value` is what to send back in that filter's `values`. Text shorter than the filter's `min_query_length` gives an empty list; `unsupported` when the plugin does not offer search assist |
+| `catalog.enrich` | `refs` (nodes the host has already returned, such as search results) | `{nodes: [...]}`: the same nodes with the plugin's extra props merged over the stored ones, remembered for later reads. Nodes the host has not seen are omitted; `unsupported` when the plugin does not offer search assist |
 | `assets.list` | `ref`, `role`, `hint` (optional) | `{assets: [{index, mime, size, delivery, props}]}`. `hint` is a quality such as `1080p`, passed to the plugin as `emma.quality`; a plugin may ignore it |
 | `assets.content` | `ref`, `role`, `index`, `range` (`start`, `length`), `hint` (optional) | `{mime, length, range_start, total, accepts_ranges}`, with the bytes in the blob. A leaf that was downloaded (index 0) is served from its stored file before the plugin is asked, and then honours `range` whatever it is |
 | `progress.set` | `ref`, `unit`, `value`, `total`, `completed` | the stored progress |

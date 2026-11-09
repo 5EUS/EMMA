@@ -35,6 +35,7 @@ namespace EMMA.Api.Contracts;
 [JsonSerializable(typeof(FacetDto))]
 [JsonSerializable(typeof(NodePageResponse))]
 [JsonSerializable(typeof(NodeListResponse))]
+[JsonSerializable(typeof(SuggestionsResponse))]
 [JsonSerializable(typeof(FilterValueDto))]
 [JsonSerializable(typeof(SearchRequest))]
 [JsonSerializable(typeof(AssetDto))]

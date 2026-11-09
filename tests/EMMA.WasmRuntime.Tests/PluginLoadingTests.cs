@@ -18,13 +18,14 @@ public sealed class PluginLoadingTests(RuntimeFixture runtime) : IClassFixture<R
         using WasmPlugin plain = runtime.Open(TestConfigs.Fixture());
         CancellationToken cancel = TestContext.Current.CancellationToken;
 
-        PluginCall<IReadOnlyList<string>> suggestions = await assisted.SuggestAsync("ber", 2, cancel).ConfigureAwait(true);
+        PluginCall<IReadOnlyList<Choice>> suggestions = await assisted.SuggestAsync("tag", "ber", 2, cancel).ConfigureAwait(true);
         PluginCall<IReadOnlyList<PluginNode>> enriched = await assisted.EnrichAsync([LocalNodeId.Create("s1")], cancel).ConfigureAwait(true);
-        PluginCall<IReadOnlyList<string>> unsupported = await plain.SuggestAsync("ber", 2, cancel).ConfigureAwait(true);
+        PluginCall<IReadOnlyList<Choice>> unsupported = await plain.SuggestAsync("tag", "ber", 2, cancel).ConfigureAwait(true);
 
         Assert.True(assisted.SearchAssist);
         Assert.False(plain.SearchAssist);
-        Assert.Equal(["ber 1", "ber 2"], suggestions.Outcome.Value);
+        Assert.Equal(["ber 1", "ber 2"], suggestions.Outcome.Value.Select(choice => choice.Label));
+        Assert.Equal("tag:ber-1", suggestions.Outcome.Value[0].Value);
         Assert.Equal("Enriched s1", enriched.Outcome.Value.Single().Title);
         Assert.Equal(ErrorCode.Unsupported, unsupported.Outcome.Error?.Code);
     }

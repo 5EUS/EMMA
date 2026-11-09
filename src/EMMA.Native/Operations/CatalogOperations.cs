@@ -79,6 +79,47 @@ internal static class CatalogOperations
             : Envelope.Failure(nodes.Error);
     }
 
+    /// <summary>Suggests values for a plugin's lookup filter.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> SuggestAsync(OperationContext context)
+    {
+        Outcome<SuggestCall> call = context.Read(NativeJsonContext.Default.SuggestCall);
+        Outcome<PluginId> plugin = call.IsSuccess ? RequestParsing.Plugin(call.Value.Plugin) : Outcome.Failure<PluginId>(call.Error);
+        Outcome<(string Filter, string Text, int Limit)> arguments = call.IsSuccess
+            ? RequestParsing.Suggestion(call.Value.Filter, call.Value.Text, call.Value.Limit)
+            : Outcome.Failure<(string, string, int)>(call.Error);
+        if (!plugin.IsSuccess || !arguments.IsSuccess)
+        {
+            return Envelope.Failure((plugin.Error ?? arguments.Error)!);
+        }
+
+        Outcome<IReadOnlyList<Choice>> suggestions = await context.Runtime.Catalog
+            .SuggestAsync(plugin.Value, arguments.Value.Filter, arguments.Value.Text, arguments.Value.Limit, context.CancellationToken)
+            .ConfigureAwait(false);
+        return suggestions.IsSuccess
+            ? Envelope.Ok(PluginMapper.ToSuggestions(suggestions.Value), ApiJsonContext.Default.SuggestionsResponse)
+            : Envelope.Failure(suggestions.Error);
+    }
+
+    /// <summary>Fills in expensive props of nodes the host has already seen.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> EnrichAsync(OperationContext context)
+    {
+        Outcome<RefsCall> call = context.Read(NativeJsonContext.Default.RefsCall);
+        Outcome<IReadOnlyList<NodeRef>> references = call.IsSuccess ? RequestParsing.Nodes(call.Value.Refs, "refs") : Outcome.Failure<IReadOnlyList<NodeRef>>(call.Error);
+        if (!references.IsSuccess)
+        {
+            return Envelope.Failure(references.Error);
+        }
+
+        Outcome<IReadOnlyList<Node>> nodes = await context.Runtime.Catalog.EnrichAsync(references.Value, context.CancellationToken).ConfigureAwait(false);
+        return nodes.IsSuccess
+            ? Envelope.Ok(new NodeListResponse([.. nodes.Value.Select(NodeMapper.ToDto)]), ApiJsonContext.Default.NodeListResponse)
+            : Envelope.Failure(nodes.Error);
+    }
+
     private static NativeResponse Page(Outcome<NodePage> page) =>
         page.IsSuccess
             ? Envelope.Ok(NodeMapper.ToDto(page.Value), ApiJsonContext.Default.NodePageResponse)

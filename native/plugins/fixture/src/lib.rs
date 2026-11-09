@@ -9,8 +9,8 @@ mod bindings;
 
 use bindings::emma::core::host;
 use bindings::emma::core::types::{
-    Choice, ErrorCode, FilterSpec, FilterType, Header, Node, NodePage, PageRequest, PluginError,
-    Prop, PropValue, Query,
+    Choice, ErrorCode, FilterSpec, FilterType, Header, LookupSpec, Node, NodePage, PageRequest,
+    PluginError, Prop, PropValue, Query,
 };
 use bindings::exports::emma::core::assets::{
     self, Asset, ByteRange, Chunk, Delivery, Remote, ResolveRequest,
@@ -224,6 +224,50 @@ fn run_probe(command: &str) -> Result<NodePage, PluginError> {
     }
 }
 
+/// The filters the fixture declares: a choice filter and a lookup filter, both with a role.
+fn filters() -> Vec<FilterSpec> {
+    vec![
+        FilterSpec {
+            id: "status".to_owned(),
+            label: "Status".to_owned(),
+            filter_type: FilterType::SingleChoice,
+            kinds: vec![],
+            required: false,
+            hidden: false,
+            group: None,
+            description: None,
+            choices: vec![Choice {
+                value: "ongoing".to_owned(),
+                label: "Ongoing".to_owned(),
+                description: None,
+                is_default: false,
+            }],
+            range: None,
+            lookup: None,
+            role: Some("emma.filter.status".to_owned()),
+        },
+        FilterSpec {
+            id: "tag".to_owned(),
+            label: "Tag".to_owned(),
+            filter_type: FilterType::Lookup,
+            kinds: vec![],
+            required: false,
+            hidden: false,
+            group: None,
+            description: None,
+            choices: vec![],
+            range: None,
+            lookup: Some(LookupSpec {
+                min_query_length: 2,
+                max_results: 5,
+                debounce_ms: 250,
+                allow_custom_values: false,
+            }),
+            role: Some("emma.filter.tag".to_owned()),
+        },
+    ]
+}
+
 impl meta::Guest for Fixture {
     fn describe() -> Result<PluginInfo, PluginError> {
         Ok(PluginInfo {
@@ -235,24 +279,7 @@ impl meta::Guest for Fixture {
                 kind("recipe.step", "Step", &[], &["text", "image"]),
                 kind("probe", "Probe", &[], &["text", "image", "blob"]),
             ],
-            filters: vec![FilterSpec {
-                id: "status".to_owned(),
-                label: "Status".to_owned(),
-                filter_type: FilterType::SingleChoice,
-                kinds: vec![],
-                required: false,
-                hidden: false,
-                group: None,
-                description: None,
-                choices: vec![Choice {
-                    value: "ongoing".to_owned(),
-                    label: "Ongoing".to_owned(),
-                    description: None,
-                    is_default: false,
-                }],
-                range: None,
-                lookup: None,
-            }],
+            filters: filters(),
             sorts: vec![Choice {
                 value: "recent".to_owned(),
                 label: "Recent".to_owned(),
@@ -453,8 +480,15 @@ impl assets::Guest for Fixture {
 
 #[cfg(any(feature = "assist", feature = "newer-patch"))]
 impl bindings::exports::emma::core::search_assist::Guest for Fixture {
-    fn suggest(text: String, limit: u32) -> Result<Vec<String>, PluginError> {
-        Ok((1..=limit.min(5)).map(|i| format!("{text} {i}")).collect())
+    fn suggest(filter_id: String, text: String, limit: u32) -> Result<Vec<Choice>, PluginError> {
+        Ok((1..=limit.min(5))
+            .map(|i| Choice {
+                value: format!("{filter_id}:{text}-{i}"),
+                label: format!("{text} {i}"),
+                description: None,
+                is_default: false,
+            })
+            .collect())
     }
 
     fn enrich(ids: Vec<String>) -> Result<Vec<Node>, PluginError> {

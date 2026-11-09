@@ -47,6 +47,11 @@ fn describe_reports_kinds_filters_and_typed_settings() {
         .collect();
     assert!(kinds.contains(&"series") && kinds.contains(&"recipe") && kinds.contains(&"probe"));
     assert_eq!(info["categories"][0]["id"], "connection");
+    let filters = info["filters"].as_array().unwrap();
+    assert_eq!(filters[0]["role"], "emma.filter.status");
+    assert_eq!(filters[1]["filter_type"], "Lookup");
+    assert_eq!(filters[1]["role"], "emma.filter.tag");
+    assert_eq!(filters[1]["lookup"]["min_query_length"], 2);
     let secret = info["settings"]
         .as_array()
         .unwrap()
@@ -494,13 +499,30 @@ fn optional_search_assist_is_detected_and_used_when_present_and_unsupported_when
     let plain = open(&runtime, &config("fixture"));
     let assisted = open(&runtime, &config("fixture-assist"));
 
-    let suggestions = call(&assisted, "suggest", &json!({ "text": "ber", "limit": 2 })).0;
+    let suggestions = call(
+        &assisted,
+        "suggest",
+        &json!({ "filter_id": "tag", "text": "ber", "limit": 2 }),
+    )
+    .0;
     let enriched = call(&assisted, "enrich", &json!({ "ids": ["s1"] })).0;
-    let absent = call(&plain, "suggest", &json!({ "text": "ber", "limit": 2 })).0;
+    let absent = call(
+        &plain,
+        "suggest",
+        &json!({ "filter_id": "tag", "text": "ber", "limit": 2 }),
+    )
+    .0;
 
     assert!(!plain.has_search_assist());
     assert!(assisted.has_search_assist());
-    assert_eq!(ok(&suggestions), &json!(["ber 1", "ber 2"]));
+    let labels: Vec<&str> = ok(&suggestions)
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|choice| choice["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels, ["ber 1", "ber 2"]);
+    assert_eq!(ok(&suggestions)[0]["value"], "tag:ber-1");
     assert_eq!(ok(&enriched)[0]["title"], "Enriched s1");
     assert_eq!(error_code(&absent), "Unsupported");
     // An assisted plugin still serves the base contract.
@@ -514,11 +536,16 @@ fn a_plugin_built_for_a_newer_compatible_contract_version_loads_and_its_extensio
     let plugin = open(&runtime, &config("fixture-newer-patch"));
 
     let health = call(&plugin, "health", &json!({})).0;
-    let suggestions = call(&plugin, "suggest", &json!({ "text": "ab", "limit": 2 })).0;
+    let suggestions = call(
+        &plugin,
+        "suggest",
+        &json!({ "filter_id": "tag", "text": "ab", "limit": 2 }),
+    )
+    .0;
 
     assert_eq!(ok(&health)["ok"], true);
     assert!(plugin.has_search_assist());
-    assert_eq!(ok(&suggestions), &json!(["ab 1", "ab 2"]));
+    assert_eq!(ok(&suggestions)[1]["label"], "ab 2");
 }
 
 #[test]

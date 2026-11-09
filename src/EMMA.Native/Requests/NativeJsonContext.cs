@@ -12,6 +12,7 @@ namespace EMMA.Native.Requests;
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
 [JsonSerializable(typeof(PluginCall))]
 [JsonSerializable(typeof(SearchCall))]
+[JsonSerializable(typeof(SuggestCall))]
 [JsonSerializable(typeof(PageCall))]
 [JsonSerializable(typeof(RefCall))]
 [JsonSerializable(typeof(RefsCall))]

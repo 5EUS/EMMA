@@ -209,4 +209,93 @@ public sealed class CatalogPipelineTests
         Assert.Equal(ErrorCode.InvalidArgument, nodes.Error?.Code);
         Assert.Equal(0, this.gateway.GetCalls);
     }
+
+    /// <summary>Suggestions are limited to what the filter allows and ignore text that is too short.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SuggestAsksOnlyForLookupFiltersWithEnoughText()
+    {
+        this.gateway.OnDescribe = _ => Outcome.Success(TestData.Info([LookupFilter(), TestData.Filter("status", FilterType.SingleChoice, false, "done")]));
+        int asked = 0;
+        this.gateway.OnSuggest = (_, _, text, limit) =>
+        {
+            asked = limit;
+            return Outcome.Success<IReadOnlyList<Choice>>([.. Enumerable.Range(1, 9).Select(i => new Choice($"t{i}", $"{text} {i}", null, false))]);
+        };
+
+        Outcome<IReadOnlyList<Choice>> good = await this.pipeline.SuggestAsync(TestData.Plugin, "tag", "act", 20, CancellationToken.None).ConfigureAwait(true);
+        Outcome<IReadOnlyList<Choice>> tooShort = await this.pipeline.SuggestAsync(TestData.Plugin, "tag", "a", 5, CancellationToken.None).ConfigureAwait(true);
+        Outcome<IReadOnlyList<Choice>> notLookup = await this.pipeline.SuggestAsync(TestData.Plugin, "status", "done", 5, CancellationToken.None).ConfigureAwait(true);
+        Outcome<IReadOnlyList<Choice>> unknown = await this.pipeline.SuggestAsync(TestData.Plugin, "nope", "act", 5, CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(3, asked);
+        Assert.Equal(3, good.Value.Count);
+        Assert.Empty(tooShort.Value);
+        Assert.Equal(ErrorCode.InvalidArgument, notLookup.Error?.Code);
+        Assert.Equal(ErrorCode.InvalidArgument, unknown.Error?.Code);
+        Assert.Equal(1, this.gateway.SuggestCalls);
+    }
+
+    /// <summary>A suggestion with a blank value is a contract violation.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SuggestRejectsBlankValues()
+    {
+        this.gateway.OnDescribe = _ => Outcome.Success(TestData.Info([LookupFilter()]));
+        this.gateway.OnSuggest = (_, _, _, _) => Outcome.Success<IReadOnlyList<Choice>>([new Choice(" ", "Label", null, false)]);
+
+        Outcome<IReadOnlyList<Choice>> result = await this.pipeline.SuggestAsync(TestData.Plugin, "tag", "act", 5, CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(ErrorCode.Internal, result.Error?.Code);
+    }
+
+    /// <summary>A plugin without search assist answers unsupported.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SuggestPassesUnsupportedThrough()
+    {
+        this.gateway.OnDescribe = _ => Outcome.Success(TestData.Info([LookupFilter()]));
+
+        Outcome<IReadOnlyList<Choice>> result = await this.pipeline.SuggestAsync(TestData.Plugin, "tag", "act", 5, CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(ErrorCode.Unsupported, result.Error?.Code);
+    }
+
+    /// <summary>Enrichment replaces props with the same key, keeps the rest, and is remembered.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task EnrichMergesPropsOverTheStoredNode()
+    {
+        this.gateway.OnSearch = (_, _) => Outcome.Success(TestData.RawPage(null, TestData.RawNode("s1", title: "Berserk") with
+        {
+            Props = [new Prop("emma.synopsis", PropValue.FromText("Dark")), new Prop("emma.rating", PropValue.FromNumber(1))],
+        }));
+        this.gateway.OnEnrich = (_, ids) => Outcome.Success<IReadOnlyList<PluginNode>>([.. ids.Select(id => TestData.RawNode(id.Value, title: "Ignored") with
+        {
+            Props = [new Prop("emma.rating", PropValue.FromNumber(9))],
+        })]);
+        await this.pipeline.SearchAsync(TestData.Plugin, TestData.TextQuery("berserk"), CancellationToken.None).ConfigureAwait(true);
+
+        Outcome<IReadOnlyList<Node>> result = await this.pipeline.EnrichAsync([TestData.Ref("s1"), TestData.Ref("unseen")], CancellationToken.None).ConfigureAwait(true);
+
+        Node node = Assert.Single(result.Value);
+        Assert.Equal("Berserk", node.Title);
+        Assert.Equal(["emma.synopsis", "emma.rating"], node.Props.Select(prop => prop.Key));
+        Assert.Equal(PropValue.FromNumber(9), node.Props.Single(prop => string.Equals(prop.Key, "emma.rating", StringComparison.Ordinal)).Value);
+        Node? stored = await this.store.GetAsync(TestData.Ref("s1"), CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(PropValue.FromNumber(9), stored?.Props.Single(prop => string.Equals(prop.Key, "emma.rating", StringComparison.Ordinal)).Value);
+    }
+
+    /// <summary>Nodes the host has not seen never reach the plugin.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task EnrichSkipsTheCallWhenNothingWasSeen()
+    {
+        Outcome<IReadOnlyList<Node>> result = await this.pipeline.EnrichAsync([TestData.Ref("unseen")], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Empty(result.Value);
+        Assert.Equal(0, this.gateway.EnrichCalls);
+    }
+
+    private static FilterSpec LookupFilter() => TestData.Filter("tag", FilterType.Lookup) with { Lookup = new LookupSpec(2, 3, 100, false) };
 }

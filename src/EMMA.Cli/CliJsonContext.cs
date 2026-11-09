@@ -15,6 +15,7 @@ namespace EMMA.Cli;
 [JsonSerializable(typeof(PluginSummary))]
 [JsonSerializable(typeof(NodePageResponse))]
 [JsonSerializable(typeof(NodeListResponse))]
+[JsonSerializable(typeof(SuggestionsResponse))]
 [JsonSerializable(typeof(AssetListResponse))]
 [JsonSerializable(typeof(DownloadDto))]
 [JsonSerializable(typeof(DownloadListResponse))]

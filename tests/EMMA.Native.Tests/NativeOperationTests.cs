@@ -153,6 +153,31 @@ public sealed class NativeOperationTests
         }
     }
 
+    /// <summary>Suggest checks the filter and enrich checks the nodes before anything reaches a plugin that offers no search assist.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task SuggestAndEnrichOperations()
+    {
+        NativeHarness host = await NativeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.InstallFixtureAsync().ConfigureAwait(true);
+            host.Call("catalog.get", new JsonObject { ["refs"] = new JsonArray(Series) });
+
+            CallResult notLookup = host.Call("catalog.suggest", new JsonObject { ["plugin"] = NativeHarness.Plugin, ["filter"] = "status", ["text"] = "on" });
+            CallResult noFilter = host.Call("catalog.suggest", new JsonObject { ["plugin"] = NativeHarness.Plugin });
+            CallResult unsupported = host.Call("catalog.suggest", new JsonObject { ["plugin"] = NativeHarness.Plugin, ["filter"] = "tag", ["text"] = "ber" });
+            CallResult noRefs = host.Call("catalog.enrich", new JsonObject());
+            CallResult enrichUnsupported = host.Call("catalog.enrich", new JsonObject { ["refs"] = new JsonArray(Series) });
+
+            Assert.Equal("invalid_argument", notLookup.ErrorCode);
+            Assert.Equal("invalid_argument", noFilter.ErrorCode);
+            Assert.Equal("unsupported", unsupported.ErrorCode);
+            Assert.Equal("invalid_argument", noRefs.ErrorCode);
+            Assert.Equal("unsupported", enrichUnsupported.ErrorCode);
+        }
+    }
+
     /// <summary>Plugin failures keep their class and message, and invalid requests are refused before the plugin is asked.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]

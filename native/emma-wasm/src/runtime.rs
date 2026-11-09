@@ -397,13 +397,16 @@ impl Plugin {
         if operation == "suggest" {
             let suggest: SuggestRequest = parse(request)?;
             let call = instance
-                .get_typed_func::<(String, u32), (Result<Vec<String>, types::PluginError>,)>(
+                .get_typed_func::<(String, String, u32), (Result<Vec<types::Choice>, types::PluginError>,)>(
                     &mut *store,
                     &function,
                 )
                 .map_err(|error| trapped(&error))?;
             let (result,) = call
-                .call(&mut *store, (suggest.text, suggest.limit))
+                .call(
+                    &mut *store,
+                    (suggest.filter_id, suggest.text, suggest.limit),
+                )
                 .map_err(|error| trapped(&error))?;
             json(result)
         } else {

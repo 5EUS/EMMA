@@ -67,12 +67,13 @@ public interface IPluginInstance : IAsyncDisposable
     /// <returns>The bytes; <see cref="ErrorCode.NotFound"/> for an unknown token.</returns>
     Task<PluginCall<Chunk>> ReadAsync(string token, ByteRange? range, CancellationToken cancellationToken);
 
-    /// <summary>Suggests completions for partly typed search text (extension <see cref="PluginExtensions.SearchAssist"/>).</summary>
+    /// <summary>Suggests values for a lookup filter from partly typed text (extension <see cref="PluginExtensions.SearchAssist"/>).</summary>
+    /// <param name="filterId">The lookup filter being completed.</param>
     /// <param name="text">The partial text.</param>
     /// <param name="limit">The most suggestions wanted.</param>
     /// <param name="cancellationToken">Cancels the call before it starts.</param>
     /// <returns>The suggestions; <see cref="ErrorCode.Unsupported"/> when the extension is not offered.</returns>
-    Task<PluginCall<IReadOnlyList<string>>> SuggestAsync(string text, int limit, CancellationToken cancellationToken);
+    Task<PluginCall<IReadOnlyList<Choice>>> SuggestAsync(string filterId, string text, int limit, CancellationToken cancellationToken);
 
     /// <summary>Adds detail to nodes the host already holds (extension <see cref="PluginExtensions.SearchAssist"/>).</summary>
     /// <param name="ids">The plugin-local ids.</param>

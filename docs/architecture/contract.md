@@ -169,8 +169,8 @@ section 11). Section 6 shows `main` needs none.
 | audio and subtitle tracks, default track ids | extra assets for roles `audio`/`subtitle`, told apart by `emma.language`; `emma.default` |
 | `GetSegment` (bytes through gRPC or base64 JSON) | removed: the client player reads the adaptive manifest; plugin-only data uses `proxied` plus `read` (raw bytes) |
 | `Search` (query only reaches the plugin) | `catalog.search(query)` with kinds, typed filters, sort, cursor |
-| `SearchSuggestions`, `EnrichSearchItems` | optional `search-assist.suggest` and `enrich` |
-| manifest `SearchExperience.Filters` | `meta.describe().filters` (`filter-spec`), including ranges and lookups |
+| `SearchSuggestions`, `EnrichSearchItems` | optional `search-assist.suggest(filter-id, text, limit)` and `enrich`. Suggest completes one `lookup` filter and returns `choice`s (the value to send back plus a label), so a client can turn the typed text into a filter token. Title-text completion is gone: a plugin that wants it declares a lookup filter |
+| manifest `SearchExperience.Filters` | `meta.describe().filters` (`filter-spec`), including ranges and lookups. A filter may carry an open-string `role` (`emma.filter.language`, `emma.filter.tag`, `emma.filter.demographic`, `emma.filter.status`, `emma.filter.maturity`, or the plugin's own) so a client presents the same idea the same way across plugins; the host never switches on it and a client falls back to the label |
 | manifest `SearchExperience.Landing` | `catalog.children(none, ...)`: section nodes the client expands. Landing templates, titles and subtitles were UI decoration and are dropped (client concern) |
 | manifest `Query.Additions` (prefix/suffix tokens) | ordinary filters |
 | `GetCapabilities`, `PluginCapabilityProfile` enum | the component's exports plus `describe()`; no enum |

@@ -29,8 +29,12 @@ public sealed class PluginCatalogTests(RuntimeFixture runtime) : IClassFixture<R
         Assert.Equal(new SettingCondition("advanced.verbose", "true"), timeout.VisibleWhen);
         Assert.Equal(SettingType.Duration, timeout.Type);
         Assert.Equal("connection", info.Categories.Single().Id);
-        FilterSpec status = info.Filters.Single();
+        FilterSpec status = info.Filters[0];
         Assert.Equal(FilterType.SingleChoice, status.Type);
+        Assert.Equal("emma.filter.status", status.Role);
+        FilterSpec tag = info.Filters.Single(filter => filter.Type == FilterType.Lookup);
+        Assert.Equal("emma.filter.tag", tag.Role);
+        Assert.Equal(new LookupSpec(2, 5, 250, false), tag.Lookup);
         Assert.Equal("recent", info.Sorts.Single().Value);
     }
 

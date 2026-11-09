@@ -21,6 +21,7 @@ internal static class PluginEndpoints
         routes.MapPut("/plugins/{plugin}/settings", SetSettingsAsync);
         routes.MapGet("/plugins/{plugin}/browse", BrowseAsync);
         routes.MapPost("/plugins/{plugin}/search", SearchAsync);
+        routes.MapGet("/plugins/{plugin}/suggest", SuggestAsync);
     }
 
     private static async Task<IResult> ListAsync(IPluginRegistryPort registry, CancellationToken cancellationToken)
@@ -126,5 +127,28 @@ internal static class PluginEndpoints
         return nodes.IsSuccess
             ? ApiResults.Ok(NodeMapper.ToDto(nodes.Value), ApiJsonContext.Default.NodePageResponse)
             : ApiResults.Failure(nodes.Error);
+    }
+
+    private static async Task<IResult> SuggestAsync(
+        string plugin,
+        HttpContext context,
+        CatalogPipeline catalog,
+        CancellationToken cancellationToken)
+    {
+        Outcome<PluginId> id = RequestReader.Plugin(plugin);
+        Outcome<string> filter = RequestReader.Required(context.Request, "filter");
+        Outcome<string?> text = RequestReader.Optional(context.Request, "text");
+        Outcome<int?> limit = RequestReader.Limit(context.Request, ContractLimits.MaxSuggestions);
+        if (!id.IsSuccess || !filter.IsSuccess || !text.IsSuccess || !limit.IsSuccess)
+        {
+            return ApiResults.Failure((id.Error ?? filter.Error ?? text.Error ?? limit.Error)!);
+        }
+
+        Outcome<IReadOnlyList<Choice>> suggestions = await catalog
+            .SuggestAsync(id.Value, filter.Value, text.Value ?? string.Empty, limit.Value ?? ContractLimits.DefaultSuggestions, cancellationToken)
+            .ConfigureAwait(false);
+        return suggestions.IsSuccess
+            ? ApiResults.Ok(PluginMapper.ToSuggestions(suggestions.Value), ApiJsonContext.Default.SuggestionsResponse)
+            : ApiResults.Failure(suggestions.Error);
     }
 }

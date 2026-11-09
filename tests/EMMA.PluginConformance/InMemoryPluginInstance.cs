@@ -108,11 +108,11 @@ public sealed class InMemoryPluginInstance : IPluginInstance
     }
 
     /// <inheritdoc/>
-    public Task<PluginCall<IReadOnlyList<string>>> SuggestAsync(string text, int limit, CancellationToken cancellationToken)
+    public Task<PluginCall<IReadOnlyList<Choice>>> SuggestAsync(string filterId, string text, int limit, CancellationToken cancellationToken)
     {
-        Outcome<IReadOnlyList<string>> outcome = this.searchAssist
-            ? Outcome.Success<IReadOnlyList<string>>([.. Enumerable.Range(1, Math.Min(Math.Max(limit, 0), 5)).Select(i => $"{text} {i}")])
-            : Outcome.Failure<IReadOnlyList<string>>(ErrorCode.Unsupported, "search-assist is not offered");
+        Outcome<IReadOnlyList<Choice>> outcome = this.searchAssist
+            ? Outcome.Success<IReadOnlyList<Choice>>([.. Enumerable.Range(1, Math.Min(Math.Max(limit, 0), 5)).Select(i => new Choice($"{filterId}:{text}-{i}", $"{text} {i}", null, false))])
+            : Outcome.Failure<IReadOnlyList<Choice>>(ErrorCode.Unsupported, "search-assist is not offered");
         return this.Done(outcome, false, cancellationToken);
     }
 

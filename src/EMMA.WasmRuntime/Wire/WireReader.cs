@@ -36,6 +36,11 @@ internal static class WireReader
     internal static Asset Asset(WireAsset asset) =>
         new(asset.Mime, Delivery(asset.Delivery), asset.Size is { } size ? ToLong(size) : null, [.. asset.Props.Select(Prop)]);
 
+    /// <summary>Maps an option of a filter, sort, setting or suggestion.</summary>
+    /// <param name="choice">The wire form.</param>
+    /// <returns>The Domain form.</returns>
+    internal static Choice Choice(WireChoice choice) => new(choice.Value, choice.Label, choice.Description, choice.IsDefault);
+
     /// <summary>Maps a failure.</summary>
     /// <param name="error">The wire form.</param>
     /// <returns>The Domain form.</returns>
@@ -106,8 +111,6 @@ internal static class WireReader
         [.. kind.Roles.Select(Role)],
         kind.Profile);
 
-    private static Choice Choice(WireChoice choice) => new(choice.Value, choice.Label, choice.Description, choice.IsDefault);
-
     private static FilterSpec Filter(WireFilter filter) => new(
         filter.Id,
         filter.Label,
@@ -119,7 +122,8 @@ internal static class WireReader
         filter.Description,
         [.. filter.Choices.Select(Choice)],
         filter.Range is { } range ? new RangeSpec(range.Min, range.Max, range.Step, range.Unit) : null,
-        filter.Lookup is { } lookup ? Lookup(lookup) : null);
+        filter.Lookup is { } lookup ? Lookup(lookup) : null,
+        filter.Role);
 
     private static LookupSpec Lookup(WireLookup lookup) =>
         new(ToInt(lookup.MinQueryLength), ToInt(lookup.MaxResults), ToInt(lookup.DebounceMs), lookup.AllowCustomValues);

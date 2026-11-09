@@ -18,12 +18,12 @@ namespace EMMA.Cli.Commands;
 internal static class RunCommand
 {
     private const string Repository = "dev";
-    private const string OperationHelp = "Operations: describe | search [text] | children [node] | get <node>... | assets <node> <role> | content <node> <role> [--index n] [--out file]. Add --settings <file.json> to give the plugin values for its settings.";
+    private const string OperationHelp = "Operations: describe | search [text] | suggest <filter> [text] | children [node] | get <node>... | enrich <node>... | assets <node> <role> | content <node> <role> [--index n] [--out file]. Add --settings <file.json> to give the plugin values for its settings.";
 
     /// <summary>Runs one operation against a plugin.</summary>
     /// <param name="context">The command.</param>
     /// <param name="source">A plugin directory or a package file.</param>
-    /// <param name="operation">The operation: <c>describe</c>, <c>search</c>, <c>children</c>, <c>get</c>, <c>assets</c> or <c>content</c>.</param>
+    /// <param name="operation">The operation: <c>describe</c>, <c>search</c>, <c>suggest</c>, <c>children</c>, <c>get</c>, <c>enrich</c>, <c>assets</c> or <c>content</c>.</param>
     /// <param name="operands">The operation's arguments.</param>
     /// <returns>The exit code.</returns>
     public static async Task<int> RunAsync(CommandContext context, string source, string operation, IReadOnlyList<string> operands)
@@ -94,8 +94,10 @@ internal static class RunCommand
     {
         "describe" => DescribeAsync(context, runtime, plugin),
         "search" => SearchAsync(context, runtime, plugin, operands),
+        "suggest" when operands.Count > 0 => SuggestAsync(context, runtime, plugin, operands),
         "children" => ChildrenAsync(context, runtime, plugin, operands),
-        "get" when operands.Count > 0 => GetAsync(context, runtime, plugin, operands),
+        "get" when operands.Count > 0 => GetAsync(context, runtime, plugin, operands, enrich: false),
+        "enrich" when operands.Count > 0 => GetAsync(context, runtime, plugin, operands, enrich: true),
         "assets" or "content" when operands.Count >= 2 => AssetsAsync(context, runtime, plugin, operation, operands),
         _ => context.MisuseAsync(OperationHelp),
     };
@@ -143,7 +145,28 @@ internal static class RunCommand
             : await context.MisuseAsync(parent.Error.Message).ConfigureAwait(false);
     }
 
-    private static async Task<int> GetAsync(CommandContext context, EmmaRuntime runtime, PluginId plugin, IReadOnlyList<string> operands)
+    private static async Task<int> SuggestAsync(CommandContext context, EmmaRuntime runtime, PluginId plugin, IReadOnlyList<string> operands)
+    {
+        int? limit = int.TryParse(context.Arguments.Option("limit"), NumberStyles.None, CultureInfo.InvariantCulture, out int parsed) ? parsed : null;
+        Outcome<(string Filter, string Text, int Limit)> arguments = RequestParsing.Suggestion(operands[0], operands.Count > 1 ? operands[1] : null, limit);
+        if (!arguments.IsSuccess)
+        {
+            return await context.MisuseAsync(arguments.Error.Message).ConfigureAwait(false);
+        }
+
+        Outcome<IReadOnlyList<Choice>> suggestions = await runtime.Catalog
+            .SuggestAsync(plugin, arguments.Value.Filter, arguments.Value.Text, arguments.Value.Limit, context.CancellationToken)
+            .ConfigureAwait(false);
+        if (!suggestions.IsSuccess)
+        {
+            return await context.FailAsync(suggestions.Error).ConfigureAwait(false);
+        }
+
+        await PluginCommands.PrintAsync(context, PluginMapper.ToSuggestions(suggestions.Value), CliJsonContext.Default.SuggestionsResponse).ConfigureAwait(false);
+        return CommandContext.Success;
+    }
+
+    private static async Task<int> GetAsync(CommandContext context, EmmaRuntime runtime, PluginId plugin, IReadOnlyList<string> operands, bool enrich)
     {
         List<NodeRef> references = [];
         foreach (string operand in operands)
@@ -158,6 +181,12 @@ internal static class RunCommand
         }
 
         Outcome<IReadOnlyList<Node>> nodes = await runtime.Catalog.GetAsync(references, context.CancellationToken).ConfigureAwait(false);
+        if (nodes.IsSuccess && enrich)
+        {
+            // A throwaway runtime has not seen the nodes yet; get remembers them, which enrich needs to merge into.
+            nodes = await runtime.Catalog.EnrichAsync(references, context.CancellationToken).ConfigureAwait(false);
+        }
+
         if (!nodes.IsSuccess)
         {
             return await context.FailAsync(nodes.Error).ConfigureAwait(false);

@@ -50,7 +50,7 @@ You implement three interfaces (`wit/meta.wit`, `catalog.wit`, `assets.wit`):
 Pages are cursor-based: return `next-cursor` and EMMA hands it back. Failures are `plugin-error` with a class
 (`not-found`, `unauthorized`, `rate-limited` with `retry-after-ms`, `unavailable`, `invalid-argument`, `unsupported`,
 `cancelled`, `internal`); EMMA retries the transient ones for you. Props are typed (text, integer, number, flag,
-timestamp, url, text-list), never JSON blobs. The optional `search-assist` interface adds suggestions and lazy enrichment.
+timestamp, url, text-list), never JSON blobs. The optional `search-assist` interface adds lazy enrichment (`enrich`) and completion for lookup filters (`suggest(filter-id, text, limit)`, returning choices). Give each filter a `role` such as `emma.filter.tag` or `emma.filter.language` when it means one of the well-known things: clients type-ahead and group by role, so "english" can offer your language filter. Declare a filter with the `lookup` type and a `lookup-spec` (minimum length, maximum results, debounce) when its values are too many to list in `choices`; the client then calls `suggest`.
 
 ## What EMMA gives you (`wit/host.wit`)
 

@@ -12,6 +12,7 @@ namespace EMMA.Api.Contracts;
 /// <param name="Choices">Options for choice filters.</param>
 /// <param name="Range">Bounds for range filters.</param>
 /// <param name="Lookup">Completion behaviour for lookup filters.</param>
+/// <param name="Role">What the filter means, such as <c>emma.filter.tag</c>; absent when the plugin does not say.</param>
 public sealed record FilterDto(
     string Id,
     string Label,
@@ -23,4 +24,5 @@ public sealed record FilterDto(
     string? Description,
     IReadOnlyList<ChoiceDto> Choices,
     RangeDto? Range,
-    LookupDto? Lookup);
+    LookupDto? Lookup,
+    string? Role);

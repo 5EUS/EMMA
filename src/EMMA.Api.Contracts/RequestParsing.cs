@@ -80,6 +80,24 @@ public static class RequestParsing
             ? Outcome.Success(limit)
             : Outcome.Failure<int?>(ErrorCode.InvalidArgument, $"'limit' must be a whole number from 1 to {max}.");
 
+    /// <summary>Checks the arguments of a suggestion request.</summary>
+    /// <param name="filter">The lookup filter id.</param>
+    /// <param name="text">The partial text; absent counts as empty.</param>
+    /// <param name="limit">The most suggestions wanted; absent means <see cref="ContractLimits.DefaultSuggestions"/>.</param>
+    /// <returns>The checked arguments, or why one is invalid.</returns>
+    public static Outcome<(string Filter, string Text, int Limit)> Suggestion(string? filter, string? text, int? limit)
+    {
+        if (string.IsNullOrWhiteSpace(filter))
+        {
+            return Outcome.Failure<(string, string, int)>(ErrorCode.InvalidArgument, "'filter' is required.");
+        }
+
+        Outcome<int?> checkedLimit = Limit(limit, ContractLimits.MaxSuggestions);
+        return checkedLimit.IsSuccess
+            ? Outcome.Success((filter, text ?? string.Empty, checkedLimit.Value ?? ContractLimits.DefaultSuggestions))
+            : Outcome.Failure<(string, string, int)>(checkedLimit.Error);
+    }
+
     /// <summary>Reads a cursor and page-size hint.</summary>
     /// <param name="cursor">The cursor from a previous page, or <see langword="null"/> or empty for the first.</param>
     /// <param name="limit">The page-size hint, if any.</param>

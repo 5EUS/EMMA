@@ -97,6 +97,8 @@ pub struct IdsRequest {
 /// The request body of `suggest`.
 #[derive(Debug, Deserialize)]
 pub struct SuggestRequest {
+    /// The id of the `lookup` filter being completed.
+    pub filter_id: String,
     /// The partially typed text.
     pub text: String,
     /// The most suggestions wanted.

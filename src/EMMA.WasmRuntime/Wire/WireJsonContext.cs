@@ -13,7 +13,7 @@ namespace EMMA.WasmRuntime.Wire;
 [JsonSerializable(typeof(WireEnvelope<WireNodePage>))]
 [JsonSerializable(typeof(WireEnvelope<IReadOnlyList<WireNode>>))]
 [JsonSerializable(typeof(WireEnvelope<IReadOnlyList<WireAsset>>))]
-[JsonSerializable(typeof(WireEnvelope<IReadOnlyList<string>>))]
+[JsonSerializable(typeof(WireEnvelope<IReadOnlyList<WireChoice>>))]
 [JsonSerializable(typeof(WireEnvelope<WireChunkInfo>))]
 [JsonSerializable(typeof(WireOpenInfo))]
 [JsonSerializable(typeof(WireQuery))]

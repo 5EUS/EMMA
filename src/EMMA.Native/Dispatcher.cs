@@ -25,6 +25,8 @@ internal static class Dispatcher
             ["catalog.browse"] = CatalogOperations.BrowseAsync,
             ["catalog.children"] = CatalogOperations.ChildrenAsync,
             ["catalog.get"] = CatalogOperations.GetAsync,
+            ["catalog.suggest"] = CatalogOperations.SuggestAsync,
+            ["catalog.enrich"] = CatalogOperations.EnrichAsync,
             ["assets.list"] = AssetOperations.ListAsync,
             ["assets.content"] = AssetOperations.ContentAsync,
             ["progress.set"] = UserOperations.SetProgressAsync,

@@ -12,6 +12,7 @@ namespace EMMA.Domain;
 /// <param name="Choices">The options for choice filters.</param>
 /// <param name="Range">The bounds for range filters.</param>
 /// <param name="Lookup">The completion behaviour for lookup filters.</param>
+/// <param name="Role">What the filter means, as an open string such as <c>emma.filter.tag</c>; clients use it to present the same idea alike across plugins. The core never switches on it.</param>
 public sealed record FilterSpec(
     string Id,
     string Label,
@@ -23,4 +24,5 @@ public sealed record FilterSpec(
     string? Description,
     IReadOnlyList<Choice> Choices,
     RangeSpec? Range,
-    LookupSpec? Lookup);
+    LookupSpec? Lookup,
+    string? Role = null);

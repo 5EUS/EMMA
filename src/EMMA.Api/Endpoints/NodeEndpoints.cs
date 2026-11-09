@@ -18,6 +18,7 @@ internal static class NodeEndpoints
     {
         routes.MapGet("/nodes", GetAsync);
         routes.MapGet("/nodes/children", ChildrenAsync);
+        routes.MapPost("/nodes/enrich", EnrichAsync);
     }
 
     private static async Task<IResult> GetAsync(HttpContext context, CatalogPipeline catalog, CancellationToken cancellationToken)
@@ -46,6 +47,20 @@ internal static class NodeEndpoints
         Outcome<NodePage> nodes = await catalog.ChildrenAsync(parent.Value, page.Value, cancellationToken).ConfigureAwait(false);
         return nodes.IsSuccess
             ? ApiResults.Ok(NodeMapper.ToDto(nodes.Value), ApiJsonContext.Default.NodePageResponse)
+            : ApiResults.Failure(nodes.Error);
+    }
+
+    private static async Task<IResult> EnrichAsync(HttpContext context, CatalogPipeline catalog, CancellationToken cancellationToken)
+    {
+        Outcome<IReadOnlyList<NodeRef>> references = RequestReader.Nodes(context.Request, "ref");
+        if (!references.IsSuccess)
+        {
+            return ApiResults.Failure(references.Error);
+        }
+
+        Outcome<IReadOnlyList<Node>> nodes = await catalog.EnrichAsync(references.Value, cancellationToken).ConfigureAwait(false);
+        return nodes.IsSuccess
+            ? ApiResults.Ok(new NodeListResponse([.. nodes.Value.Select(NodeMapper.ToDto)]), ApiJsonContext.Default.NodeListResponse)
             : ApiResults.Failure(nodes.Error);
     }
 }

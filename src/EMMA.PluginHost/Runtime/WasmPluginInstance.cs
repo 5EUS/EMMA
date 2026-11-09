@@ -49,8 +49,8 @@ public sealed class WasmPluginInstance : IPluginInstance
         this.plugin.ReadAsync(token, range, cancellationToken);
 
     /// <inheritdoc/>
-    public Task<PluginCall<IReadOnlyList<string>>> SuggestAsync(string text, int limit, CancellationToken cancellationToken) =>
-        this.plugin.SuggestAsync(text, limit, cancellationToken);
+    public Task<PluginCall<IReadOnlyList<Choice>>> SuggestAsync(string filterId, string text, int limit, CancellationToken cancellationToken) =>
+        this.plugin.SuggestAsync(filterId, text, limit, cancellationToken);
 
     /// <inheritdoc/>
     public Task<PluginCall<IReadOnlyList<PluginNode>>> EnrichAsync(IReadOnlyList<LocalNodeId> ids, CancellationToken cancellationToken) =>

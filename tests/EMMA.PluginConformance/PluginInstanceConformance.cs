@@ -218,14 +218,15 @@ public abstract class PluginInstanceConformance
                 assisted: false,
                 async plain =>
                 {
-                    PluginCall<IReadOnlyList<string>> suggestions = await assistedInstance.SuggestAsync("ber", 2, Ct).ConfigureAwait(true);
+                    PluginCall<IReadOnlyList<Choice>> suggestions = await assistedInstance.SuggestAsync("tag", "ber", 2, Ct).ConfigureAwait(true);
                     PluginCall<IReadOnlyList<PluginNode>> enriched = await assistedInstance.EnrichAsync([LocalNodeId.Create("s1")], Ct).ConfigureAwait(true);
-                    PluginCall<IReadOnlyList<string>> unsupported = await plain.SuggestAsync("ber", 2, Ct).ConfigureAwait(true);
+                    PluginCall<IReadOnlyList<Choice>> unsupported = await plain.SuggestAsync("tag", "ber", 2, Ct).ConfigureAwait(true);
                     PluginCall<IReadOnlyList<PluginNode>> unenriched = await plain.EnrichAsync([LocalNodeId.Create("s1")], Ct).ConfigureAwait(true);
 
                     Assert.Contains(PluginExtensions.SearchAssist, assistedInstance.Extensions);
                     Assert.DoesNotContain(PluginExtensions.SearchAssist, plain.Extensions);
-                    Assert.Equal(["ber 1", "ber 2"], suggestions.Outcome.Value);
+                    Assert.Equal(["ber 1", "ber 2"], suggestions.Outcome.Value.Select(choice => choice.Label));
+                    Assert.Equal("tag:ber-1", suggestions.Outcome.Value[0].Value);
                     Assert.Equal("Enriched s1", enriched.Outcome.Value.Single().Title);
                     Assert.Equal(ErrorCode.Unsupported, unsupported.Outcome.Error?.Code);
                     Assert.Equal(ErrorCode.Unsupported, unenriched.Outcome.Error?.Code);
