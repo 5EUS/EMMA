@@ -10,8 +10,9 @@
     TODO(rewrite): NativeAOT and SQLite. Verified on linux-x64 (2026-11-07): a NativeAOT
     publish of a console app using this project has no IL warnings, ships libe_sqlite3.so
     beside the binary, and runs migrations, typed props and queries correctly. Still to
-    verify in phase 8: the other desktop RIDs, and iOS and Android, which need the matching
-    SQLitePCLRaw static or per-ABI libraries.
+    verify in phase 8: the other desktop RIDs, and iOS (the system SQLite through
+    SQLitePCLRaw.provider.sqlite3; nothing wires it yet). Android is handled outside this project:
+    scripts/package-android.sh bundles the Android build of libe_sqlite3 from the SQLitePCLRaw Android package.
   -->
   <!--
     There is no default database path. main read EMMA_STORAGE_DATABASE_PATH inside StorageOptions; now every host

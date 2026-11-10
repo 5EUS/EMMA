@@ -5,10 +5,15 @@
     docs/architecture/native-abi.md. The ABI is versioned by emma_abi_version(); new operations are new
     operation names, never new exports.
 
-    TODO(rewrite): only desktop targets are published and checked (scripts/publish-native.sh). main also had
-    scripts for iOS (a static library in an xcframework) and Android (NDK toolchain); they are not ported
-    because they cannot be validated without a Mac and the NDK. Port and test them together when a mobile
-    build is on the table. The Wasm host's iOS path (pulley) is likewise unverified.
+    Desktop targets are published and checked on their own platforms (scripts/publish-native.sh, with the C smoke test).
+    Android (a shared library, built with the NDK) and iOS (a static library) come out of the same script and are
+    bundled by scripts/package-android.sh and scripts/package-ios.sh; CI builds both.
+
+    TODO(rewrite): nothing mobile has run on a device. The Android libraries are built and checked (exports, 16 KiB
+    alignment, bionic-only dependencies) but not loaded; the iOS script and the DirectPInvoke below have never run
+    (they need a Mac). The Wasm host's iOS path (pulley) is likewise unverified: the runtime option exists but nothing
+    passes WasmRuntimeOptions("pulley64") on iOS, and SQLite on iOS (the system library through
+    SQLitePCLRaw.provider.sqlite3, not libe_sqlite3) is not wired. Do those together with the first device run.
   -->
   <PropertyGroup>
     <OutputType>Library</OutputType>
@@ -18,6 +23,13 @@
     <NativeLib>Shared</NativeLib>
     <SelfContained>true</SelfContained>
   </PropertyGroup>
+  <!--
+    On iOS the Wasm host is a static library linked into the app, not a library found at run time: bind its P/Invokes
+    at link time. The symbols stay undefined in libemma_native.a and are resolved when the app links libemma_wasm.a.
+  -->
+  <ItemGroup Condition="$(EmmaMobileRid.StartsWith('ios'))">
+    <DirectPInvoke Include="emma_wasm" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../EMMA.Runtime/EMMA.Runtime.csproj" />
     <ProjectReference Include="../EMMA.Api.Contracts/EMMA.Api.Contracts.csproj" />

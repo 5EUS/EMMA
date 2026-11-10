@@ -122,17 +122,40 @@ A test fails if an operation exists that is not in this table.
 
 ## Building
 
-`sh scripts/publish-native.sh [rid]` publishes the library with NativeAOT for a desktop target and names it
-`libemma_native.so`, `libemma_native.dylib` or `emma_native.dll`. `sh scripts/development/native-smoke.sh` publishes it and
-drives it from a C program (`tests/EMMA.Native.Harness/harness.c`) that loads it with `dlopen`: the one check that
-proves the real shared library exports what the header says. The managed tests (`EMMA.Native.Tests`) cover behaviour
-against a real Wasm plugin through the same code the exports call.
+`sh scripts/publish-native.sh [rid] [output-dir]` publishes the library with NativeAOT and names it `libemma_native.so`,
+`libemma_native.dylib` or `emma_native.dll`; `sh native/build-host.sh [rid] [output-dir]` builds the Wasm host beside it.
+The rid defaults to the host's, and a desktop rid must be the host's (neither tool cross-compiles between desktops).
+`sh scripts/development/native-smoke.sh` publishes the desktop library and drives it from a C program
+(`tests/EMMA.Native.Harness/harness.c`) that loads it with `dlopen`: the one check that proves the real shared library
+exports what the header says. The managed tests (`EMMA.Native.Tests`) cover behaviour against a real Wasm plugin through
+the same code the exports call.
+
+The same two scripts take a mobile rid, and two more bundle the result for an app:
+
+| rid | Library | Built on |
+| --- | --- | --- |
+| `android-arm64`, `android-x64` | shared `libemma_native.so` and `libemma_wasm.so` (NDK clang; .NET's `linux-bionic` rid) | Linux or macOS with the NDK (`ANDROID_NDK_ROOT`, or the newest stable one under the SDK) |
+| `ios-arm64`, `iossimulator-arm64`, `iossimulator-x64` | static `libemma_native.a` and `libemma_wasm.a` | macOS with Xcode |
+
+- `sh scripts/package-android.sh [output-dir] [rid...]` lays out `jniLibs/<abi>/` with `libemma_native.so`,
+  `libemma_wasm.so` and `libe_sqlite3.so` (taken from the `SQLitePCLRaw.lib.e_sqlite3.android` package, because the
+  desktop build of SQLite does not load on Android). It fails if a library is not 16 KiB page aligned, which Google Play
+  requires for apps targeting Android 15 or later.
+- `sh scripts/package-ios.sh [output-dir] [rid...]` makes `EmmaNative.xcframework` and `EmmaWasm.xcframework`.
+- A mobile publish restores by itself, into `obj/mobile-<rid>/` (`EmmaMobileRid` in `Directory.Build.props`), because the
+  NativeAOT runtime pack for a mobile rid is only fetched by a restore that names the rid. It does not touch the lock files
+  or the desktop `dotnet restore`.
+- On Android the app loads the libraries from its native library directory and passes it as `native_dir`. On iOS there is
+  nothing to load: the app links both frameworks, and `libemma_native`'s P/Invokes to the Wasm host are bound at link time.
+- CI builds both on every push (`android`, `ios` jobs) and uploads the result.
 
 ## Deferred
 
-- TODO(rewrite): iOS and Android are not built. `main` had scripts for an iOS static library and an Android NDK build;
-  they cannot be validated without a Mac and the NDK, so they were not ported. The library name, `native_dir` and
-  `libm` notes above are desktop-only; mobile loaders differ.
+- TODO(rewrite): nothing mobile has run on a device. The Android libraries are built and inspected in CI but never
+  loaded; the iOS lane has never run at all (the `ios` CI job is allowed to fail until it has been green once). Still to
+  do together, on a device: pass `WasmRuntimeOptions("pulley64")` on iOS (the option exists, nothing sets it), wire SQLite
+  on iOS (the system library, not `libe_sqlite3`), and find the extra system libraries and linker flags the static
+  NativeAOT library needs in the app. The `native_dir` and `libm` notes above are desktop-only.
 - TODO(rewrite): plugin log lines are discarded in the native library. A log callback (`emma_set_log_callback`) would let
   an app show plugin logs; add it when a client needs it.
 - TODO(rewrite): calls cannot be cancelled individually. Closing the handle cancels everything in flight; per-call

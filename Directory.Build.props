@@ -22,6 +22,19 @@
   </PropertyGroup>
 
   <!--
+    Mobile publishes (scripts/mobile/publish-native.sh) name a rid at restore time, which resolves different packs from the
+    desktop restore and so cannot share its lock files or its project.assets.json. Passing EmmaMobileRid moves both into
+    obj/mobile-<rid>/ of each project, where the locked-mode restore and the desktop builds never look. It has to be
+    set here: the SDK imports the restore output from MSBuildProjectExtensionsPath before the project body is read, and
+    only an absolute path is found there.
+  -->
+  <PropertyGroup Condition="'$(EmmaMobileRid)' != ''">
+    <MSBuildProjectExtensionsPath>$(MSBuildProjectDirectory)/obj/mobile-$(EmmaMobileRid)/</MSBuildProjectExtensionsPath>
+    <NuGetLockFilePath>$(MSBuildProjectExtensionsPath)packages.lock.json</NuGetLockFilePath>
+    <RestoreLockedMode>false</RestoreLockedMode>
+  </PropertyGroup>
+
+  <!--
     NativeAOT posture. This is the single most expensive thing to retrofit, so it
     is on from the first commit and asserted in Directory.Build.targets.
 

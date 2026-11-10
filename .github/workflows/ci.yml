@@ -64,6 +64,51 @@ jobs:
       - name: Vulnerable packages
         run: dotnet list package --vulnerable --include-transitive
 
+  # The libraries an Android app bundles (scripts/package-android.sh): NativeAOT cross-compiled with the NDK, the Rust
+  # Wasm host, and SQLite from the SQLitePCLRaw Android package. Both ABIs build on one Linux runner; the script fails
+  # if a library is not 16 KiB aligned. Nothing here loads them on a device or emulator yet.
+  android:
+    name: Android libraries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Install Rust targets
+        run: rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Build jniLibs
+        # The runner image ships an NDK and sets ANDROID_NDK_ROOT; scripts/common.sh reads it.
+        run: sh scripts/package-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emma-android-jnilibs
+          path: artifacts/mobile/android/jniLibs
+          if-no-files-found: error
+
+  # The XCFrameworks an iOS app links (scripts/package-ios.sh). NativeAOT targets Apple platforms only from macOS.
+  # TODO(rewrite): this job has never run. It does not fail the build until it has been green once: the iOS NativeAOT
+  # lane (DirectPInvoke in EMMA.Native.csproj, the static library, Xcode's linker) is unverified. Remove
+  # continue-on-error then.
+  ios:
+    name: iOS XCFrameworks
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Install Rust targets
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+      - name: Build XCFrameworks
+        run: sh scripts/package-ios.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: emma-ios-xcframeworks
+          path: artifacts/mobile/ios
+          if-no-files-found: error
+
   # Rust is optional: every step after detection is skipped unless a Cargo manifest
   # exists under native/, so the job passes trivially in a pure C# repository.
   rust:

@@ -45,6 +45,10 @@ duplicated code. Do not weaken these either: fix the code. Keep generated Rust i
 - `EMMA.Native` is the C ABI for embedding apps: one `emma_call` with operation names, JSON in and out, numeric
   handles, no throwing across the boundary. `sh scripts/development/native-smoke.sh` publishes it and drives it
   from C (`tests/EMMA.Native.Harness`); NativeAOT publishes are memory-hungry, so do not run them in a loop.
+- Native libraries are built by two scripts that take an optional rid and output directory: `scripts/publish-native.sh`
+  (`libemma_native`, NativeAOT) and `native/build-host.sh` (`libemma_wasm`, Rust). Both also build for Android and iOS
+  (`scripts/package-android.sh`, `scripts/package-ios.sh` bundle them); `scripts/common.sh` holds the rid table. A
+  mobile publish restores into `obj/mobile-<rid>/` on its own and must not touch the lock files.
 - Plugin authoring: `native/templates/rust-plugin` is a real crate that `build-plugins.sh` builds against the current
   contract and `emma plugin new` scaffolds (it is compiled into the CLI). Its `wit/` is copied from
   `src/EMMA.Contracts/wit` and git-ignored; never edit a copy. See `docs/plugins/authoring.md`.
