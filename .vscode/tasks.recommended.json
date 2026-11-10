@@ -36,7 +36,7 @@
     {
       "label": "build wasm host",
       "type": "shell",
-      "command": "sh native/build-host.sh",
+      "command": "sh native/build-host.sh ${input:rid}",
       "problemMatcher": []
     },
     {
@@ -49,6 +49,18 @@
       "label": "publish native",
       "type": "shell",
       "command": "sh scripts/publish-native.sh ${input:rid}",
+      "problemMatcher": []
+    },
+    {
+      "label": "package android (jniLibs)",
+      "type": "shell",
+      "command": "sh scripts/package-android.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "package ios (xcframeworks)",
+      "type": "shell",
+      "command": "sh scripts/package-ios.sh",
       "problemMatcher": []
     },
     {

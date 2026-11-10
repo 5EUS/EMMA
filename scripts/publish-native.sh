@@ -12,10 +12,10 @@
 # ios-*, iossimulator-*: libemma_native.a alone, a static library the app links together with libemma_wasm.a. Needs macOS
 #   and Xcode.
 #
-# NativeAOT publishes are memory-hungry: run one per rid, not in a loop. A desktop publish relies on the repository-wide
-# `dotnet restore` (the project lists its desktop rids), hence --no-restore. A mobile publish restores here instead: the
-# NativeAOT runtime pack for a mobile rid is only fetched by a restore that names the rid, and such a restore cannot share
-# the desktop lock files. EmmaMobileRid (Directory.Build.props) gives it its own obj/mobile-<rid>/ and an unlocked restore;
+# NativeAOT publishes are memory-hungry: run one per rid, not in a loop. A desktop publish restores the project in locked
+# mode (it lists its desktop rids, so the lock files already cover them), then publishes with --no-restore. A mobile
+# publish restores here instead: the NativeAOT runtime pack for a mobile rid is only fetched by a restore that names
+# the rid, and such a restore cannot share the desktop lock files. EmmaMobileRid (Directory.Build.props) gives it its own obj/mobile-<rid>/ and an unlocked restore;
 # the desktop restore and `--no-restore` builds are left as they were.
 set -eu
 . "$(dirname "$0")/common.sh"
@@ -27,6 +27,10 @@ out=${2:-"$root/artifacts/native/aot/$rid"}
 project="$root/src/EMMA.Native/EMMA.Native.csproj"
 
 if [ "$kind" = desktop ]; then
+  # Restore first, locked, as a publish would: _IsPublishing makes the restore choose the NativeAOT compiler packs, which a
+  # plain `dotnet restore` leaves out ("The PrivateSdkAssemblies ItemGroup is required"). The project lists its desktop
+  # rids, so the lock files already cover this restore and stay as they are.
+  dotnet restore "$project" --locked-mode -p:_IsPublishing=true
   dotnet publish "$project" -c Release -r "$rid" --self-contained --no-restore -o "$out"
   # The SDK names the output after the assembly; rename it to the library's public name.
   case "$rid" in
