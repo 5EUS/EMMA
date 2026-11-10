@@ -18,10 +18,15 @@ namespace EMMA.Storage;
 /// state is never initialised, and the first <c>sqlite3_open</c> jumps through a null pointer. Deep binding makes
 /// the bundled copy resolve its own symbols first, and it is loaded locally so nothing else sees it.
 /// </para>
+/// <para>
+/// iOS: there is no bundled library and an app may not load one by path. The provider's calls are plain
+/// <c>sqlite3_*</c> entry points, and the system SQLite exports them, so <c>e_sqlite3</c> resolves to that.
+/// </para>
 /// </summary>
 public static partial class SqliteNativeLibrary
 {
     private const string LibraryName = "e_sqlite3";
+    private const string IosSystemLibrary = "/usr/lib/libsqlite3.dylib";
     private const int RtldNow = 2;
     private const int RtldDeepBind = 8;
 
@@ -66,6 +71,11 @@ public static partial class SqliteNativeLibrary
         if (!string.Equals(name, LibraryName, StringComparison.Ordinal))
         {
             return 0;
+        }
+
+        if (OperatingSystem.IsIOS())
+        {
+            return NativeLibrary.TryLoad(IosSystemLibrary, out nint system) ? system : 0;
         }
 
         string[] directories;
