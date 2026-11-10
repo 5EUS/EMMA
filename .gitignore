@@ -7,7 +7,10 @@ nupkg/
 
 # Visual Studio Code
 .vscode/*
-!.vscode/settings.json
+!.vscode/settings.recommended.json
+!.vscode/extensions.json
+!.vscode/launch.recommended.json
+!.vscode/tasks.recommended.json
 
 # Rider
 .idea/
@@ -43,9 +46,6 @@ msbuild.log
 msbuild.err
 msbuild.wrn
 artifacts/
-
-# VS Code settings
-.vscode/
 
 # Logs
 .tmp/

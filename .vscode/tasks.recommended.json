@@ -1,0 +1,70 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "dotnet build -c Debug",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "dotnet test -c Debug",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "check (everything CI checks)",
+      "type": "shell",
+      "command": "sh scripts/development/check.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "format",
+      "type": "shell",
+      "command": "sh scripts/development/format.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "build plugins",
+      "type": "shell",
+      "command": "sh native/build-plugins.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "build wasm host",
+      "type": "shell",
+      "command": "sh native/build-host.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "native smoke test",
+      "type": "shell",
+      "command": "sh scripts/development/native-smoke.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "publish native",
+      "type": "shell",
+      "command": "sh scripts/publish-native.sh ${input:rid}",
+      "problemMatcher": []
+    },
+    {
+      "label": "install git hooks",
+      "type": "shell",
+      "command": "sh scripts/development/install-git-hooks.sh",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "rid",
+      "type": "pickString",
+      "description": "Runtime identifier",
+      "options": ["osx-arm64", "osx-x64", "linux-x64", "linux-arm64", "win-x64", "win-arm64", "ios-arm64", "iossimulator-arm64", "iossimulator-x64", "android-arm64", "android-x64"],
+      "default": "osx-arm64"
+    }
+  ]
+}

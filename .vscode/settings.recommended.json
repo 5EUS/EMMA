@@ -1,0 +1,17 @@
+{
+  "java.server.launchMode": "LightWeight",
+  "java.import.gradle.enabled": false,
+  "java.import.maven.enabled": false,
+  "java.autobuild.enabled": false,
+  "dotnet.defaultSolution": "EMMA.slnx",
+  "search.exclude": {
+    "**/bin": true,
+    "**/obj": true,
+    "native/**/target": true
+  },
+  "files.watcherExclude": {
+    "**/bin/**": true,
+    "**/obj/**": true,
+    "native/**/target/**": true
+  }
+}

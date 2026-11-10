@@ -1,0 +1,38 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "EMMA.Api",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/EMMA.Api/bin/Debug/net10.0/EMMA.Api.dll",
+      "cwd": "${workspaceFolder}/src/EMMA.Api",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:5291"
+      },
+      "console": "internalConsole",
+      "stopAtEntry": false
+    },
+    {
+      "name": "EMMA.Cli",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/EMMA.Cli/bin/Debug/net10.0/EMMA.Cli.dll",
+      "args": "${input:cliArgs}",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "cliArgs",
+      "type": "promptString",
+      "description": "Arguments for emma (for example: --help)",
+      "default": "--help"
+    }
+  ]
+}
