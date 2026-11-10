@@ -11,8 +11,8 @@
 
     TODO(rewrite): nothing mobile has run on a device. The Android libraries are built and checked (exports, 16 KiB
     alignment, bionic-only dependencies) but not loaded; the iOS script and the DirectPInvoke below have never run
-    (they need a Mac). The Wasm host's iOS path (pulley) is likewise unverified: the runtime option exists but nothing
-    passes WasmRuntimeOptions("pulley64") on iOS, and SQLite on iOS (the system library through
+    (they need a Mac). The Wasm host's iOS path (pulley) is likewise unverified: LazyWasmTransport passes
+    WasmRuntimeOptions("pulley64") on iOS, but it has not run on a device, and SQLite on iOS (the system library through
     SQLitePCLRaw.provider.sqlite3, not libe_sqlite3) is not wired. Do those together with the first device run.
   -->
   <PropertyGroup>

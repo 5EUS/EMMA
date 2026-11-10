@@ -153,7 +153,7 @@ The same two scripts take a mobile rid, and two more bundle the result for an ap
 
 - TODO(rewrite): nothing mobile has run on a device. The Android libraries are built and inspected in CI but never
   loaded; the iOS lane has never run at all (the `ios` CI job is allowed to fail until it has been green once). Still to
-  do together, on a device: pass `WasmRuntimeOptions("pulley64")` on iOS (the option exists, nothing sets it), wire SQLite
+  do together, on a device: confirm `WasmRuntimeOptions("pulley64")` on iOS (`LazyWasmTransport` now passes it), wire SQLite
   on iOS (the system library, not `libe_sqlite3`), and find the extra system libraries and linker flags the static
   NativeAOT library needs in the app. The `native_dir` and `libm` notes above are desktop-only.
 - TODO(rewrite): plugin log lines are discarded in the native library. A log callback (`emma_set_log_callback`) would let

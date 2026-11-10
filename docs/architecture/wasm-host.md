@@ -70,8 +70,9 @@ that must outlive a restart is a node prop or a setting, not a cache entry.
 
 ## Open items
 
-- TODO(rewrite): iOS needs `pulley64` (no JIT). The runtime option and the precompile path exist
-  and are tested on the desktop host; nothing has run on a device.
+- TODO(rewrite): iOS runs plugins on the Pulley interpreter (`pulley64`, chosen in `LazyWasmTransport` for iOS and
+  tvOS since there is no JIT). The runtime option and the precompile path are tested on the desktop host; the iOS
+  path itself has not been confirmed on a device yet.
 - TODO(rewrite): a `.cwasm` cache. Manifests may not carry a `.cwasm` (machine code the signature
   cannot vouch for), and the host recompiles on every open. A cache needs an integrity story first.
 - TODO(rewrite): the loader hashes the entrypoint and the host then opens it by path, a small race

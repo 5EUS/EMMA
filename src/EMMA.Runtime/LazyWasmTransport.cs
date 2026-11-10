@@ -41,7 +41,10 @@ internal sealed class LazyWasmTransport : IPluginTransport, IDisposable
 
     private sealed class Loaded : IDisposable
     {
-        private readonly WasmRuntimeHost host = WasmRuntimeHost.Create();
+        // Apple platforms forbid making memory executable, so the engine cannot JIT there; it compiles for the
+        // Pulley interpreter instead. Elsewhere the engine uses the machine's own code.
+        private readonly WasmRuntimeHost host = WasmRuntimeHost.Create(
+            OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() ? new WasmRuntimeOptions("pulley64") : null);
 
         public Loaded() => this.Transport = new WasmPluginTransport(this.host);
 
