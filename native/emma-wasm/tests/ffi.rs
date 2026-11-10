@@ -6,9 +6,9 @@ mod common;
 use std::time::{Duration, Instant};
 
 use emma_wasm::ffi::{
-    EMMA_ERR_ARGUMENT, EMMA_ERR_RUNTIME, EMMA_OK, EmmaBuffer, emma_buffer_free, emma_plugin_call,
-    emma_plugin_close, emma_plugin_open, emma_precompile, emma_runtime_create,
-    emma_runtime_destroy, emma_runtime_key,
+    EMMA_ERR_ARGUMENT, EMMA_ERR_RUNTIME, EMMA_OK, EmmaBuffer, emma_wasm_buffer_free,
+    emma_wasm_plugin_call, emma_wasm_plugin_close, emma_wasm_plugin_open, emma_wasm_precompile,
+    emma_wasm_runtime_create, emma_wasm_runtime_destroy, emma_wasm_runtime_key,
 };
 use emma_wasm::{Plugin, Runtime};
 use serde_json::{Value, json};
@@ -25,7 +25,7 @@ fn take(buffer: EmmaBuffer) -> Vec<u8> {
     } else {
         unsafe { std::slice::from_raw_parts(buffer.ptr, buffer.len) }.to_vec()
     };
-    unsafe { emma_buffer_free(buffer) };
+    unsafe { emma_wasm_buffer_free(buffer) };
     bytes
 }
 
@@ -37,7 +37,7 @@ fn create_runtime() -> *mut Runtime {
     let mut runtime = std::ptr::null_mut();
     let mut error = EMPTY;
     let code =
-        unsafe { emma_runtime_create(std::ptr::null(), 0, &raw mut runtime, &raw mut error) };
+        unsafe { emma_wasm_runtime_create(std::ptr::null(), 0, &raw mut runtime, &raw mut error) };
     assert_eq!(code, EMMA_OK, "{}", text(error));
     runtime
 }
@@ -46,7 +46,7 @@ fn open_plugin(runtime: *const Runtime, config: &Value) -> (*mut Plugin, Value) 
     let bytes = serde_json::to_vec(config).unwrap();
     let (mut plugin, mut info, mut error) = (std::ptr::null_mut(), EMPTY, EMPTY);
     let code = unsafe {
-        emma_plugin_open(
+        emma_wasm_plugin_open(
             runtime,
             bytes.as_ptr(),
             bytes.len(),
@@ -63,7 +63,7 @@ fn call(plugin: *const Plugin, operation: &str, request: &Value) -> (Value, Vec<
     let bytes = serde_json::to_vec(request).unwrap();
     let (mut json_out, mut blob, mut error) = (EMPTY, EMPTY, EMPTY);
     let code = unsafe {
-        emma_plugin_call(
+        emma_wasm_plugin_call(
             plugin,
             operation.as_ptr(),
             operation.len(),
@@ -98,8 +98,8 @@ fn the_full_lifecycle_works_through_the_c_abi() {
     assert_eq!(envelope["ok"]["items"][0]["title"], "Lasagna");
     assert_eq!(bytes, [0, 1, 2, 3]);
     unsafe {
-        emma_plugin_close(plugin);
-        emma_runtime_destroy(runtime);
+        emma_wasm_plugin_close(plugin);
+        emma_wasm_runtime_destroy(runtime);
     }
 }
 
@@ -109,7 +109,7 @@ fn a_runaway_plugin_is_still_stopped_after_the_runtime_handle_is_destroyed() {
     let mut limited = common::config("fixture");
     limited["limits"]["cpuBudgetMs"] = json!(200);
     let (plugin, _) = open_plugin(runtime, &limited);
-    unsafe { emma_runtime_destroy(runtime) };
+    unsafe { emma_wasm_runtime_destroy(runtime) };
 
     let started = Instant::now();
     let (envelope, _) = call(
@@ -123,7 +123,7 @@ fn a_runaway_plugin_is_still_stopped_after_the_runtime_handle_is_destroyed() {
         started.elapsed() < Duration::from_secs(3),
         "the epoch clock must outlive the runtime handle"
     );
-    unsafe { emma_plugin_close(plugin) };
+    unsafe { emma_wasm_plugin_close(plugin) };
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn bad_input_is_reported_as_an_error_code_with_a_message() {
     let (mut plugin, mut info, mut error) = (std::ptr::null_mut(), EMPTY, EMPTY);
 
     let garbage = unsafe {
-        emma_plugin_open(
+        emma_wasm_plugin_open(
             runtime,
             b"not json".as_ptr(),
             8,
@@ -146,7 +146,7 @@ fn bad_input_is_reported_as_an_error_code_with_a_message() {
     let bytes = serde_json::to_vec(&unknown_field).unwrap();
     let mut error = EMPTY;
     let refused = unsafe {
-        emma_plugin_open(
+        emma_wasm_plugin_open(
             runtime,
             bytes.as_ptr(),
             bytes.len(),
@@ -157,7 +157,7 @@ fn bad_input_is_reported_as_an_error_code_with_a_message() {
     };
     let refused_message = text(error);
     let null_runtime = unsafe {
-        emma_plugin_open(
+        emma_wasm_plugin_open(
             std::ptr::null(),
             bytes.as_ptr(),
             bytes.len(),
@@ -170,7 +170,7 @@ fn bad_input_is_reported_as_an_error_code_with_a_message() {
     let bytes = serde_json::to_vec(&missing).unwrap();
     let mut error = EMPTY;
     let missing_code = unsafe {
-        emma_plugin_open(
+        emma_wasm_plugin_open(
             runtime,
             bytes.as_ptr(),
             bytes.len(),
@@ -189,7 +189,7 @@ fn bad_input_is_reported_as_an_error_code_with_a_message() {
     assert_eq!(missing_code, EMMA_ERR_RUNTIME);
     assert!(missing_message.contains("file.wasm"), "{missing_message}");
     assert!(plugin.is_null());
-    unsafe { emma_runtime_destroy(runtime) };
+    unsafe { emma_wasm_runtime_destroy(runtime) };
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn null_arguments_never_crash() {
     let (mut json_out, mut blob) = (EMPTY, EMPTY);
 
     let call_code = unsafe {
-        emma_plugin_call(
+        emma_wasm_plugin_call(
             std::ptr::null(),
             b"x".as_ptr(),
             1,
@@ -209,18 +209,18 @@ fn null_arguments_never_crash() {
         )
     };
     let create_code = unsafe {
-        emma_runtime_create(
+        emma_wasm_runtime_create(
             std::ptr::null(),
             0,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
         )
     };
-    let key_code = unsafe { emma_runtime_key(std::ptr::null(), std::ptr::null_mut()) };
+    let key_code = unsafe { emma_wasm_runtime_key(std::ptr::null(), std::ptr::null_mut()) };
     unsafe {
-        emma_plugin_close(std::ptr::null_mut());
-        emma_runtime_destroy(std::ptr::null_mut());
-        emma_buffer_free(EMPTY);
+        emma_wasm_plugin_close(std::ptr::null_mut());
+        emma_wasm_runtime_destroy(std::ptr::null_mut());
+        emma_wasm_buffer_free(EMPTY);
     }
 
     assert_eq!(
@@ -235,7 +235,7 @@ fn an_unknown_runtime_option_is_refused() {
     let options = br#"{"target":"x86_64-unknown-linux-gnu","jit":true}"#;
 
     let code = unsafe {
-        emma_runtime_create(
+        emma_wasm_runtime_create(
             options.as_ptr(),
             options.len(),
             &raw mut runtime,
@@ -255,7 +255,7 @@ fn precompile_and_the_key_work_through_the_c_abi() {
     let (mut compiled, mut key, mut error) = (EMPTY, EMPTY, EMPTY);
 
     let precompile = unsafe {
-        emma_precompile(
+        emma_wasm_precompile(
             runtime,
             wasm.as_ptr(),
             wasm.len(),
@@ -263,9 +263,9 @@ fn precompile_and_the_key_work_through_the_c_abi() {
             &raw mut error,
         )
     };
-    let key_code = unsafe { emma_runtime_key(runtime, &raw mut key) };
+    let key_code = unsafe { emma_wasm_runtime_key(runtime, &raw mut key) };
     let bad = unsafe {
-        emma_precompile(
+        emma_wasm_precompile(
             runtime,
             b"junk".as_ptr(),
             4,
@@ -281,7 +281,7 @@ fn precompile_and_the_key_work_through_the_c_abi() {
     assert!(take(compiled).len() > 1000);
     assert_eq!(text(key).len(), 16);
     assert!(!text(error).is_empty());
-    unsafe { emma_runtime_destroy(runtime) };
+    unsafe { emma_wasm_runtime_destroy(runtime) };
 }
 
 #[test]
@@ -303,7 +303,34 @@ fn calls_from_many_threads_through_the_c_abi_do_not_interfere() {
     });
 
     unsafe {
-        emma_plugin_close(plugin);
-        emma_runtime_destroy(runtime);
+        emma_wasm_plugin_close(plugin);
+        emma_wasm_runtime_destroy(runtime);
     }
+}
+
+/// A caller that does not zero its output buffers (a stack slot the .NET side frees even on
+/// success) must get empty ones back, never its own stale memory.
+#[test]
+fn output_buffers_are_empty_after_success() {
+    let mut stale_byte = 0_u8;
+    let stale_ptr = &raw mut stale_byte;
+    let stale = || EmmaBuffer {
+        ptr: stale_ptr,
+        len: 7,
+        cap: 7,
+    };
+    let (mut runtime, mut error) = (std::ptr::null_mut(), stale());
+
+    let code =
+        unsafe { emma_wasm_runtime_create(std::ptr::null(), 0, &raw mut runtime, &raw mut error) };
+
+    assert_eq!(code, EMMA_OK);
+    assert!(error.ptr.is_null() && error.len == 0 && error.cap == 0);
+    let mut key = stale();
+    assert_eq!(
+        unsafe { emma_wasm_runtime_key(runtime, &raw mut key) },
+        EMMA_OK
+    );
+    assert!(!text(key).is_empty());
+    unsafe { emma_wasm_runtime_destroy(runtime) };
 }

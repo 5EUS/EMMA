@@ -68,6 +68,14 @@ instance: closing or reloading a plugin empties it, which is also how a user cle
 .NET-side port, because a second implementation would have to enforce the same limits to be interchangeable. Anything
 that must outlive a restart is a node prop or a setting, not a cache entry.
 
+## Exported names
+
+Every export of `libemma_wasm` starts with `emma_wasm_`. The prefix is load-bearing: on iOS the app links `libemma_native.a`
+and `libemma_wasm.a` statically into one binary, so a name both libraries export is a single symbol and one library's
+call lands in the other's function. (`emma_buffer_free`, `emma_runtime_create` and `emma_runtime_destroy` were once shared
+that way: freeing a buffer then passed a stack address to `NativeMemory.Free`, and the app aborted on its first plugin
+load.) Never export a name without the prefix from this library, and never reuse an `emma_wasm_` name in `EMMA.Native`.
+
 ## Open items
 
 - TODO(rewrite): iOS runs plugins on the Pulley interpreter (`pulley64`, chosen in `LazyWasmTransport` for iOS and

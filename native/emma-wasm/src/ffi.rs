@@ -1,5 +1,5 @@
 //! The C ABI the .NET side calls. Everything crosses as pointer plus length (no NUL-terminated
-//! strings) and results are owned buffers the caller frees with [`emma_buffer_free`]. A panic
+//! strings) and results are owned buffers the caller frees with [`emma_wasm_buffer_free`]. A panic
 //! never crosses the boundary: it becomes an error code and message.
 //!
 //! The .NET side is responsible for not closing a plugin while a call on it is in flight (a
@@ -26,7 +26,8 @@ struct Options {
     target: Option<String>,
 }
 
-/// An owned byte buffer handed across the boundary. Free it with [`emma_buffer_free`].
+/// An owned byte buffer handed across the boundary. Free it with [`emma_wasm_buffer_free`]. Every output
+/// buffer is set to empty on entry, so freeing one that was not filled is always safe.
 #[repr(C)]
 #[derive(Debug)]
 pub struct EmmaBuffer {
@@ -63,7 +64,7 @@ impl EmmaBuffer {
 /// # Safety
 /// `buffer` must have been returned by this library and not freed before.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_buffer_free(buffer: EmmaBuffer) {
+pub unsafe extern "C" fn emma_wasm_buffer_free(buffer: EmmaBuffer) {
     if !buffer.ptr.is_null() {
         // SAFETY: the caller promises the buffer came from `EmmaBuffer::from_vec`, which leaked a `Vec<u8>`
         // with exactly this pointer, length and capacity.
@@ -81,6 +82,19 @@ unsafe fn slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
     }
     // SAFETY: the caller guarantees `ptr` points to `len` readable bytes for the duration of the call.
     Some(unsafe { std::slice::from_raw_parts(ptr, len) })
+}
+
+/// Resets output buffers to empty before anything else happens. The contract says an output buffer
+/// is only written on the path that produces it, and callers free every buffer they passed in
+/// (the .NET side frees `out_error` on success too), so a buffer left holding stale stack memory
+/// would be freed as if it were ours.
+fn clear(outputs: &[*mut EmmaBuffer]) {
+    for &out in outputs {
+        if !out.is_null() {
+            // SAFETY: a non-null output pointer is writable for one `EmmaBuffer`, per each function's contract.
+            unsafe { out.write(EmmaBuffer::EMPTY) };
+        }
+    }
 }
 
 fn write_error(out_error: *mut EmmaBuffer, message: &str) {
@@ -116,12 +130,17 @@ fn guarded(out_error: *mut EmmaBuffer, body: impl FnOnce() -> Result<(), (i32, S
 /// `options` must point to `options_len` readable bytes (or be null with length zero); `out_runtime`
 /// must be writable; `out_error`, if non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_runtime_create(
+pub unsafe extern "C" fn emma_wasm_runtime_create(
     options: *const u8,
     options_len: usize,
     out_runtime: *mut *mut Runtime,
     out_error: *mut EmmaBuffer,
 ) -> i32 {
+    clear(&[out_error]);
+    if !out_runtime.is_null() {
+        // SAFETY: `out_runtime` is writable per the contract.
+        unsafe { out_runtime.write(std::ptr::null_mut()) };
+    }
     guarded(out_error, || {
         if out_runtime.is_null() {
             return Err((EMMA_ERR_ARGUMENT, "out_runtime is null".to_owned()));
@@ -148,11 +167,11 @@ pub unsafe extern "C" fn emma_runtime_create(
 /// Destroys a runtime. Plugins opened from it keep working until closed.
 ///
 /// # Safety
-/// `runtime` must come from [`emma_runtime_create`] and not have been destroyed.
+/// `runtime` must come from [`emma_wasm_runtime_create`] and not have been destroyed.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_runtime_destroy(runtime: *mut Runtime) {
+pub unsafe extern "C" fn emma_wasm_runtime_destroy(runtime: *mut Runtime) {
     if !runtime.is_null() {
-        // SAFETY: the pointer came from `Box::into_raw` in `emma_runtime_create`.
+        // SAFETY: the pointer came from `Box::into_raw` in `emma_wasm_runtime_create`.
         drop(unsafe { Box::from_raw(runtime) });
     }
 }
@@ -162,10 +181,11 @@ pub unsafe extern "C" fn emma_runtime_destroy(runtime: *mut Runtime) {
 /// # Safety
 /// `runtime` must be a live runtime; `out_key` must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_runtime_key(
+pub unsafe extern "C" fn emma_wasm_runtime_key(
     runtime: *const Runtime,
     out_key: *mut EmmaBuffer,
 ) -> i32 {
+    clear(&[out_key]);
     guarded(std::ptr::null_mut(), || {
         if runtime.is_null() || out_key.is_null() {
             return Err((EMMA_ERR_ARGUMENT, "null argument".to_owned()));
@@ -186,13 +206,14 @@ pub unsafe extern "C" fn emma_runtime_key(
 /// `runtime` must be live; `wasm` must point to `wasm_len` readable bytes; `out_cwasm` must be writable;
 /// `out_error`, if non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_precompile(
+pub unsafe extern "C" fn emma_wasm_precompile(
     runtime: *const Runtime,
     wasm: *const u8,
     wasm_len: usize,
     out_cwasm: *mut EmmaBuffer,
     out_error: *mut EmmaBuffer,
 ) -> i32 {
+    clear(&[out_cwasm, out_error]);
     guarded(out_error, || {
         if runtime.is_null() || out_cwasm.is_null() {
             return Err((EMMA_ERR_ARGUMENT, "null argument".to_owned()));
@@ -218,7 +239,7 @@ pub unsafe extern "C" fn emma_precompile(
 /// `runtime` must be live; `config` must point to `config_len` readable bytes; `out_plugin` and `out_info`
 /// must be writable; `out_error`, if non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_plugin_open(
+pub unsafe extern "C" fn emma_wasm_plugin_open(
     runtime: *const Runtime,
     config: *const u8,
     config_len: usize,
@@ -226,6 +247,11 @@ pub unsafe extern "C" fn emma_plugin_open(
     out_info: *mut EmmaBuffer,
     out_error: *mut EmmaBuffer,
 ) -> i32 {
+    clear(&[out_info, out_error]);
+    if !out_plugin.is_null() {
+        // SAFETY: `out_plugin` is writable per the contract.
+        unsafe { out_plugin.write(std::ptr::null_mut()) };
+    }
     guarded(out_error, || {
         if runtime.is_null() || out_plugin.is_null() || out_info.is_null() {
             return Err((EMMA_ERR_ARGUMENT, "null argument".to_owned()));
@@ -261,11 +287,11 @@ pub unsafe extern "C" fn emma_plugin_open(
 /// Closes a plugin.
 ///
 /// # Safety
-/// `plugin` must come from [`emma_plugin_open`], not have been closed, and have no call in flight.
+/// `plugin` must come from [`emma_wasm_plugin_open`], not have been closed, and have no call in flight.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_plugin_close(plugin: *mut Plugin) {
+pub unsafe extern "C" fn emma_wasm_plugin_close(plugin: *mut Plugin) {
     if !plugin.is_null() {
-        // SAFETY: the pointer came from `Box::into_raw` in `emma_plugin_open`.
+        // SAFETY: the pointer came from `Box::into_raw` in `emma_wasm_plugin_open`.
         drop(unsafe { Box::from_raw(plugin) });
     }
 }
@@ -278,7 +304,7 @@ pub unsafe extern "C" fn emma_plugin_close(plugin: *mut Plugin) {
 /// `plugin` must be live; `operation` and `request` must point to readable bytes of the given lengths;
 /// `out_json` and `out_blob` must be writable; `out_error`, if non-null, must be writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn emma_plugin_call(
+pub unsafe extern "C" fn emma_wasm_plugin_call(
     plugin: *const Plugin,
     operation: *const u8,
     operation_len: usize,
@@ -288,6 +314,7 @@ pub unsafe extern "C" fn emma_plugin_call(
     out_blob: *mut EmmaBuffer,
     out_error: *mut EmmaBuffer,
 ) -> i32 {
+    clear(&[out_json, out_blob, out_error]);
     guarded(out_error, || {
         if plugin.is_null() || out_json.is_null() || out_blob.is_null() {
             return Err((EMMA_ERR_ARGUMENT, "null argument".to_owned()));

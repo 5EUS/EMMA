@@ -22,7 +22,7 @@ internal static partial class NativeMethods
 
     /// <summary>Frees a buffer the host returned.</summary>
     /// <param name="buffer">The buffer.</param>
-    [LibraryImport(Library, EntryPoint = "emma_buffer_free")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_buffer_free")]
     internal static partial void BufferFree(EmmaBuffer buffer);
 
     /// <summary>Creates a runtime.</summary>
@@ -31,7 +31,7 @@ internal static partial class NativeMethods
     /// <param name="runtime">Receives the runtime pointer.</param>
     /// <param name="error">Receives a message on failure.</param>
     /// <returns>A status code.</returns>
-    [LibraryImport(Library, EntryPoint = "emma_runtime_create")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_runtime_create")]
     internal static partial int RuntimeCreate(
         ReadOnlySpan<byte> options,
         nuint optionsLength,
@@ -40,14 +40,14 @@ internal static partial class NativeMethods
 
     /// <summary>Destroys a runtime. Plugins opened from it keep working until closed.</summary>
     /// <param name="runtime">The runtime pointer.</param>
-    [LibraryImport(Library, EntryPoint = "emma_runtime_destroy")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_runtime_destroy")]
     internal static partial void RuntimeDestroy(nint runtime);
 
     /// <summary>Gets the key a precompiled component must have been built with to load here.</summary>
     /// <param name="runtime">The runtime.</param>
     /// <param name="key">Receives the key.</param>
     /// <returns>A status code.</returns>
-    [LibraryImport(Library, EntryPoint = "emma_runtime_key")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_runtime_key")]
     internal static partial int RuntimeKey(RuntimeHandle runtime, out EmmaBuffer key);
 
     /// <summary>Compiles a component ahead of time for this host.</summary>
@@ -57,7 +57,7 @@ internal static partial class NativeMethods
     /// <param name="cwasm">Receives the precompiled bytes.</param>
     /// <param name="error">Receives a message on failure.</param>
     /// <returns>A status code.</returns>
-    [LibraryImport(Library, EntryPoint = "emma_precompile")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_precompile")]
     internal static partial int Precompile(
         RuntimeHandle runtime,
         ReadOnlySpan<byte> wasm,
@@ -73,7 +73,7 @@ internal static partial class NativeMethods
     /// <param name="info">Receives which optional interfaces the plugin exports.</param>
     /// <param name="error">Receives a message on failure.</param>
     /// <returns>A status code.</returns>
-    [LibraryImport(Library, EntryPoint = "emma_plugin_open")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_plugin_open")]
     internal static partial int PluginOpen(
         RuntimeHandle runtime,
         ReadOnlySpan<byte> config,
@@ -84,7 +84,7 @@ internal static partial class NativeMethods
 
     /// <summary>Closes a plugin.</summary>
     /// <param name="plugin">The plugin pointer.</param>
-    [LibraryImport(Library, EntryPoint = "emma_plugin_close")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_plugin_close")]
     internal static partial void PluginClose(nint plugin);
 
     /// <summary>Runs one operation; plugin failures and traps are inside the JSON envelope.</summary>
@@ -97,7 +97,7 @@ internal static partial class NativeMethods
     /// <param name="blob">Receives the bytes of a <c>read</c>.</param>
     /// <param name="error">Receives a message on failure.</param>
     /// <returns>A status code.</returns>
-    [LibraryImport(Library, EntryPoint = "emma_plugin_call")]
+    [LibraryImport(Library, EntryPoint = "emma_wasm_plugin_call")]
     internal static partial int PluginCall(
         PluginHandle plugin,
         ReadOnlySpan<byte> operation,
