@@ -82,6 +82,23 @@ if [ "$kind" = ios ]; then
     [ -f "$pack/lib$name.a" ] || { echo "$pack/lib$name.a is missing" >&2; exit 1; }
     runtime_libs="$runtime_libs $pack/lib$name.a"
   done
+  # libbootstrapperdll.o holds the static constructor that starts the runtime (RhInitialize, then __managed__Startup). A
+  # shared library gets it from the link; a static one does not, and without it the first managed call crashes in
+  # RuntimeInstance::GetThreadStore. It defines no global symbol, so the linker would never pull it out of an archive:
+  # merge it with an anchor object that defines one, and the app asks for that symbol (-u _emma_native_runtime_start).
+  # Linking the archive with -force_load instead would load every member, and the folded-in libraries define some
+  # symbols (minipal_xoshiro128pp_*) more than once.
+  [ -f "$pack/libbootstrapperdll.o" ] || { echo "$pack/libbootstrapperdll.o is missing" >&2; exit 1; }
+  case "$rid" in
+    ios-arm64) clang_target=arm64-apple-ios15.0; sdk=iphoneos ;;
+    iossimulator-arm64) clang_target=arm64-apple-ios15.0-simulator; sdk=iphonesimulator ;;
+    *) clang_target=x86_64-apple-ios15.0-simulator; sdk=iphonesimulator ;;
+  esac
+  sysroot=$(xcrun --sdk "$sdk" --show-sdk-path)
+  printf 'void emma_native_runtime_start(void) {}\n' > "$work/anchor.c"
+  xcrun clang -target "$clang_target" -isysroot "$sysroot" -c "$work/anchor.c" -o "$work/anchor.o"
+  xcrun clang -target "$clang_target" -isysroot "$sysroot" -r -nostdlib -o "$work/runtime_start.o" "$work/anchor.o" "$pack/libbootstrapperdll.o"
+  runtime_libs="$runtime_libs $work/runtime_start.o"
   # shellcheck disable=SC2086 # one path per library, none contain spaces
   libtool -static -o "$out/$public" "$work/$built" $runtime_libs
 else
