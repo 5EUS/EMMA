@@ -43,12 +43,12 @@ fi
 if [ "$kind" = android ]; then
   android_toolchain
   export CC="$ndk_clang" CXX="${ndk_clang}++" AR="$ndk_bin/llvm-ar"
-  library="-p:NativeLib=Shared -p:CppCompilerAndLinker=$ndk_clang -p:CppLinker=$ndk_clang -p:CppLibCreator=$ndk_bin/llvm-ar -p:ObjCopyName=$ndk_bin/llvm-objcopy"
+  library="-p:EmmaNativeLib=Shared -p:CppCompilerAndLinker=$ndk_clang -p:CppLinker=$ndk_clang -p:CppLibCreator=$ndk_bin/llvm-ar -p:ObjCopyName=$ndk_bin/llvm-objcopy"
   built=EMMA.Native.so
   public=libemma_native.so
 else
   require_xcode
-  library="-p:NativeLib=Static"
+  library="-p:EmmaNativeLib=Static"
   built=EMMA.Native.a
   public=libemma_native.a
 fi

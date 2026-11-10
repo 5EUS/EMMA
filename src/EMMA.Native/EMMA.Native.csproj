@@ -24,6 +24,13 @@
     <SelfContained>true</SelfContained>
   </PropertyGroup>
   <!--
+    The mobile scripts choose Static (iOS) or Shared through EmmaNativeLib, not NativeLib: a global NativeLib reaches every
+    referenced project, and with an ios rid it turns each of them (EMMA.Domain, ...) into an Exe that fails to build.
+  -->
+  <PropertyGroup Condition="'$(EmmaNativeLib)' != ''">
+    <NativeLib>$(EmmaNativeLib)</NativeLib>
+  </PropertyGroup>
+  <!--
     On iOS the Wasm host is a static library linked into the app, not a library found at run time: bind its P/Invokes
     at link time. The symbols stay undefined in libemma_native.a and are resolved when the app links libemma_wasm.a.
   -->
