@@ -68,5 +68,23 @@ dotnet publish "$project" -c Release -r "$dotnet_rid" --self-contained --no-rest
 
 [ -f "$work/$built" ] || { echo "expected $built was not produced" >&2; exit 1; }
 mkdir -p "$out"
-mv -f "$work/$built" "$out/$public"
+if [ "$kind" = ios ]; then
+  # A static NativeAOT library holds only the managed code. The runtime and the BCL's native shims (System.Native, Apple
+  # crypto, compression, globalization) are separate archives in the runtime pack and nothing else would link them into
+  # the app, so fold them into the one library the app already links.
+  pack_root=${NUGET_PACKAGES:-"$HOME/.nuget/packages"}/microsoft.netcore.app.runtime.nativeaot.$dotnet_rid
+  pack=$(ls -d "$pack_root"/*/ | sort -V | tail -n 1)runtimes/$dotnet_rid/native
+  [ -d "$pack" ] || { echo "NativeAOT runtime pack not found at $pack" >&2; exit 1; }
+  runtime_libs=""
+  for name in Runtime.WorkstationGC eventpipe-disabled standalonegc-disabled aotminipal stdc++compat \
+    System.Native System.Globalization.Native System.IO.Compression.Native System.Security.Cryptography.Native.Apple \
+    System.Net.Security.Native brotlicommon brotlidec brotlienc; do
+    [ -f "$pack/lib$name.a" ] || { echo "$pack/lib$name.a is missing" >&2; exit 1; }
+    runtime_libs="$runtime_libs $pack/lib$name.a"
+  done
+  # shellcheck disable=SC2086 # one path per library, none contain spaces
+  libtool -static -o "$out/$public" "$work/$built" $runtime_libs
+else
+  mv -f "$work/$built" "$out/$public"
+fi
 echo "published $out/$public"
