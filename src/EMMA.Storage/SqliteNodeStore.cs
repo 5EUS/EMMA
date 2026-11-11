@@ -32,6 +32,12 @@ public sealed class SqliteNodeStore(StorageOptions options, TimeProvider time) :
         WHERE plugin_id = $plugin AND local_id = $local;
     ";
 
+    private const string SelectChildIds = @"
+        SELECT local_id
+        FROM nodes
+        WHERE plugin_id = $plugin AND parent_local_id = $parent;
+    ";
+
     private readonly SqliteDatabase database = new(options);
 
     /// <inheritdoc/>
@@ -96,6 +102,23 @@ public sealed class SqliteNodeStore(StorageOptions options, TimeProvider time) :
             },
             ReadNode,
             cancellationToken);
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlySet<LocalNodeId>> ChildIdsAsync(NodeRef parent, CancellationToken cancellationToken)
+    {
+        IReadOnlyList<LocalNodeId> ids = await this.database.QueryAsync(
+            SelectChildIds,
+            parameters =>
+            {
+                parameters.Bind("$plugin", parent.Plugin.Value);
+                parameters.Bind("$parent", parent.Id.Value);
+            },
+            reader => LocalNodeId.TryCreate(reader.GetString(0), out LocalNodeId id)
+                ? id
+                : throw new InvalidDataException("A stored node has an invalid local id."),
+            cancellationToken).ConfigureAwait(false);
+        return ids.ToHashSet();
+    }
 
     private static Node ReadNode(SqliteDataReader reader)
     {

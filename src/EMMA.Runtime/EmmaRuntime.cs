@@ -77,6 +77,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, executor, AssetPipelineOptions.Default, this.Time);
         this.Progress = new ProgressPipeline(this.ProgressStore, appSettings, this.Time);
         this.Library = new LibraryPipeline(this.LibraryStore, this.Nodes, this.Time);
+        this.Refresh = new RefreshPipeline(this.Library, this.Nodes, this.Catalog);
         this.downloadFiles = new DownloadFileStore(Path.Combine(data, "downloads"));
         this.Downloads = new DownloadPipeline(new SqliteDownloadStore(storageOptions), this.downloadFiles, this.Catalog, this.Assets, this.Nodes, appSettings, this.Time);
         this.AppSettings = new AppSettingsPipeline(appSettings, this.Time);
@@ -128,6 +129,9 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     /// <summary>Gets each user's libraries and the nodes saved in them.</summary>
     public LibraryPipeline Library { get; }
 
+    /// <summary>Gets refreshing of saved nodes: new children, and a node's details again.</summary>
+    public RefreshPipeline Refresh { get; }
+
     /// <summary>
     /// Gets the download queue and its executor. The executor does nothing until a host calls
     /// <see cref="DownloadPipeline.Start"/> (a server or an app) or <see cref="DownloadPipeline.RunUntilIdleAsync"/> (a command line).
@@ -149,14 +153,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         await this.cache.InitializeAsync(cancellationToken).ConfigureAwait(false);
         await this.downloadFiles.InitializeAsync().ConfigureAwait(false);
 
-        // A plugin whose stored manifest cannot be read is denied everything by the policy snapshot; take it out of service too.
-        IReadOnlyList<PluginId> unreadable = await this.Policies.RefreshAsync(this.Registry, cancellationToken).ConfigureAwait(false);
-        foreach (PluginId plugin in unreadable)
-        {
-            await this.Registry.SetStatusAsync(plugin, PluginStatus.Quarantined, this.Time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
-        }
-
-        return unreadable;
+        return await this.RefreshPoliciesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Installs a package and makes it available to this runtime straight away.</summary>
@@ -247,6 +244,24 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         await this.Policies.RefreshAsync(this.Registry, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Picks up changes made behind the runtime's back, such as a plugin installed, replaced or removed by the command
+    /// line while an app or server is running: rebuilds every plugin's permissions from the registry and closes every
+    /// loaded plugin so each reopens, from its files as they are now, on its next call.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the reload.</param>
+    /// <returns>The plugins that were quarantined because their stored manifest could not be read.</returns>
+    public async Task<IReadOnlyList<PluginId>> ReloadPluginsAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<PluginId> unreadable = await this.RefreshPoliciesAsync(cancellationToken).ConfigureAwait(false);
+        if (this.wasmGateway is not null)
+        {
+            await this.wasmGateway.UnloadAllAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return unreadable;
+    }
+
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
@@ -285,6 +300,18 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
             SqliteNativeLibrary.AddSearchDirectory(directory);
             WasmRuntimeHost.AddLibrarySearchDirectory(directory);
         }
+    }
+
+    // A plugin whose stored manifest cannot be read is denied everything by the policy snapshot; take it out of service too.
+    private async Task<IReadOnlyList<PluginId>> RefreshPoliciesAsync(CancellationToken cancellationToken)
+    {
+        IReadOnlyList<PluginId> unreadable = await this.Policies.RefreshAsync(this.Registry, cancellationToken).ConfigureAwait(false);
+        foreach (PluginId plugin in unreadable)
+        {
+            await this.Registry.SetStatusAsync(plugin, PluginStatus.Quarantined, this.Time.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+        }
+
+        return unreadable;
     }
 
     private Task UnloadAsync(PluginId plugin, CancellationToken cancellationToken) =>

@@ -146,6 +146,21 @@ public sealed class SqliteNodeStoreTests : StorageTestBase
         Assert.Equal(0L, await this.ScalarAsync("SELECT COUNT(*) FROM nodes"));
     }
 
+    /// <summary>The ids of a node's stored children are listed, and only its own: not other parents', not other plugins'.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ListsTheIdsOfStoredChildren()
+    {
+        Node otherPlugin = new(new NodeRef(TestData.OtherPlugin, LocalNodeId.Create("c3")), NodeKind.Create("series"), "Other", new NodeRef(TestData.OtherPlugin, LocalNodeId.Create("p")), null, []);
+        await this.Store.UpsertAsync([MakeNode("p"), MakeNode("c1", "p"), MakeNode("c2", "p"), MakeNode("q"), MakeNode("c4", "q"), otherPlugin], Ct);
+
+        IReadOnlySet<LocalNodeId> children = await this.Store.ChildIdsAsync(TestData.Ref("p"), Ct);
+        IReadOnlySet<LocalNodeId> none = await this.Store.ChildIdsAsync(TestData.Ref("c1"), Ct);
+
+        Assert.Equal(["c1", "c2"], children.Select(id => id.Value).Order(StringComparer.Ordinal));
+        Assert.Empty(none);
+    }
+
     /// <summary>A large batch is stored whole.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]

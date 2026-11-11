@@ -29,4 +29,15 @@ public sealed class InMemoryNodeStore : INodeStorePort
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(this.nodes.GetValueOrDefault(node));
     }
+
+    /// <inheritdoc/>
+    public Task<IReadOnlySet<LocalNodeId>> ChildIdsAsync(NodeRef parent, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlySet<LocalNodeId> ids = this.nodes.Values
+            .Where(node => node.Parent == parent)
+            .Select(node => node.Ref.Id)
+            .ToHashSet();
+        return Task.FromResult(ids);
+    }
 }

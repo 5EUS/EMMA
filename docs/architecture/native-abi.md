@@ -67,12 +67,14 @@ Requests are JSON objects; an empty request means `{}`. `ref` is a node referenc
 | `plugins.install` | `package_path`, `repository` | the installed plugin |
 | `plugins.set_status` | `plugin`, `status` (`enabled`, `disabled`, `quarantined`) | `{}` |
 | `plugins.uninstall` | `plugin` | `{}` |
+| `plugins.reload` | none | the same as `plugins.list`, after the reload. Picks up plugins installed, replaced, removed or switched off by another process (such as `emma plugin install`) without restarting: permissions are rebuilt from the registry and every open plugin is closed, so each reopens from its files on its next call. A plugin whose stored manifest cannot be read is quarantined. Calls already running finish first |
 | `catalog.search` | `plugin`, `query` (`text`, `kinds`, `filters`, `sort`, `cursor`, `limit`) | a node page |
 | `catalog.browse` | `plugin`, `cursor`, `limit` | a node page |
 | `catalog.children` | `ref`, `cursor`, `limit` | a node page |
 | `catalog.get` | `refs` | `{nodes: [...]}` |
 | `catalog.suggest` | `plugin`, `filter` (a filter declared with type `lookup`), `text`, `limit` (optional, up to 50, default 10) | `{suggestions: [{value, label, description, is_default}]}`. `value` is what to send back in that filter's `values`. Text shorter than the filter's `min_query_length` gives an empty list; `unsupported` when the plugin does not offer search assist |
 | `catalog.enrich` | `refs` (nodes the host has already returned, such as search results) | `{nodes: [...]}`: the same nodes with the plugin's extra props merged over the stored ones, remembered for later reads. Nodes the host has not seen are omitted; `unsupported` when the plugin does not offer search assist |
+| `nodes.refresh_cover` | `ref` (a node the host has already returned) | the node, as the plugin now describes it (its thumbnail address and details), stored in place of the old one. `not_found` when the host has not seen the node or the plugin no longer has it |
 | `assets.list` | `ref`, `role`, `hint` (optional) | `{assets: [{index, mime, size, delivery, props}]}`. `hint` is a quality such as `1080p`, passed to the plugin as `emma.quality`; a plugin may ignore it |
 | `assets.content` | `ref`, `role`, `index`, `range` (`start`, `length`), `hint` (optional) | `{mime, length, range_start, total, accepts_ranges}`, with the bytes in the blob. A leaf that was downloaded (index 0) is served from its stored file before the plugin is asked, and then honours `range` whatever it is |
 | `progress.set` | `ref`, `unit`, `value`, `total`, `completed` | the stored progress |
@@ -91,6 +93,7 @@ Requests are JSON objects; an empty request means `{}`. `ref` is a node referenc
 | `library.add` | `ref`, `library` (optional) | `{}`; the node must have been served by a search or listing. `library` defaults to the default library and must exist. A node that is already saved stays where it is (use `library.move`) |
 | `library.remove` | `ref` | `{}`; removes the node from whichever library holds it |
 | `library.move` | `ref`, `library` | `{}`; moves a saved node to another library, keeping its date. `not_found` when the node is not saved or the library does not exist |
+| `library.refresh` | `library` (optional) | `{checked, updated: [{node, new_children}], failed: [{node, error}]}`: lists the children of every saved node again (one library, or all) and reports those the host had not stored before, in the plugin's order. A node whose children were never listed has no baseline: it is counted in `checked`, its children are stored, and only later arrivals are reported. A node whose kind has no children is counted and skipped. One node failing, or a plugin that cannot be reached, goes in `failed` and does not stop the rest. `not_found` for a library that does not exist |
 | `library.libraries` | none | `{libraries: [{name, created_at, count, is_default}]}`, the default library first, then by name |
 | `library.create` | `name` | the new library; names are 1 to 64 characters, unique ignoring case |
 | `library.delete` | `name` | `{}`; deletes the library and the entries in it (progress and the nodes are untouched). The default library cannot be deleted |

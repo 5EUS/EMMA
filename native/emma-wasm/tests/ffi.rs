@@ -253,6 +253,8 @@ fn precompile_and_the_key_work_through_the_c_abi() {
     let runtime = create_runtime();
     let wasm = std::fs::read(common::plugin_path("fixture")).unwrap();
     let (mut compiled, mut key, mut error) = (EMPTY, EMPTY, EMPTY);
+    // Every call clears its outputs on entry, so the failing call needs its own buffer or it would wipe `compiled`.
+    let mut rejected = EMPTY;
 
     let precompile = unsafe {
         emma_wasm_precompile(
@@ -269,7 +271,7 @@ fn precompile_and_the_key_work_through_the_c_abi() {
             runtime,
             b"junk".as_ptr(),
             4,
-            &raw mut compiled,
+            &raw mut rejected,
             &raw mut error,
         )
     };
@@ -279,6 +281,7 @@ fn precompile_and_the_key_work_through_the_c_abi() {
         (EMMA_OK, EMMA_OK, EMMA_ERR_RUNTIME)
     );
     assert!(take(compiled).len() > 1000);
+    assert!(take(rejected).is_empty());
     assert_eq!(text(key).len(), 16);
     assert!(!text(error).is_empty());
     unsafe { emma_wasm_runtime_destroy(runtime) };

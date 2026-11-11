@@ -42,7 +42,8 @@ Options:
   --help             Show this help
 
 Trust settings (which repositories may sign plugins) are read from <data-dir>/config.json.
-Plugins installed here are served by the HTTP API and the native library after they restart.";
+Plugins installed here are served by the HTTP API after it restarts, and by an app that embeds the native
+library after it calls plugins.reload.";
 
     /// <summary>Runs the command line.</summary>
     /// <param name="args">The arguments.</param>

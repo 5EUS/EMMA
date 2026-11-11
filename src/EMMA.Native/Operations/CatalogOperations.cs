@@ -120,6 +120,24 @@ internal static class CatalogOperations
             : Envelope.Failure(nodes.Error);
     }
 
+    /// <summary>Asks the plugin for a node again, so its thumbnail and details are current.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> RefreshCoverAsync(OperationContext context)
+    {
+        Outcome<RefCall> call = context.Read(NativeJsonContext.Default.RefCall);
+        Outcome<NodeRef> node = call.IsSuccess ? RequestParsing.Node(call.Value.Ref, "ref") : Outcome.Failure<NodeRef>(call.Error);
+        if (!node.IsSuccess)
+        {
+            return Envelope.Failure(node.Error);
+        }
+
+        Outcome<Node> refreshed = await context.Runtime.Refresh.RefreshNodeAsync(node.Value, context.CancellationToken).ConfigureAwait(false);
+        return refreshed.IsSuccess
+            ? Envelope.Ok(NodeMapper.ToDto(refreshed.Value), ApiJsonContext.Default.NodeDto)
+            : Envelope.Failure(refreshed.Error);
+    }
+
     private static NativeResponse Page(Outcome<NodePage> page) =>
         page.IsSuccess
             ? Envelope.Ok(NodeMapper.ToDto(page.Value), ApiJsonContext.Default.NodePageResponse)

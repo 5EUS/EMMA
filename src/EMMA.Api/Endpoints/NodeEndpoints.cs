@@ -19,6 +19,7 @@ internal static class NodeEndpoints
         routes.MapGet("/nodes", GetAsync);
         routes.MapGet("/nodes/children", ChildrenAsync);
         routes.MapPost("/nodes/enrich", EnrichAsync);
+        routes.MapPost("/nodes/refresh_cover", RefreshCoverAsync);
     }
 
     private static async Task<IResult> GetAsync(HttpContext context, CatalogPipeline catalog, CancellationToken cancellationToken)
@@ -62,5 +63,19 @@ internal static class NodeEndpoints
         return nodes.IsSuccess
             ? ApiResults.Ok(new NodeListResponse([.. nodes.Value.Select(NodeMapper.ToDto)]), ApiJsonContext.Default.NodeListResponse)
             : ApiResults.Failure(nodes.Error);
+    }
+
+    private static async Task<IResult> RefreshCoverAsync(HttpContext context, RefreshPipeline refresh, CancellationToken cancellationToken)
+    {
+        Outcome<NodeRef> node = RequestReader.Node(context.Request, "ref");
+        if (!node.IsSuccess)
+        {
+            return ApiResults.Failure(node.Error);
+        }
+
+        Outcome<Node> refreshed = await refresh.RefreshNodeAsync(node.Value, cancellationToken).ConfigureAwait(false);
+        return refreshed.IsSuccess
+            ? ApiResults.Ok(NodeMapper.ToDto(refreshed.Value), ApiJsonContext.Default.NodeDto)
+            : ApiResults.Failure(refreshed.Error);
     }
 }

@@ -45,10 +45,11 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
 
 ## Deferred
 
-- TODO(rewrite): the host does not reload. Installing, upgrading or removing a plugin needs an API restart, because the
-  permission snapshot (`ManifestCapabilityPolicyProvider`) and the gateway's loaded instances are only built at start.
-  Reload belongs with the CLI and an admin channel (phase 8). Until then a newly installed plugin must not be served by
-  a running host.
+- The HTTP API never reloads plugins on request: installing, upgrading or removing one is not an HTTP operation (see the
+  API project file), so there is no endpoint to call. A running API picks up plugins that were changed behind its back
+  only when it restarts. The native library, whose caller already has every authority, has `plugins.reload`, and an app
+  that embeds EMMA uses that. TODO(rewrite): if a deployment needs live reload of a server, add it as an admin
+  operation reachable from loopback only, never as a client-key endpoint.
 - TODO(rewrite): failed authentication is not rate limited. Invalid keys are cheap to reject, and a 256-bit key cannot
   be guessed, so this is a resource concern only. A limiter keyed by remote address would need a decision about trusted
   proxies (`X-Forwarded-For` is caller-controlled), so it waits for a deployment that needs it.

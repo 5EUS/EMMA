@@ -143,6 +143,43 @@ public sealed class NativeUserDataTests
         }
     }
 
+    /// <summary>Refreshing a library reports children the host had not seen, and a cover refresh and a plugin reload answer.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RefreshAndReload()
+    {
+        NativeHarness host = await NativeHarness.StartAsync().ConfigureAwait(true);
+        await using (host.ConfigureAwait(true))
+        {
+            await host.InstallFixtureAsync().ConfigureAwait(true);
+            host.Call("catalog.search", Query("series"));
+            host.Call("catalog.children", new JsonObject { ["ref"] = Series, ["limit"] = 50 });
+            host.Call("library.add", new JsonObject { ["ref"] = Series });
+
+            CallResult refreshed = host.Call("library.refresh");
+            CallResult again = host.Call("library.refresh", new JsonObject { ["library"] = "default" });
+            CallResult missing = host.Call("library.refresh", new JsonObject { ["library"] = "Nowhere" });
+            CallResult cover = host.Call("nodes.refresh_cover", new JsonObject { ["ref"] = Series });
+            CallResult unseen = host.Call("nodes.refresh_cover", new JsonObject { ["ref"] = "com.example.fixture:never-seen" });
+            CallResult noRef = host.Call("nodes.refresh_cover");
+            CallResult reloaded = host.Call("plugins.reload");
+            CallResult afterReload = host.Call("catalog.search", Query("series"));
+
+            Assert.Equal(1, refreshed.Ok["checked"]!.GetValue<int>());
+            JsonNode update = Assert.Single(refreshed.Ok["updated"]!.AsArray())!;
+            Assert.Equal(Series, update["node"]!["ref"]!.GetValue<string>());
+            Assert.Equal(70, update["new_children"]!.AsArray().Count);
+            Assert.Empty(refreshed.Ok["failed"]!.AsArray());
+            Assert.Empty(again.Ok["updated"]!.AsArray());
+            Assert.Equal("not_found", missing.ErrorCode);
+            Assert.Equal(Series, cover.Ok["ref"]!.GetValue<string>());
+            Assert.Equal("not_found", unseen.ErrorCode);
+            Assert.Equal("invalid_argument", noRef.ErrorCode);
+            Assert.Equal(NativeHarness.Plugin, reloaded.Ok["plugins"]![0]!["id"]!.GetValue<string>());
+            Assert.NotNull(afterReload.Ok);
+        }
+    }
+
     private static JsonObject Query(string text) => new()
     {
         ["plugin"] = NativeHarness.Plugin,

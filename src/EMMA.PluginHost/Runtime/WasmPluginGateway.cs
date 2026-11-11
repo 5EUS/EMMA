@@ -80,6 +80,30 @@ public sealed class WasmPluginGateway(
         }
     }
 
+    /// <summary>
+    /// Closes every loaded plugin so each is loaded again on its next call, for example after plugins were
+    /// installed or replaced by another process. Calls already running finish first.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the wait for the gateway's lock.</param>
+    /// <returns>A task that completes when every plugin is closed.</returns>
+    public async Task UnloadAllAsync(CancellationToken cancellationToken)
+    {
+        await this.gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            foreach (PluginId plugin in this.plugins.Keys.ToList())
+            {
+                await this.ForgetAsync(plugin).ConfigureAwait(false);
+            }
+
+            this.consecutiveTraps.Clear();
+        }
+        finally
+        {
+            this.gate.Release();
+        }
+    }
+
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {

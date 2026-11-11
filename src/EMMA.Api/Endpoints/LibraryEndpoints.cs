@@ -22,6 +22,7 @@ internal static class LibraryEndpoints
         routes.MapPut("/library", AddAsync);
         routes.MapDelete("/library", RemoveAsync);
         routes.MapPost("/library/move", MoveAsync);
+        routes.MapPost("/library/refresh", RefreshAsync);
         routes.MapGet("/libraries", LibrariesAsync);
         routes.MapPost("/libraries", CreateAsync);
         routes.MapDelete("/libraries", DeleteAsync);
@@ -93,6 +94,20 @@ internal static class LibraryEndpoints
 
         Outcome<bool> moved = await library.MoveAsync(context.RequireClient().User, node.Value, name.Value, cancellationToken).ConfigureAwait(false);
         return moved.IsSuccess ? Results.NoContent() : ApiResults.Failure(moved.Error);
+    }
+
+    private static async Task<IResult> RefreshAsync(HttpContext context, RefreshPipeline refresh, CancellationToken cancellationToken)
+    {
+        Outcome<string?> name = RequestReader.Optional(context.Request, "library");
+        if (!name.IsSuccess)
+        {
+            return ApiResults.Failure(name.Error);
+        }
+
+        Outcome<RefreshReport> report = await refresh.RefreshLibraryAsync(context.RequireClient().User, name.Value, cancellationToken).ConfigureAwait(false);
+        return report.IsSuccess
+            ? ApiResults.Ok(NodeMapper.ToDto(report.Value), ApiJsonContext.Default.RefreshResponse)
+            : ApiResults.Failure(report.Error);
     }
 
     private static async Task<IResult> LibrariesAsync(HttpContext context, LibraryPipeline library, CancellationToken cancellationToken)

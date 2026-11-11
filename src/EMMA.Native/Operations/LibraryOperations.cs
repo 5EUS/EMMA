@@ -96,6 +96,23 @@ internal static class LibraryOperations
         return moved.IsSuccess ? Envelope.Done : Envelope.Failure(moved.Error);
     }
 
+    /// <summary>Lists the children of every saved node again and reports the new ones.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> RefreshAsync(OperationContext context)
+    {
+        Outcome<LibraryListCall> call = context.Read(NativeJsonContext.Default.LibraryListCall);
+        if (!call.IsSuccess)
+        {
+            return Envelope.Failure(call.Error);
+        }
+
+        Outcome<RefreshReport> report = await context.Runtime.Refresh.RefreshLibraryAsync(context.User, call.Value.Library, context.CancellationToken).ConfigureAwait(false);
+        return report.IsSuccess
+            ? Envelope.Ok(NodeMapper.ToDto(report.Value), ApiJsonContext.Default.RefreshResponse)
+            : Envelope.Failure(report.Error);
+    }
+
     /// <summary>Lists the user's libraries.</summary>
     /// <param name="context">The call.</param>
     /// <returns>The response.</returns>

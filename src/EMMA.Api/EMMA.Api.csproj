@@ -2,8 +2,9 @@
   <!--
     TODO(rewrite): installing, upgrading, enabling and removing plugins is deliberately not an HTTP
     endpoint: installing code over the network is the most dangerous thing the host does, and the
-    keys this API issues are for clients, not administrators. The CLI (phase 8) does it. Until the
-    host can reload (see README), restart the API after changing plugins.
+    keys this API issues are for clients, not administrators. The CLI does it. The runtime can reload
+    (EmmaRuntime.ReloadPluginsAsync, exposed to apps as the native operation plugins.reload) but this
+    host does not offer that over HTTP; restart the API after changing plugins from the command line.
   -->
   <PropertyGroup>
     <RuntimeIdentifiers>linux-x64;linux-arm64;win-x64;win-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>

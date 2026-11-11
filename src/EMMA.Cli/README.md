@@ -23,7 +23,8 @@ Run `emma --help` for the full list. In short:
 | `emma downloads run` | Work through the queue now and exit (an app or the HTTP API does this on its own) |
 
 `--json` prints the same shapes as the HTTP API (`EMMA.Api.Contracts`). `--data-dir` picks the state directory; by
-default it is the one the HTTP API uses, so what you install here is what the API serves after it restarts.
+default it is the one the HTTP API uses, so what you install here is what the API serves after it restarts, and what an app that embeds the native library
+serves after it calls `plugins.reload`.
 
 ## Trust
 

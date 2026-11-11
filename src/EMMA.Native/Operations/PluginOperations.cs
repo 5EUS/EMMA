@@ -157,6 +157,15 @@ internal static class PluginOperations
             : Envelope.Failure(ErrorCode.NotFound, "That plugin is not installed.");
     }
 
+    /// <summary>Picks up plugins installed, replaced or removed by another process, without restarting.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> ReloadAsync(OperationContext context)
+    {
+        await context.Runtime.ReloadPluginsAsync(context.CancellationToken).ConfigureAwait(false);
+        return await ListAsync(context).ConfigureAwait(false);
+    }
+
     private static Outcome<PluginId> ReadPlugin(OperationContext context)
     {
         Outcome<PluginCall> call = context.Read(NativeJsonContext.Default.PluginCall);

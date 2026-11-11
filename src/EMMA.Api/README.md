@@ -58,6 +58,7 @@ A bad value in any setting stops the host at startup with a message naming it.
 | `GET /v1/plugins/{plugin}/suggest?filter=…&text=…&limit=…` | Suggested values for a filter declared with type `lookup`. `filter` is required, `limit` defaults to 10 (at most 50). Answers `suggestions` (`value`, `label`, `description`, `is_default`); `value` is what to send back in the filter's `values`. Text shorter than the filter's `min_query_length` gives none. `501 unsupported` when the plugin does not offer search assist. |
 | `GET /v1/nodes?ref=…&ref=…` | Fetch up to 500 nodes by reference, in the order asked. Unknown ones are omitted. |
 | `POST /v1/nodes/enrich?ref=…&ref=…` | Fills in expensive props (ratings, counts) of nodes already served, such as search results. The plugin's props replace the stored props with the same key and are remembered; nodes the host has not seen are omitted. `501 unsupported` when the plugin does not offer search assist. |
+| `POST /v1/nodes/refresh_cover?ref=…` | Asks the plugin for a node again and stores the answer, so its thumbnail address and details are current. Answers the node. `404` when the host has not seen the node or the plugin no longer has it. |
 | `GET /v1/nodes/children?ref=…` | Children of a node in natural order (chapters, pages, episodes). `cursor`, `limit`. |
 | `GET /v1/assets?ref=…&role=…&hint=…` | What a node offers for a role (`image`, `stream`, `subtitle`, …): `index`, `mime`, `size`, `delivery`, `props`. `hint` (optional) is a quality such as `1080p`, passed to the plugin as `emma.quality`; a plugin may ignore it. |
 | `GET /v1/assets/content?ref=…&role=…&index=0&hint=…` | The bytes of one asset. A downloaded leaf (index 0) is served from its stored file before the plugin is asked. A stored or proxied asset also honours a single `Range: bytes=start-end` header. |
@@ -77,6 +78,7 @@ A bad value in any setting stops the host at startup with a message naming it.
 | `PUT /v1/library?ref=…&library=…` | Save a node the host has already served, into `library` (default: the default library). A node already saved stays where it is. |
 | `DELETE /v1/library?ref=…` | Remove a saved node from whichever library holds it. |
 | `POST /v1/library/move?ref=…&library=…` | Move a saved node to another library. |
+| `POST /v1/library/refresh?library=…` | Lists the children of every saved node again (one library, or all) and reports which are new: `checked`, `updated` (`node`, `new_children`) and `failed` (`node`, `error`). A node whose children were never listed only gets a baseline; see `docs/architecture/native-abi.md`. One failing node does not stop the others. |
 | `GET /v1/libraries` | The caller's libraries: `name`, `created_at`, `count`, `is_default`. The default library is always first. |
 | `POST /v1/libraries` | Create a library. Body: `name` (1 to 64 characters, unique ignoring case). |
 | `DELETE /v1/libraries?name=…` | Delete a library and its entries. The default library cannot be deleted. |

@@ -35,6 +35,7 @@ internal static class EmmaServices
         services.AddSingleton(provider => provider.GetRequiredService<EmmaRuntime>().Gateway);
         services.AddSingleton(provider => provider.GetRequiredService<EmmaRuntime>().Catalog);
         services.AddSingleton(provider => provider.GetRequiredService<EmmaRuntime>().Assets);
+        services.AddSingleton(provider => provider.GetRequiredService<EmmaRuntime>().Refresh);
         services.AddSingleton(provider => provider.GetRequiredService<EmmaRuntime>().Progress);
         services.AddSingleton(provider => provider.GetRequiredService<EmmaRuntime>().AppSettings);
         services.AddSingleton(provider => provider.GetRequiredService<EmmaRuntime>().Downloads);

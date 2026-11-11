@@ -28,6 +28,14 @@ public static class NodeMapper
             facet.FilterId,
             [.. facet.Counts.Select(count => new FacetCountDto(count.Value, count.Label, count.Count))]))]);
 
+    /// <summary>Maps what refreshing a library found.</summary>
+    /// <param name="report">The report.</param>
+    /// <returns>The wire form.</returns>
+    public static RefreshResponse ToDto(RefreshReport report) => new(
+        report.Checked,
+        [.. report.Updated.Select(update => new NodeUpdateDto(ToDto(update.Node), [.. update.NewChildren.Select(ToDto)]))],
+        [.. report.Failed.Select(failure => new RefreshFailureDto(failure.Node.ToString(), ApiErrors.ToResponse(failure.Error).Error))]);
+
     /// <summary>Maps a search request, which the pipeline then validates against the plugin's declaration.</summary>
     /// <param name="request">The request body.</param>
     /// <returns>The query, or why a field is invalid.</returns>
