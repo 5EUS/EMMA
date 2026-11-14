@@ -16,14 +16,13 @@ C#).
 rustup target add wasm32-wasip2
 emma plugin new notes --id com.me.notes --name "Notes"
 cd notes
-cargo build --release --target wasm32-wasip2
-cp target/wasm32-wasip2/release/com_me_notes.wasm plugin.wasm
+sh build.sh --no-pack          # builds the component and copies it to plugin.wasm
 emma plugin run . describe
 emma plugin run . search "collection 2"
 ```
 
 `emma plugin new` writes a working plugin (it serves two made-up kinds from memory), the contract it builds against
-in `wit/`, and a README. The template is built and linted in EMMA's own CI against the current contract, so it always
+in `wit/`, a README and `build.sh`, which builds the component and packs it (`sh build.sh`). The template is built and linted in EMMA's own CI against the current contract, so it always
 compiles.
 
 ## The model
@@ -110,8 +109,9 @@ plugin run` in CI as an end-to-end check against the real host.
 ## Package and distribute
 
 ```sh
-emma plugin pack . --out dist/                    # unsigned: for development
-emma plugin pack . --out dist/ --sign-key signer.pem --key-id release-2026 --repository my-repo --valid-days 30
+sh build.sh                                       # build, then pack unsigned into dist/: for development
+sh build.sh --sign-key signer.pem --key-id release-2026 --repository my-repo --valid-days 30
+emma plugin pack . --out dist/                    # what build.sh runs after the build, if you build another way
 emma plugin install dist/com.me.notes-0.1.0.zip --repository my-repo
 ```
 

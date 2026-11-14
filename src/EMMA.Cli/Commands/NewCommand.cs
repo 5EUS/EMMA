@@ -64,8 +64,8 @@ internal static class NewCommand
         }
 
         await context.SayAsync($"Created {plugin} in {directory} ({written} files). Next:").ConfigureAwait(false);
-        await context.SayAsync($"  cd {directory} && cargo build --release --target wasm32-wasip2").ConfigureAwait(false);
-        await context.SayAsync($"  cp target/wasm32-wasip2/release/{crate}.wasm plugin.wasm && emma plugin run . describe").ConfigureAwait(false);
+        await context.SayAsync($"  cd {directory} && sh build.sh --no-pack && emma plugin run . describe").ConfigureAwait(false);
+        await context.SayAsync("  sh build.sh   (builds and packs it into dist/)").ConfigureAwait(false);
         return CommandContext.Success;
     }
 

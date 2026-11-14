@@ -31,11 +31,12 @@ cargo build --release --target wasm32-wasip2 --locked --features newer-patch \
 cp "$root/native/plugins/fixture/target/newer-patch/wasm32-wasip2/release/emma_fixture.wasm" "$out/fixture-newer-patch.wasm"
 
 # The plugin template (`emma plugin new` scaffolds from it). Its wit directory is the contract, copied here and
-# ignored by git; the build proves the template compiles against the current contract.
+# ignored by git; the build proves the template compiles against the current contract. It goes through the
+# template's own build.sh, so the script users get is exercised too (packing needs the CLI, so it is skipped here).
 template="$root/native/templates/rust-plugin"
 rm -rf "$template/wit"
 cp -r "$root/src/EMMA.Contracts/wit" "$template/wit"
-cargo build --release --target wasm32-wasip2 --locked --manifest-path "$template/Cargo.toml"
-cp "$template/target/wasm32-wasip2/release/emma_plugin_template.wasm" "$out/template.wasm"
+CARGO_FLAGS=--locked sh "$template/build.sh" --no-pack
+cp "$template/plugin.wasm" "$out/template.wasm"
 
 echo "plugins built into $out"

@@ -34,6 +34,11 @@ public sealed class CliPluginTests
             Assert.True(File.Exists(Path.Combine(target, "src", "lib.rs")));
             Assert.True(File.Exists(Path.Combine(target, ".gitignore")));
 
+            // The build and pack script comes along and finds the renamed crate itself, so it holds no crate name.
+            string script = await File.ReadAllTextAsync(Path.Combine(target, "build.sh"), TestContext.Current.CancellationToken).ConfigureAwait(true);
+            Assert.Contains("plugin pack", script, StringComparison.Ordinal);
+            Assert.DoesNotContain("emma_plugin_template", script, StringComparison.Ordinal);
+
             // The contract copied in is byte-for-byte the one this build understands.
             foreach (string contract in Directory.EnumerateFiles(Path.Combine(NativeArtifacts.RepositoryRoot(), "src", "EMMA.Contracts", "wit"), "*.wit"))
             {

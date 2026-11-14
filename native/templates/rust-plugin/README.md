@@ -9,8 +9,7 @@ You need Rust with the Wasm component target, and the `emma` command-line tool:
 
 ```sh
 rustup target add wasm32-wasip2
-cargo build --release --target wasm32-wasip2
-cp target/wasm32-wasip2/release/emma_plugin_template.wasm plugin.wasm
+sh build.sh --no-pack               # cargo build for wasm32-wasip2, then copy the result to plugin.wasm
 
 emma plugin run . describe          # what the plugin declares
 emma plugin run . search "collection 2"
@@ -34,11 +33,13 @@ your network permissions.
 ## Package and install
 
 ```sh
-emma plugin pack . --out dist/                       # unsigned, for development
+sh build.sh                                          # build, then pack an unsigned package into dist/
 emma plugin install dist/com.example.template-0.1.0.zip --repository dev
 ```
 
-A signed package for distribution adds `--sign-key key.pem --key-id my-key --repository my-repo`. See
+`build.sh` passes any other arguments to `emma plugin pack`, so a signed package for distribution is
+`sh build.sh --sign-key key.pem --key-id my-key --repository my-repo`. It finds the crate name in `Cargo.toml`, and
+the `EMMA` environment variable names the `emma` tool if it is not on the PATH. See
 `docs/plugins/authoring.md` in the EMMA repository for signing and repositories.
 
 The `wit` directory is the EMMA contract, copied here by `emma plugin new`. Do not edit it; update it by creating a
