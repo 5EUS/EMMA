@@ -120,6 +120,12 @@ Keys starting `emma.` are reserved. Plugin-specific data uses the author's own p
 | `emma.groups` | text-list | Uploader or scanlation groups (this replaces `uploader_groups` in the core) |
 | `emma.duration-ms` | integer | Playback length |
 | `emma.reading-direction` | text | `ltr`, `rtl`, `vertical` |
+| `emma.views` | integer | Play or view count |
+| `emma.likes` | integer | Like or upvote count |
+| `emma.subscribers` | integer | Followers of a creator or channel node |
+| `emma.item-count` | integer | Children in a container (a playlist's videos), when known without listing them |
+| `emma.live` | flag | The node is a live broadcast (as an asset prop it marks a live stream) |
+| `emma.creator-ref` | text | Node id, in the same plugin, of the creator or channel of this node. Pairs with `emma.creators` (names). A client opens it with `get` |
 
 Asset props: `emma.quality`, `emma.language`, `emma.label`, `emma.width`, `emma.height`, `emma.bitrate`,
 `emma.live`, `emma.default`, `emma.drm.scheme`, `emma.drm.license-url`, `emma.duration-ms`, `emma.start-ms`
@@ -134,8 +140,20 @@ and `emma.end-ms`. The host checks their types on every asset (section 13).
 | `emma.profile.audio@1` | album or show ending in track nodes | `audio`, optional `chapters` |
 | `emma.profile.text@1` | book or feed ending in article or chapter nodes | `text` (`text/html` or `text/markdown`) |
 
+A client may present a video-profile node by what it carries, never by its kind name: a node that resolves `stream` is a
+video (`emma.duration-ms`, `emma.views`, `emma.creators`, `emma.released-ms`, `emma.live`), a container with
+`emma.subscribers` is a channel or creator, and any other container is a playlist (`emma.item-count`).
+
 The first three are built (section 13 for video and audio); `text` is listed to prove the model needs no core
 change and has no host support beyond reading `text` assets.
+
+**Companions of a video.** Related videos and comments are not part of the contract's calls. A playable kind declares no
+children (so the host asks it live, not from a stored listing), and `children(video)` may return *section nodes*: nodes
+of a kind the plugin declares, each with the prop `emma.section` (text, an open string; clients know `related` and
+`comments`). `children(section)` pages the items: `related` holds video nodes, `comments` holds nodes of a comment kind
+with `emma.synopsis` (the text), `emma.creators`, `emma.released-ms`, `emma.likes`, and `emma.item-count` for replies,
+which are the comment's own `children`. A client that does not know a section ignores it, and a plugin that has none
+returns an empty page.
 
 ## 5. Capabilities, versioning and optional packs
 

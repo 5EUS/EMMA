@@ -46,6 +46,13 @@ public static class ManifestDigest
             .Integer(manifest.Limits.CpuBudgetMs)
             .Integer(manifest.Limits.MemoryMb);
 
+        // Appended only when present, so a manifest that does not use the field keeps the digest it was signed with. A
+        // trailing frame cannot be mistaken for its absence.
+        if (manifest.Permissions.NetworkSettings.Count > 0)
+        {
+            frame.TextList(manifest.Permissions.NetworkSettings);
+        }
+
         return SHA256.HashData(frame.ToArray());
     }
 

@@ -123,7 +123,7 @@ public sealed class WasmRuntimeHost : IDisposable
         config.ComponentPath,
         config.Precompiled,
         new ConfigLimits(config.Limits.CpuBudgetMs, config.Limits.MemoryMb, config.Limits.CallTimeoutMs),
-        new ConfigPermissions(config.Network, config.Cache),
+        new ConfigPermissions(config.Network, config.Cache, config.AllowLocalNetwork),
         config.Settings,
         config.Testing is null ? null : new ConfigTesting(config.Testing.AllowPrivateAddresses, config.Testing.FixedNowMs));
 }

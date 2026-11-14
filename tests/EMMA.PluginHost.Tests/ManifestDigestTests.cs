@@ -70,6 +70,7 @@ public sealed class ManifestDigestTests
             ["entrypoint path"] = Baseline with { Entrypoint = Baseline.Entrypoint with { Path = "other.wasm" } },
             ["entrypoint digest"] = Baseline with { Entrypoint = Baseline.Entrypoint with { Sha256 = new string('b', 64) } },
             ["network"] = Baseline with { Permissions = Baseline.Permissions with { Network = ["evil.example.net"] } },
+            ["network settings"] = Baseline with { Permissions = Baseline.Permissions with { NetworkSettings = ["instance_url"] } },
             ["cache"] = Baseline with { Permissions = Baseline.Permissions with { Cache = false } },
             ["cpu"] = Baseline with { Limits = Baseline.Limits with { CpuBudgetMs = 1 } },
             ["memory"] = Baseline with { Limits = Baseline.Limits with { MemoryMb = 1 } },

@@ -83,6 +83,26 @@ public sealed class ManifestCapabilityPolicyProviderTests
         Assert.False(provider.GetPolicy(id).AllowsNetwork(TestData.Url("api.example.com")));
     }
 
+    /// <summary>The host of a URL setting the manifest names joins that plugin's allow-list, and only that plugin's.</summary>
+    [Fact]
+    public void ASettingNamedByTheManifestAddsItsHost()
+    {
+        ManifestCapabilityPolicyProvider provider = new();
+        PluginManifest manifest = TestManifests.Valid();
+        manifest = manifest with { Permissions = manifest.Permissions with { NetworkSettings = ["instance_url"] } };
+        Dictionary<PluginId, IReadOnlyDictionary<string, IReadOnlyList<string>>> settings = new()
+        {
+            [manifest.Id] = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal) { ["instance_url"] = ["https://Invidious.Example.org/"], ["other"] = ["https://not-a-host.example.net"] },
+        };
+
+        provider.Apply([Installed(manifest, PluginStatus.Enabled), Installed(TestManifests.Valid("com.example.plain"), PluginStatus.Enabled)], settings);
+
+        Assert.True(provider.GetPolicy(manifest.Id).AllowsNetwork(TestData.Url("invidious.example.org")));
+        Assert.True(provider.GetPolicy(manifest.Id).AllowsNetwork(TestData.Url("api.example.com")));
+        Assert.False(provider.GetPolicy(manifest.Id).AllowsNetwork(TestData.Url("not-a-host.example.net")));
+        Assert.False(provider.GetPolicy(PluginId.Create("com.example.plain")).AllowsNetwork(TestData.Url("invidious.example.org")));
+    }
+
     private static InstalledPlugin Installed(PluginManifest manifest, PluginStatus status) =>
         new(manifest.Id, manifest.Version, status, TestManifests.Json(manifest), null, Moment, Moment);
 }

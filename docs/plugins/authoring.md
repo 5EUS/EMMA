@@ -87,6 +87,11 @@ The schema is `src/EMMA.Contracts/plugin-manifest.schema.json`. The parts that m
 - `kinds`: must equal what `describe` returns; the host refuses a mismatch at install and on every load.
 - `contract.required` / `optional`: the interfaces you implement, such as `emma:core/search-assist@1`.
 - `permissions.network`: exact hosts or `*.example.com`; empty means no network. `permissions.cache`: whether you use the cache.
+  For a service the user hosts (an Invidious instance), list the text setting that holds its base URL in
+  `permissions.networkSettings`: the host of that value joins your allow-list for that user only. A setting's declared
+  default is not counted, so put a default host in `network` as well. A plugin that does this may declare the boolean setting
+  `emma.allow-local-network` (write the warning in its `help`); only when the user turns it on may the plugin reach loopback
+  and private addresses, which stay refused otherwise.
 - `limits`: `cpuBudgetMs` per call and `memoryMb`.
 - `entrypoint`: `path` (a `.wasm`) and `sha256`. You do not fill the digest in: `emma plugin pack` computes it.
 

@@ -35,6 +35,11 @@ public static class ManifestWriter
             json.WriteEndObject();
             json.WriteStartObject("permissions");
             WriteStrings(json, "network", manifest.Permissions.Network);
+            if (manifest.Permissions.NetworkSettings.Count > 0)
+            {
+                WriteStrings(json, "networkSettings", manifest.Permissions.NetworkSettings);
+            }
+
             json.WriteBoolean("cache", manifest.Permissions.Cache);
             json.WriteEndObject();
             json.WriteStartObject("limits");

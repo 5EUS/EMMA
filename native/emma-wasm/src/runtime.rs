@@ -169,7 +169,7 @@ impl Runtime {
         let network = Network::new(
             HostPolicy::new(&config.permissions.network),
             FetchLimits::default(),
-            config.testing.allow_private_addresses,
+            config.testing.allow_private_addresses || config.permissions.allow_local_network,
         );
         Ok(Plugin {
             engine: self.engine.clone(),

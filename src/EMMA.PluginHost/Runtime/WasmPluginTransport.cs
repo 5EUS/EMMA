@@ -1,5 +1,6 @@
 using EMMA.Domain;
 using EMMA.PluginHost.Instances;
+using EMMA.PluginHost.Policy;
 using EMMA.WasmRuntime;
 
 namespace EMMA.PluginHost.Runtime;
@@ -17,9 +18,10 @@ public sealed class WasmPluginTransport(WasmRuntimeHost runtime) : IPluginTransp
         WasmPluginConfig config = new(
             launch.EntrypointPath,
             new WasmLimits(launch.Manifest.Limits.CpuBudgetMs, launch.Manifest.Limits.MemoryMb),
-            launch.Manifest.Permissions.Network,
+            SettingNetworkHosts.Effective(launch.Manifest.Permissions, launch.Settings),
             launch.Manifest.Permissions.Cache,
-            launch.Settings);
+            launch.Settings,
+            AllowLocalNetwork: SettingNetworkHosts.AllowsLocalNetwork(launch.Manifest.Permissions, launch.Settings));
         Outcome<WasmPlugin> opened = runtime.Open(config);
         if (!opened.IsSuccess)
         {

@@ -8,6 +8,7 @@ namespace EMMA.WasmRuntime;
 /// <param name="Settings">User settings by key, as text values, with secrets already decrypted.</param>
 /// <param name="Precompiled">Whether the file is a component precompiled by <c>WasmRuntimeHost.Precompile</c> on this host.</param>
 /// <param name="Testing">Test-only switches.</param>
+/// <param name="AllowLocalNetwork">Lets the plugin reach loopback and private addresses, because the user chose to for a self-hosted service.</param>
 public sealed record WasmPluginConfig(
     string ComponentPath,
     WasmLimits Limits,
@@ -15,4 +16,5 @@ public sealed record WasmPluginConfig(
     bool Cache,
     IReadOnlyDictionary<string, IReadOnlyList<string>> Settings,
     bool Precompiled = false,
-    WasmTestingOptions? Testing = null);
+    WasmTestingOptions? Testing = null,
+    bool AllowLocalNetwork = false);

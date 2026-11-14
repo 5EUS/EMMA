@@ -28,6 +28,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     private readonly BoundedResolutionCache resolutions;
     private readonly DownloadFileStore downloadFiles;
     private readonly FileSecretBox secretBox;
+    private readonly IPluginSettingsPort pluginSettingsStore;
     private readonly HttpClient? http;
     private readonly LazyWasmTransport? transport;
     private readonly WasmPluginGateway? wasmGateway;
@@ -51,7 +52,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.LibraryStore = new SqliteLibraryStore(storageOptions, this.Time);
         IAppSettingsPort appSettings = new SqliteAppSettings(storageOptions);
         this.secretBox = new FileSecretBox(Path.Combine(data, "secret.key"));
-        IPluginSettingsPort settings = new SqlitePluginSettings(storageOptions, this.secretBox, this.Time);
+        IPluginSettingsPort settings = this.pluginSettingsStore = new SqlitePluginSettings(storageOptions, this.secretBox, this.Time);
         this.Policies = new ManifestCapabilityPolicyProvider();
         this.Verifier = new PluginSignatureVerifier(
             options.Trust,
@@ -244,6 +245,8 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         Outcome<IReadOnlyList<SettingState>> states = await this.PluginSettings.SetAsync(plugin, changes, cancellationToken).ConfigureAwait(false);
         if (states.IsSuccess && changes.Count > 0)
         {
+            // A setting can name a host the plugin may reach, so the allow-list is rebuilt before the plugin reopens.
+            await this.Policies.RefreshAsync(this.Registry, this.pluginSettingsStore, cancellationToken).ConfigureAwait(false);
             await this.UnloadAsync(plugin, cancellationToken).ConfigureAwait(false);
         }
 
@@ -266,7 +269,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
             Directory.Delete(directory, recursive: true);
         }
 
-        await this.Policies.RefreshAsync(this.Registry, cancellationToken).ConfigureAwait(false);
+        await this.Policies.RefreshAsync(this.Registry, this.pluginSettingsStore, cancellationToken).ConfigureAwait(false);
         return found;
     }
 
@@ -277,7 +280,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     public async Task PluginChangedAsync(PluginId plugin, CancellationToken cancellationToken)
     {
         await this.UnloadAsync(plugin, cancellationToken).ConfigureAwait(false);
-        await this.Policies.RefreshAsync(this.Registry, cancellationToken).ConfigureAwait(false);
+        await this.Policies.RefreshAsync(this.Registry, this.pluginSettingsStore, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -353,7 +356,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     // A plugin whose stored manifest cannot be read is denied everything by the policy snapshot; take it out of service too.
     private async Task<IReadOnlyList<PluginId>> RefreshPoliciesAsync(CancellationToken cancellationToken)
     {
-        IReadOnlyList<PluginId> unreadable = await this.Policies.RefreshAsync(this.Registry, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<PluginId> unreadable = await this.Policies.RefreshAsync(this.Registry, this.pluginSettingsStore, cancellationToken).ConfigureAwait(false);
         foreach (PluginId plugin in unreadable)
         {
             await this.Registry.SetStatusAsync(plugin, PluginStatus.Quarantined, this.Time.GetUtcNow(), cancellationToken).ConfigureAwait(false);

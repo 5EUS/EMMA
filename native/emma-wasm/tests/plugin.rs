@@ -442,6 +442,20 @@ fn an_allowed_name_that_resolves_to_loopback_is_refused_in_production_mode() {
 }
 
 #[test]
+fn a_user_granted_local_network_permission_reaches_a_loopback_server() {
+    let server = TestServer::start(|_| Reply::ok("mine"));
+    let runtime = runtime();
+    let mut allowed = config("fixture");
+    allowed["permissions"]["network"] = json!(["localhost"]);
+    allowed["permissions"]["allowLocalNetwork"] = json!(true);
+    let plugin = open(&runtime, &allowed);
+
+    let envelope = search(&plugin, &format!("http:{}", server.url("/mine")));
+
+    assert_eq!(titles(ok(&envelope)), ["status=200 bytes=4"]);
+}
+
+#[test]
 fn time_spent_waiting_on_the_network_is_not_charged_to_the_cpu_budget() {
     // The upstream takes 700 ms but the plugin's CPU budget is only 200 ms: the call must succeed,
     // because waiting on the network is the host's time, not the plugin's.

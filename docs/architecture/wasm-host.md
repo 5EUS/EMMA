@@ -37,7 +37,7 @@ generated from `src/EMMA.Contracts/wit`.
 | CPU per call | epoch interruption, 10 ms ticks; time inside host calls is not counted |
 | memory | wasmtime `StoreLimits`, from `limits.memoryMb` |
 | wall clock | `limits.callTimeoutMs` (default 60 s), host waits included |
-| network | the manifest's allow-list: exact hosts and `*.suffix`, never IP literals; checked again on every redirect; credentials stripped when a redirect changes host; response size and time limits; resolved addresses must be public (SSRF) |
+| network | the manifest's allow-list: exact hosts and `*.suffix`, never IP literals; checked again on every redirect; credentials stripped when a redirect changes host; response size and time limits; resolved addresses must be public (SSRF), unless the user switched on `emma.allow-local-network` for a plugin whose manifest lists `permissions.networkSettings`; the hosts of those URL settings join the list for that plugin (`SettingNetworkHosts`) |
 | filesystem, sockets, environment | none: WASI is given no preopens, no sockets and no variables |
 
 A call cannot be interrupted from C# once it has started; the limits above bound it, and the

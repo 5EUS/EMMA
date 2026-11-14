@@ -28,6 +28,24 @@ public sealed class ManifestParserTests
         Assert.Equal(original.Kinds, parsed.Value.Kinds);
     }
 
+    /// <summary>Setting-derived hosts survive writing and parsing, and a repeated key is refused.</summary>
+    [Fact]
+    public void NetworkSettingsRoundTripAndMustBeUnique()
+    {
+        PluginManifest original = TestManifests.Valid();
+        original = original with { Permissions = original.Permissions with { NetworkSettings = ["instance_url"] } };
+
+        Outcome<PluginManifest> parsed = ManifestParser.Parse(ManifestWriter.Write(original), requireSignature: false);
+
+        Assert.True(parsed.IsSuccess, parsed.Error?.Message);
+        Assert.Equal(["instance_url"], parsed.Value.Permissions.NetworkSettings);
+
+        PluginManifest twice = original with { Permissions = original.Permissions with { NetworkSettings = ["instance_url", "instance_url"] } };
+        Outcome<PluginManifest> refused = ManifestParser.Parse(ManifestWriter.Write(twice), requireSignature: false);
+
+        Assert.False(refused.IsSuccess);
+    }
+
     /// <summary>Optional fields may be left out entirely.</summary>
     [Fact]
     public void MinimalManifestIsValid()

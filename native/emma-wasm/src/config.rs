@@ -32,6 +32,10 @@ pub struct Permissions {
     /// Whether `host.cache-get` and `host.cache-put` work.
     #[serde(default)]
     pub cache: bool,
+    /// Lets plugins reach loopback and private addresses, because the user turned that on for a
+    /// self-hosted service. The host sets it only for a plugin whose manifest names URL settings.
+    #[serde(default)]
+    pub allow_local_network: bool,
 }
 
 /// Switches that exist only so tests can run hermetically. The production host never sets them.

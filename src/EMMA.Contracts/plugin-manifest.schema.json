@@ -160,6 +160,17 @@
           },
           "uniqueItems": true
         },
+        "networkSettings": {
+          "description": "Keys of the plugin's own text settings that hold a base URL the user chooses, such as a self-hosted instance. The host of each value is added to this plugin's network allow-list while that setting is set. Omit it for a plugin whose hosts are all fixed. A plugin that lists a setting here may also declare the boolean setting 'emma.allow-local-network', which lets the user permit loopback and private addresses for this plugin.",
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "uniqueItems": true
+        },
         "cache": {
           "description": "Whether host.cache-get/put are available.",
           "type": "boolean"

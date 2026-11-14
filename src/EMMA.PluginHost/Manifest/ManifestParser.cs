@@ -251,9 +251,15 @@ public static class ManifestParser
             fields.Reject("network", "lists a host twice");
         }
 
+        IReadOnlyList<string> networkSettings = fields.OptionalStringArray("networkSettings", 8, 64);
+        if (networkSettings.Distinct(StringComparer.Ordinal).Count() != networkSettings.Count)
+        {
+            fields.Reject("networkSettings", "lists a setting twice");
+        }
+
         bool cache = fields.RequireBoolean("cache");
         fields.Finish();
-        return new ManifestPermissions(network, cache);
+        return new ManifestPermissions(network, cache, networkSettings);
     }
 
     private static ManifestLimits ReadLimits(JsonFields? fields)
