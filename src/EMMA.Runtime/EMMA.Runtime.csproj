@@ -4,6 +4,10 @@
     storage, the plugin host and the pipelines by hand (no container, no reflection) so a host that is
     not a web server does not pull in the web framework.
   -->
+  <PropertyGroup>
+    <!-- Required by the source-generated [LibraryImport] stub in SystemCertificates; this project writes no unsafe code of its own. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../EMMA.Application/EMMA.Application.csproj" />
     <ProjectReference Include="../EMMA.Infrastructure/EMMA.Infrastructure.csproj" />

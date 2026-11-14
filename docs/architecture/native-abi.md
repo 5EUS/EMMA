@@ -161,6 +161,9 @@ The same two scripts take a mobile rid, and two more bundle the result for an ap
 - A mobile publish restores by itself, into `obj/mobile-<rid>/` (`EmmaMobileRid` in `Directory.Build.props`), because the
   NativeAOT runtime pack for a mobile rid is only fetched by a restore that names the rid. It does not touch the lock files
   or the desktop `dotnet restore`.
+- On Android, `EmmaRuntime` points `SSL_CERT_DIR` at the system CA store (`/apex/com.android.conscrypt/cacerts`, else
+  `/system/etc/security/cacerts`) before its first HTTPS request, because OpenSSL has no default roots there. It does
+  nothing when either `SSL_CERT_*` variable is already set or on a platform without those directories.
 - On Android the app loads the libraries from its native library directory and passes it as `native_dir`. On iOS there is
   nothing to load: the app links both frameworks, and `libemma_native`'s P/Invokes to the Wasm host are bound at link time.
 - CI builds both on every push (`android`, `ios` jobs) and uploads the result.

@@ -226,6 +226,19 @@ public sealed class HttpAssetFetcherTests
         Assert.Equal(ErrorCode.Unavailable, payload.Error?.Code);
     }
 
+    /// <summary>The message names the host and the innermost cause, so a TLS or DNS problem can be told apart.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task NetworkFailureNamesTheCause()
+    {
+        using StubHttpHandler handler = new(_ => throw new HttpRequestException("outer", new IOException("the certificate was not trusted")));
+
+        Outcome<AssetPayload> payload = await this.Fetch(handler, Delivery("cdn.example.com")).ConfigureAwait(true);
+
+        Assert.Contains("cdn.example.com", payload.Error?.Message, StringComparison.Ordinal);
+        Assert.Contains("the certificate was not trusted", payload.Error?.Message, StringComparison.Ordinal);
+    }
+
     private static HttpResponseMessage Ok(byte[] body, string mime)
     {
         ByteArrayContent content = new(body);

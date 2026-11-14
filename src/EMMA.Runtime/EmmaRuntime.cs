@@ -338,6 +338,9 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 
     private static void ConfigureNativeLibraries(string? directory)
     {
+        // Before the first HTTPS request: .NET reads the root store location once, when it first builds a chain.
+        SystemCertificates.Configure();
+
         // Always isolate SQLite from any other copy in the process; a host rarely knows whether there is one.
         SqliteNativeLibrary.Register();
         if (directory is not null)

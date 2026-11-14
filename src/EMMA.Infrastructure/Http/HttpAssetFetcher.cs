@@ -131,10 +131,10 @@ public sealed class HttpAssetFetcher(HttpClient client, TimeProvider time) : IAs
                     $"The plugin may not reach '{current.Host}'.");
             }
 
-            HttpResponseMessage? response = await this.TrySendAsync(current, headers, range, cancellationToken).ConfigureAwait(false);
+            (HttpResponseMessage? response, string? reason) = await this.TrySendAsync(current, headers, range, cancellationToken).ConfigureAwait(false);
             if (response is null)
             {
-                return Outcome.Failure<HttpResponseMessage>(ErrorCode.Unavailable, $"Could not reach '{current.Host}'.");
+                return Outcome.Failure<HttpResponseMessage>(ErrorCode.Unavailable, $"Could not reach '{current.Host}': {reason}");
             }
 
             if (IsRedirect(response.StatusCode) && response.Headers.Location is { } location)
@@ -168,7 +168,7 @@ public sealed class HttpAssetFetcher(HttpClient client, TimeProvider time) : IAs
         return Outcome.Failure<HttpResponseMessage>(ErrorCode.Unavailable, "Too many redirects.");
     }
 
-    private async Task<HttpResponseMessage?> TrySendAsync(
+    private async Task<(HttpResponseMessage? Response, string? Reason)> TrySendAsync(
         Uri url,
         IReadOnlyList<HttpHeader> headers,
         ByteRange? range,
@@ -187,13 +187,21 @@ public sealed class HttpAssetFetcher(HttpClient client, TimeProvider time) : IAs
 
         try
         {
-            return await client
+            HttpResponseMessage response = await client
                 .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
                 .ConfigureAwait(false);
+            return (response, null);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException exception)
         {
-            return null;
+            // The innermost message names the real cause (a name that did not resolve, a certificate that did not validate).
+            Exception cause = exception;
+            while (cause.InnerException is { } inner)
+            {
+                cause = inner;
+            }
+
+            return (null, cause.Message);
         }
     }
 
