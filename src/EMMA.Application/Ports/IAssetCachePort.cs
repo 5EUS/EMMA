@@ -17,4 +17,15 @@ public interface IAssetCachePort
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>A task that completes when the asset is stored (or deliberately skipped).</returns>
     Task SetAsync(AssetKey key, AssetPayload payload, CancellationToken cancellationToken);
+
+    /// <summary>Drops every cached asset of a node, for example after the node was refreshed.</summary>
+    /// <param name="node">The node.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>A task that completes when the node's assets are gone.</returns>
+    Task RemoveNodeAsync(NodeRef node, CancellationToken cancellationToken);
+
+    /// <summary>Drops everything.</summary>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>A task that completes when the cache is empty.</returns>
+    Task ClearAsync(CancellationToken cancellationToken);
 }

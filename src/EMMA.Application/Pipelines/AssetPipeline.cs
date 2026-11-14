@@ -21,6 +21,8 @@ namespace EMMA.Application.Pipelines;
 /// <param name="time">The time source.</param>
 public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvider policies, INodeStorePort store, IAssetFetcherPort fetcher, IAssetCachePort cache, PluginCallExecutor executor, AssetPipelineOptions options, TimeProvider time)
 {
+    private static readonly AssetRole ThumbnailRole = AssetRole.Create("emma.thumbnail");
+
     /// <summary>Resolves a node to its assets for a role.</summary>
     /// <param name="node">The node.</param>
     /// <param name="role">What the assets are for.</param>
@@ -67,6 +69,26 @@ public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvi
             ProxiedDelivery proxied => await this.GetProxiedAsync(node.Plugin, asset.Mime, proxied, cancellationToken).ConfigureAwait(false),
             _ => Outcome.Failure<AssetPayload>(ErrorCode.Internal, "Unknown asset delivery."),
         };
+    }
+
+    /// <summary>
+    /// Gets a node's thumbnail through the host, so it is fetched under the plugin's network permissions and cached on
+    /// disk. The cache key includes the thumbnail's address, so a node that now points at a new image misses by itself.
+    /// </summary>
+    /// <param name="node">The node; the host must have seen it.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The image, or why it could not be had.</returns>
+    public async Task<Outcome<AssetPayload>> GetThumbnailAsync(NodeRef node, CancellationToken cancellationToken)
+    {
+        Node? known = await store.GetAsync(node, cancellationToken).ConfigureAwait(false);
+        if (known is null)
+        {
+            return Outcome.Failure<AssetPayload>(ErrorCode.NotFound, "That node has not been seen; browse or search to it first.");
+        }
+
+        return known.Thumbnail is null
+            ? Outcome.Failure<AssetPayload>(ErrorCode.NotFound, "That node has no thumbnail.")
+            : await this.GetRemoteAsync(node, ThumbnailRole, mime: null, new RemoteDelivery(known.Thumbnail, [], ExpiresAt: null), cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Reads a byte range from a proxied asset, for example to seek in a large file.</summary>
@@ -169,7 +191,7 @@ public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvi
     private async Task<Outcome<AssetPayload>> GetRemoteAsync(
         NodeRef node,
         AssetRole role,
-        string mime,
+        string? mime,
         RemoteDelivery remote,
         CancellationToken cancellationToken)
     {
@@ -196,7 +218,7 @@ public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvi
             return fetched;
         }
 
-        AssetPayload payload = fetched.Value with { Mime = mime };
+        AssetPayload payload = mime is null ? fetched.Value : fetched.Value with { Mime = mime };
         await cache.SetAsync(key, payload, cancellationToken).ConfigureAwait(false);
         return Outcome.Success(payload);
     }

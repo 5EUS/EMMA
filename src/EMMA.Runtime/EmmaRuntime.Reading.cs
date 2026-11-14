@@ -73,6 +73,30 @@ public sealed partial class EmmaRuntime
             : Outcome.Failure<AssetBytes>(payload.Error);
     }
 
+    /// <summary>Reads a node's thumbnail through the host: fetched under the plugin's network permissions and kept in the disk cache.</summary>
+    /// <param name="node">The node; the host must have seen it.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The image, or why it could not be read.</returns>
+    public async Task<Outcome<AssetBytes>> ReadThumbnailAsync(NodeRef node, CancellationToken cancellationToken)
+    {
+        Outcome<AssetPayload> payload = await this.Assets.GetThumbnailAsync(node, cancellationToken).ConfigureAwait(false);
+        return payload.IsSuccess
+            ? Outcome.Success(new AssetBytes(payload.Value.Mime, payload.Value.Payload, RangeStart: null, Total: null, AcceptsRanges: false))
+            : Outcome.Failure<AssetBytes>(payload.Error);
+    }
+
+    /// <summary>
+    /// Empties the caches: cached asset bytes and stored child listings. Nodes the host has seen are kept, because progress
+    /// and libraries refer to them; the next read of a cleared listing asks the plugin again.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>A task that completes when the caches are empty.</returns>
+    public async Task ClearCacheAsync(CancellationToken cancellationToken)
+    {
+        await this.cache.ClearAsync(cancellationToken).ConfigureAwait(false);
+        await this.listings.ClearAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private static AssetBytes Slice(AssetPayload stored, ByteRange? range)
     {
         ReadOnlyMemory<byte> bytes = stored.Payload;

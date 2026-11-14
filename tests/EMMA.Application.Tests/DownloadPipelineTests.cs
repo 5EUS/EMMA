@@ -34,7 +34,7 @@ public sealed class DownloadPipelineTests : IAsyncDisposable
     public DownloadPipelineTests()
     {
         PluginCallExecutor executor = new(new PluginCallOptions(1, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.FromSeconds(30)), this.time);
-        CatalogPipeline catalog = new(this.gateway, this.nodes, executor);
+        CatalogPipeline catalog = new(this.gateway, this.nodes, new InMemoryNodeListingStore(), executor);
         AssetPipeline assets = new(this.gateway, new FakePolicies(), this.nodes, new FakeAssetFetcher(this.time), new BoundedAssetCache(new AssetCacheOptions(1024 * 1024, 0, "unused", TimeSpan.FromDays(1)), this.time), executor, new AssetPipelineOptions(1024), this.time);
         this.downloads = new DownloadPipeline(this.jobs, this.files, catalog, assets, this.nodes, this.settings, this.time);
 

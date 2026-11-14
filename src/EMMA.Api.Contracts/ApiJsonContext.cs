@@ -65,6 +65,7 @@ namespace EMMA.Api.Contracts;
 [JsonSerializable(typeof(DownloadListResponse))]
 [JsonSerializable(typeof(DownloadDetailResponse))]
 [JsonSerializable(typeof(DownloadCountResponse))]
+[JsonSerializable(typeof(CacheClearedResponse))]
 [JsonSerializable(typeof(DownloadSettingsResponse))]
 [JsonSerializable(typeof(SetDownloadSettingsRequest))]
 public sealed partial class ApiJsonContext : JsonSerializerContext

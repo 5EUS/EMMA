@@ -12,10 +12,9 @@ namespace EMMA.Application.Pipelines;
 /// <param name="library">The user's libraries.</param>
 /// <param name="nodes">The nodes the host has seen.</param>
 /// <param name="catalog">Asks plugins.</param>
-public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort nodes, CatalogPipeline catalog)
+/// <param name="assets">The cached asset bytes; a refreshed node's are dropped.</param>
+public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort nodes, CatalogPipeline catalog, IAssetCachePort assets)
 {
-    private const int MaxPagesPerNode = 200;
-
     /// <summary>
     /// Lists the children of every saved node again and reports which are new. A node whose children the host
     /// had never listed has no baseline to compare with, so it is checked but not reported (its children are
@@ -62,7 +61,10 @@ public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort node
         return Outcome.Success(new RefreshReport(entries.Value.Count, updated, failed));
     }
 
-    /// <summary>Asks the plugin for a node again, which replaces what the host stored, including its thumbnail address.</summary>
+    /// <summary>
+    /// Asks the plugin for a node again, which replaces what the host stored, including its thumbnail address, and drops
+    /// the node's cached asset bytes (such as its thumbnail) so they are fetched fresh.
+    /// </summary>
     /// <param name="node">The node; the host must have seen it.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The node as the plugin now describes it, or why it could not be had.</returns>
@@ -73,11 +75,13 @@ public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort node
             return Outcome.Failure<Node>(ErrorCode.NotFound, "That node has not been seen; browse or search to it first.");
         }
 
-        Outcome<IReadOnlyList<Node>> found = await catalog.GetAsync([node], cancellationToken).ConfigureAwait(false);
+        Outcome<IReadOnlyList<Node>> found = await catalog.GetAsync([node], CacheMode.Refresh, cancellationToken).ConfigureAwait(false);
         if (!found.IsSuccess)
         {
             return Outcome.Failure<Node>(found.Error);
         }
+
+        await assets.RemoveNodeAsync(node, cancellationToken).ConfigureAwait(false);
 
         return found.Value.Count == 1
             ? Outcome.Success(found.Value[0])
@@ -100,7 +104,7 @@ public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort node
 
         // Read the baseline first: listing the children stores them, after which every child would look known.
         IReadOnlySet<LocalNodeId> known = await nodes.ChildIdsAsync(node, cancellationToken).ConfigureAwait(false);
-        Outcome<IReadOnlyList<Node>> children = await this.ListChildrenAsync(node, cancellationToken).ConfigureAwait(false);
+        Outcome<IReadOnlyList<Node>> children = await catalog.RelistChildrenAsync(node, cancellationToken).ConfigureAwait(false);
         if (!children.IsSuccess)
         {
             return Outcome.Failure<NodeUpdate?>(children.Error);
@@ -108,34 +112,5 @@ public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort node
 
         List<Node> added = known.Count == 0 ? [] : [.. children.Value.Where(child => !known.Contains(child.Ref.Id))];
         return Outcome.Success<NodeUpdate?>(added.Count == 0 ? null : new NodeUpdate(stored, added));
-    }
-
-    private async Task<Outcome<IReadOnlyList<Node>>> ListChildrenAsync(NodeRef node, CancellationToken cancellationToken)
-    {
-        List<Node> all = [];
-        HashSet<string> seen = [];
-        string? cursor = null;
-        for (int page = 0; page < MaxPagesPerNode; page++)
-        {
-            Outcome<NodePage> children = await catalog.ChildrenAsync(node, new PageRequest(cursor, ContractLimits.MaxNodesPerPage), cancellationToken).ConfigureAwait(false);
-            if (!children.IsSuccess)
-            {
-                return Outcome.Failure<IReadOnlyList<Node>>(children.Error);
-            }
-
-            all.AddRange(children.Value.Items);
-            cursor = children.Value.NextCursor;
-            if (cursor is null)
-            {
-                return Outcome.Success<IReadOnlyList<Node>>(all);
-            }
-
-            if (!seen.Add(cursor))
-            {
-                return Outcome.Failure<IReadOnlyList<Node>>(ErrorCode.Internal, $"Plugin {node.Plugin} repeated a paging cursor while listing the children of '{node.Id}'.");
-            }
-        }
-
-        return Outcome.Failure<IReadOnlyList<Node>>(ErrorCode.Unsupported, $"'{node.Id}' has more than {MaxPagesPerNode} pages of children.");
     }
 }

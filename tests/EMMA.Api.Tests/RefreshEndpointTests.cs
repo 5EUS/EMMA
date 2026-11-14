@@ -60,5 +60,23 @@ public sealed class RefreshEndpointTests
         Assert.Equal(HttpStatusCode.Unauthorized, unauthenticated.Status);
     });
 
+    /// <summary>A thumbnail is served through the host with locked-down headers, then from the cache; an unseen node or one without a thumbnail is not found.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public Task ThumbnailIsServedThroughTheHostAndCached() => ApiTests.WithServerAsync(async server =>
+    {
+        await server.RememberAsync(new Node(TestData.Ref("s1"), NodeKind.Create("series"), "T", null, TestData.Url("img.example.com", "/t.png"), []), Series("bare")).ConfigureAwait(true);
+
+        ApiResponse first = await server.GetAsync("/v1/nodes/thumbnail?ref=com.example.test:s1").ConfigureAwait(true);
+        ApiResponse second = await server.GetAsync("/v1/nodes/thumbnail?ref=com.example.test:s1").ConfigureAwait(true);
+        ApiResponse unseen = await server.GetAsync("/v1/nodes/thumbnail?ref=com.example.test:never").ConfigureAwait(true);
+        ApiResponse bare = await server.GetAsync("/v1/nodes/thumbnail?ref=com.example.test:bare").ConfigureAwait(true);
+
+        Assert.Equal(HttpStatusCode.OK, first.Status);
+        Assert.Equal(HttpStatusCode.OK, second.Status);
+        Assert.Equal(HttpStatusCode.NotFound, unseen.Status);
+        Assert.Equal(HttpStatusCode.NotFound, bare.Status);
+    });
+
     private static Node Series(string id) => new(TestData.Ref(id), NodeKind.Create("series"), $"Title {id}", null, null, []);
 }

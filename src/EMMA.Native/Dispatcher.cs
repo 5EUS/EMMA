@@ -31,6 +31,8 @@ internal static class Dispatcher
             ["nodes.refresh_cover"] = CatalogOperations.RefreshCoverAsync,
             ["assets.list"] = AssetOperations.ListAsync,
             ["assets.content"] = AssetOperations.ContentAsync,
+            ["nodes.thumbnail"] = AssetOperations.ThumbnailAsync,
+            ["cache.clear"] = AssetOperations.ClearCacheAsync,
             ["progress.set"] = UserOperations.SetProgressAsync,
             ["progress.get"] = UserOperations.GetProgressAsync,
             ["progress.continue"] = UserOperations.ContinueAsync,

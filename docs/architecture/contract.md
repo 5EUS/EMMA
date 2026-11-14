@@ -263,9 +263,17 @@ These live in `EMMA.Domain` / `EMMA.Application` and are never seen by plugins.
   with `kind`, `title`, `parent_local_id`, `thumbnail` and `props` (typed JSON through a
   source-generated context); `progress` and `library` keyed by user plus the same pair (`library`
   also names the library the entry is in, with `libraries` holding the names); `app_settings` keyed
-  by user, scope and key; `download_jobs` and `download_items` (the leaves each job stores). Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no assets table
-  (asset bytes live in the bounded cache) and no foreign key from user state to `nodes`: nodes are
+  by user, scope and key; `download_jobs` and `download_items` (the leaves each job stores). Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no foreign key from user state to `nodes`: nodes are
   a cache that may be purged, while progress and library entries must survive that.
+- **Caching** (SQLite plus a cache directory). Reads go through the stores before the plugin; only a miss or a
+  refresh asks the plugin, and nothing expires by itself. `nodes.detailed` is 1 for a row stored from the plugin's
+  `get` and 0 for one seen in a listing or search (which may omit expensive props): `get` answers from rows with 1
+  only. `node_listing_state` and `node_listings` hold a node's complete, ordered child listing, written in one
+  transaction after every page was read, so a half-listed node is never served. Asset bytes (thumbnails and remote
+  assets) live in the bounded cache (`BoundedAssetCache`): LRU, a memory tier in front of a disk tier, a maximum age.
+  Each entry is written to disk when stored, and the `asset_cache` table indexes the files so the cache survives a
+  restart; the directory is configurable (`cache_dir`) so an app can keep it in the OS cache location. Refreshing a
+  node replaces its stored details and listing and drops its cached bytes.
 - All timestamps come from an injected `IClock`; plugins use `host.now-ms`.
 
 ## 9. Limits the host enforces

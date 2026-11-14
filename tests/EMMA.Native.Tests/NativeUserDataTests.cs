@@ -166,9 +166,10 @@ public sealed class NativeUserDataTests
             CallResult afterReload = host.Call("catalog.search", Query("series"));
 
             Assert.Equal(1, refreshed.Ok["checked"]!.GetValue<int>());
-            JsonNode update = Assert.Single(refreshed.Ok["updated"]!.AsArray())!;
-            Assert.Equal(Series, update["node"]!["ref"]!.GetValue<string>());
-            Assert.Equal(70, update["new_children"]!.AsArray().Count);
+
+            // Browsing the series listed all of its children (the first page is only a slice of that), so a refresh
+            // finds nothing the host had not already seen.
+            Assert.Empty(refreshed.Ok["updated"]!.AsArray());
             Assert.Empty(refreshed.Ok["failed"]!.AsArray());
             Assert.Empty(again.Ok["updated"]!.AsArray());
             Assert.Equal("not_found", missing.ErrorCode);

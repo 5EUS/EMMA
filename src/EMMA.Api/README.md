@@ -21,7 +21,7 @@ dotnet run --project src/EMMA.Api -- \
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `Emma:DataDirectory` | local app data `/emma` | database, installed plugins, delegation files, asset cache |
+| `Emma:DataDirectory` | local app data `/emma` | database, installed plugins, delegation files, downloads, asset cache (`cache/assets`) |
 | `Emma:Api:Keys:N:ClientId` / `KeyHash` | none | one entry per client; with none, every request except `/health` is refused |
 | `Emma:Api:KeyHeader` | `x-api-key` | the header the key is read from |
 | `Emma:Api:RateLimit:PerClientPermits` / `PerClientWindowSeconds` | 60 / 60 | requests per client per window |
@@ -58,8 +58,10 @@ A bad value in any setting stops the host at startup with a message naming it.
 | `GET /v1/plugins/{plugin}/suggest?filter=…&text=…&limit=…` | Suggested values for a filter declared with type `lookup`. `filter` is required, `limit` defaults to 10 (at most 50). Answers `suggestions` (`value`, `label`, `description`, `is_default`); `value` is what to send back in the filter's `values`. Text shorter than the filter's `min_query_length` gives none. `501 unsupported` when the plugin does not offer search assist. |
 | `GET /v1/nodes?ref=…&ref=…` | Fetch up to 500 nodes by reference, in the order asked. Unknown ones are omitted. |
 | `POST /v1/nodes/enrich?ref=…&ref=…` | Fills in expensive props (ratings, counts) of nodes already served, such as search results. The plugin's props replace the stored props with the same key and are remembered; nodes the host has not seen are omitted. `501 unsupported` when the plugin does not offer search assist. |
-| `POST /v1/nodes/refresh_cover?ref=…` | Asks the plugin for a node again and stores the answer, so its thumbnail address and details are current. Answers the node. `404` when the host has not seen the node or the plugin no longer has it. |
-| `GET /v1/nodes/children?ref=…` | Children of a node in natural order (chapters, pages, episodes). `cursor`, `limit`. |
+| `POST /v1/nodes/refresh_cover?ref=…` | Asks the plugin for a node again and stores the answer, so its thumbnail address and details are current, and drops the node's cached thumbnail bytes. Answers the node. `404` when the host has not seen the node or the plugin no longer has it. |
+| `GET /v1/nodes/thumbnail?ref=…` | The node's thumbnail image, fetched by the host under the plugin's network permissions and kept in the disk cache. `404` when the host has not seen the node or it has no thumbnail. |
+| `POST /v1/cache/clear` | Empties the cached asset bytes and stored child listings (nodes the host has seen are kept). Answers `cleared`. |
+| `GET /v1/nodes/children?ref=…` | Children of a node in natural order (chapters, pages, episodes). `cursor`, `limit`. For a node whose kind declares children the host lists them completely once and serves every page from that stored listing; the `cursor` it returns is its own and only valid for the same node. |
 | `GET /v1/assets?ref=…&role=…&hint=…` | What a node offers for a role (`image`, `stream`, `subtitle`, …): `index`, `mime`, `size`, `delivery`, `props`. `hint` (optional) is a quality such as `1080p`, passed to the plugin as `emma.quality`; a plugin may ignore it. |
 | `GET /v1/assets/content?ref=…&role=…&index=0&hint=…` | The bytes of one asset. A downloaded leaf (index 0) is served from its stored file before the plugin is asked. A stored or proxied asset also honours a single `Range: bytes=start-end` header. |
 | `PUT /v1/progress?ref=…` | Record the caller's position. Body: `unit` (`page`, `ms`, …), `value`, `total`, `completed`. |

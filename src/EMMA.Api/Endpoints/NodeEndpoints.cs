@@ -3,6 +3,7 @@ using EMMA.Api.Http;
 using EMMA.Api.Mapping;
 using EMMA.Application.Pipelines;
 using EMMA.Domain;
+using EMMA.Runtime;
 
 namespace EMMA.Api.Endpoints;
 
@@ -20,6 +21,28 @@ internal static class NodeEndpoints
         routes.MapGet("/nodes/children", ChildrenAsync);
         routes.MapPost("/nodes/enrich", EnrichAsync);
         routes.MapPost("/nodes/refresh_cover", RefreshCoverAsync);
+        routes.MapGet("/nodes/thumbnail", ThumbnailAsync);
+        routes.MapPost("/cache/clear", ClearCacheAsync);
+    }
+
+    private static async Task<IResult> ThumbnailAsync(HttpContext context, EmmaRuntime runtime, CancellationToken cancellationToken)
+    {
+        Outcome<NodeRef> node = RequestReader.Node(context.Request, "ref");
+        if (!node.IsSuccess)
+        {
+            return ApiResults.Failure(node.Error);
+        }
+
+        Outcome<AssetBytes> image = await runtime.ReadThumbnailAsync(node.Value, cancellationToken).ConfigureAwait(false);
+        return image.IsSuccess
+            ? new AssetContentResult(image.Value.Mime, image.Value.Bytes, range: null, acceptsRanges: false)
+            : ApiResults.Failure(image.Error);
+    }
+
+    private static async Task<IResult> ClearCacheAsync(EmmaRuntime runtime, CancellationToken cancellationToken)
+    {
+        await runtime.ClearCacheAsync(cancellationToken).ConfigureAwait(false);
+        return ApiResults.Ok(new CacheClearedResponse(Cleared: true), ApiJsonContext.Default.CacheClearedResponse);
     }
 
     private static async Task<IResult> GetAsync(HttpContext context, CatalogPipeline catalog, CancellationToken cancellationToken)

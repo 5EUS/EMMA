@@ -81,6 +81,37 @@ internal static class AssetOperations
         return Envelope.Ok(info, NativeJsonContext.Default.ContentInfo, bytes.Bytes.ToArray());
     }
 
+    /// <summary>Reads a node's thumbnail through the host. The JSON describes it; the bytes arrive in the blob.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> ThumbnailAsync(OperationContext context)
+    {
+        Outcome<RefCall> call = context.Read(NativeJsonContext.Default.RefCall);
+        Outcome<NodeRef> node = call.IsSuccess ? RequestParsing.Node(call.Value.Ref, "ref") : Outcome.Failure<NodeRef>(call.Error);
+        if (!node.IsSuccess)
+        {
+            return Envelope.Failure(node.Error);
+        }
+
+        Outcome<AssetBytes> image = await context.Runtime.ReadThumbnailAsync(node.Value, context.CancellationToken).ConfigureAwait(false);
+        if (!image.IsSuccess)
+        {
+            return Envelope.Failure(image.Error);
+        }
+
+        ContentInfo info = new(image.Value.Mime, image.Value.Bytes.Length, RangeStart: null, Total: null, AcceptsRanges: false);
+        return Envelope.Ok(info, NativeJsonContext.Default.ContentInfo, image.Value.Bytes.ToArray());
+    }
+
+    /// <summary>Empties the asset cache and the stored child listings; nodes the host has seen are kept.</summary>
+    /// <param name="context">The call.</param>
+    /// <returns>The response.</returns>
+    public static async Task<NativeResponse> ClearCacheAsync(OperationContext context)
+    {
+        await context.Runtime.ClearCacheAsync(context.CancellationToken).ConfigureAwait(false);
+        return Envelope.Ok(new CacheClearedResponse(Cleared: true), ApiJsonContext.Default.CacheClearedResponse);
+    }
+
     private static Outcome<(NodeRef Node, AssetRole Role, string? Hint)> ReadTarget(Outcome<AssetCall> call)
     {
         if (!call.IsSuccess)

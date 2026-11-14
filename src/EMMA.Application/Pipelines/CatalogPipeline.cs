@@ -11,9 +11,13 @@ namespace EMMA.Application.Pipelines;
 /// </summary>
 /// <param name="gateway">How to reach plugins.</param>
 /// <param name="store">Where seen nodes are remembered.</param>
+/// <param name="listings">Where complete child listings are remembered.</param>
 /// <param name="executor">Runs plugin calls with retries and timeouts.</param>
-public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store, PluginCallExecutor executor)
+public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store, INodeListingPort listings, PluginCallExecutor executor)
 {
+    private const int MaxPagesPerListing = 200;
+    private const string CursorPrefix = "emma:";
+
     /// <summary>Searches one plugin.</summary>
     /// <param name="plugin">The plugin to search.</param>
     /// <param name="query">The search request.</param>
@@ -141,19 +145,117 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
     public Task<Outcome<NodePage>> BrowseRootAsync(PluginId plugin, PageRequest request, CancellationToken cancellationToken) =>
         this.ListAsync(plugin, parent: null, request, cancellationToken);
 
-    /// <summary>Lists the children of a node in natural order: chapters, pages, episodes, tracks.</summary>
+    /// <summary>
+    /// Lists the children of a node in natural order: chapters, pages, episodes, tracks. For a node whose kind declares
+    /// children the host lists them completely once and then serves every page from that stored listing, with cursors
+    /// of its own; <see cref="CacheMode.Refresh"/> lists them again. A kind without children is asked live.
+    /// </summary>
     /// <param name="parent">The parent node.</param>
     /// <param name="request">Cursor and limit.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>A page of nodes, or why listing failed.</returns>
     public Task<Outcome<NodePage>> ChildrenAsync(NodeRef parent, PageRequest request, CancellationToken cancellationToken) =>
-        this.ListAsync(parent.Plugin, parent.Id, request, cancellationToken);
+        this.ChildrenAsync(parent, request, CacheMode.Use, cancellationToken);
 
-    /// <summary>Fetches nodes by reference, in the order requested. Unknown nodes are omitted.</summary>
+    /// <summary>Lists the children of a node, choosing whether a stored listing may answer; see the overload without a mode.</summary>
+    /// <param name="parent">The parent node.</param>
+    /// <param name="request">Cursor and limit.</param>
+    /// <param name="mode">Whether a stored listing may be used.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>A page of nodes, or why listing failed.</returns>
+    public async Task<Outcome<NodePage>> ChildrenAsync(NodeRef parent, PageRequest request, CacheMode mode, CancellationToken cancellationToken)
+    {
+        PluginError? invalid = QueryValidator.ValidatePaging(request.Cursor, request.Limit);
+        if (invalid is not null)
+        {
+            return Outcome.Failure<NodePage>(invalid);
+        }
+
+        bool ours = TryReadOffset(request.Cursor, out int offset);
+        if (request.Cursor is not null && !ours)
+        {
+            // A cursor the host did not make belongs to the plugin; answer it live.
+            return await this.ListAsync(parent.Plugin, parent.Id, request, cancellationToken).ConfigureAwait(false);
+        }
+
+        Node? stored = await store.GetAsync(parent, cancellationToken).ConfigureAwait(false);
+        Outcome<PluginInfo> info = await this.DescribeAsync(parent.Plugin, cancellationToken).ConfigureAwait(false);
+        if (!info.IsSuccess)
+        {
+            return Outcome.Failure<NodePage>(info.Error);
+        }
+
+        if (stored is null || info.Value.FindKind(stored.Kind) is not { Children.Count: > 0 })
+        {
+            return await this.ListAsync(parent.Plugin, parent.Id, request, cancellationToken).ConfigureAwait(false);
+        }
+
+        int limit = request.Limit ?? ContractLimits.MaxNodesPerPage;
+        if (mode == CacheMode.Use && await this.ReadStoredPageAsync(parent, offset, limit, cancellationToken).ConfigureAwait(false) is { } hit)
+        {
+            return Outcome.Success(hit);
+        }
+
+        Outcome<IReadOnlyList<Node>> all = await this.RelistChildrenAsync(parent, cancellationToken).ConfigureAwait(false);
+        return all.IsSuccess
+            ? Outcome.Success(SlicePage(all.Value, offset, limit))
+            : Outcome.Failure<NodePage>(all.Error);
+    }
+
+    /// <summary>
+    /// Asks the plugin for every child of a node, page by page, and replaces the host's stored listing with the answer.
+    /// Each page is validated and remembered like any other listing. Children the plugin no longer lists leave the
+    /// listing but stay in the node store, because progress and libraries may still refer to them.
+    /// </summary>
+    /// <param name="parent">The parent node.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>Every child in the plugin's order, or why the listing could not be completed (nothing is replaced then).</returns>
+    public async Task<Outcome<IReadOnlyList<Node>>> RelistChildrenAsync(NodeRef parent, CancellationToken cancellationToken)
+    {
+        List<Node> all = [];
+        HashSet<string> seen = [];
+        string? cursor = null;
+        for (int page = 0; page < MaxPagesPerListing; page++)
+        {
+            Outcome<NodePage> children = await this.ListAsync(parent.Plugin, parent.Id, new PageRequest(cursor, ContractLimits.MaxNodesPerPage), cancellationToken).ConfigureAwait(false);
+            if (!children.IsSuccess)
+            {
+                return Outcome.Failure<IReadOnlyList<Node>>(children.Error);
+            }
+
+            all.AddRange(children.Value.Items);
+            cursor = children.Value.NextCursor;
+            if (cursor is null)
+            {
+                await listings.ReplaceAsync(parent, [.. all.Select(child => child.Ref.Id)], cancellationToken).ConfigureAwait(false);
+                return Outcome.Success<IReadOnlyList<Node>>(all);
+            }
+
+            if (!seen.Add(cursor))
+            {
+                return Outcome.Failure<IReadOnlyList<Node>>(ErrorCode.Internal, $"Plugin {parent.Plugin} repeated a paging cursor while listing the children of '{parent.Id}'.");
+            }
+        }
+
+        return Outcome.Failure<IReadOnlyList<Node>>(ErrorCode.Unsupported, $"'{parent.Id}' has more than {MaxPagesPerListing} pages of children.");
+    }
+
+    /// <summary>
+    /// Fetches nodes by reference, in the order requested. Unknown nodes are omitted. A node the host already holds in
+    /// full is answered from its store; only the others are asked of the plugin.
+    /// </summary>
     /// <param name="references">The nodes to fetch; they may belong to different plugins.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The nodes found, or why a plugin failed.</returns>
-    public async Task<Outcome<IReadOnlyList<Node>>> GetAsync(IReadOnlyList<NodeRef> references, CancellationToken cancellationToken)
+    public Task<Outcome<IReadOnlyList<Node>>> GetAsync(IReadOnlyList<NodeRef> references, CancellationToken cancellationToken) =>
+        this.GetAsync(references, CacheMode.Use, cancellationToken);
+
+    /// <summary>Fetches nodes by reference, choosing whether stored nodes may answer; see the overload without a mode.</summary>
+    /// <param name="references">The nodes to fetch; they may belong to different plugins.</param>
+    /// <param name="mode">Whether stored nodes may be used.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The nodes found, or why a plugin failed.</returns>
+    public async Task<Outcome<IReadOnlyList<Node>>> GetAsync(IReadOnlyList<NodeRef> references, CacheMode mode, CancellationToken cancellationToken)
     {
         if (references.Count > ContractLimits.MaxIdsPerGet)
         {
@@ -162,10 +264,19 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
                 $"At most {ContractLimits.MaxIdsPerGet} nodes can be fetched at once.");
         }
 
+        List<NodeRef> distinct = [.. references.Distinct()];
         Dictionary<NodeRef, Node> found = [];
-        foreach (IGrouping<PluginId, NodeRef> group in references.GroupBy(reference => reference.Plugin))
+        if (mode == CacheMode.Use)
         {
-            Outcome<IReadOnlyList<Node>> nodes = await this.GetFromPluginAsync(group.Key, [.. group.Distinct()], cancellationToken).ConfigureAwait(false);
+            foreach (Node node in await store.GetManyAsync(distinct, detailedOnly: true, cancellationToken).ConfigureAwait(false))
+            {
+                found[node.Ref] = node;
+            }
+        }
+
+        foreach (IGrouping<PluginId, NodeRef> group in distinct.Where(reference => !found.ContainsKey(reference)).GroupBy(reference => reference.Plugin))
+        {
+            Outcome<IReadOnlyList<Node>> nodes = await this.GetFromPluginAsync(group.Key, [.. group], cancellationToken).ConfigureAwait(false);
             if (!nodes.IsSuccess)
             {
                 return nodes;
@@ -192,6 +303,21 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         return problem is null
             ? info
             : Outcome.Failure<PluginInfo>(ErrorCode.Internal, $"Plugin {plugin} {problem}.");
+    }
+
+    private static bool TryReadOffset(string? cursor, out int offset)
+    {
+        offset = 0;
+        return cursor is null
+            || (cursor.StartsWith(CursorPrefix, StringComparison.Ordinal)
+                && int.TryParse(cursor.AsSpan(CursorPrefix.Length), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out offset));
+    }
+
+    private static NodePage SlicePage(IReadOnlyList<Node> all, int offset, int limit)
+    {
+        List<Node> items = [.. all.Skip(offset).Take(limit)];
+        int next = offset + items.Count;
+        return new NodePage(items, next < all.Count ? $"{CursorPrefix}{next}" : null, all.Count, []);
     }
 
     private static Node MergeProps(Node original, Node enriched)
@@ -289,7 +415,11 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
                 $"Plugin {plugin} returned node '{unrequested.Ref.Id}', which was not requested.");
         }
 
-        await this.RememberAsync(nodes.Value, cancellationToken).ConfigureAwait(false);
+        if (nodes.Value.Count > 0)
+        {
+            await store.UpsertDetailedAsync(nodes.Value, cancellationToken).ConfigureAwait(false);
+        }
+
         return nodes;
     }
 
@@ -336,6 +466,27 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         }
 
         return page;
+    }
+
+    private async Task<NodePage?> ReadStoredPageAsync(NodeRef parent, int offset, int limit, CancellationToken cancellationToken)
+    {
+        StoredListing? listing = await listings.GetPageAsync(parent, offset, limit, cancellationToken).ConfigureAwait(false);
+        if (listing is null)
+        {
+            return null;
+        }
+
+        List<NodeRef> references = [.. listing.Children.Select(id => new NodeRef(parent.Plugin, id))];
+        Dictionary<NodeRef, Node> nodes = (await store.GetManyAsync(references, detailedOnly: false, cancellationToken).ConfigureAwait(false))
+            .ToDictionary(node => node.Ref);
+        if (references.Exists(reference => !nodes.ContainsKey(reference)))
+        {
+            // The listing names a child the node store lost; list again instead of serving a short page.
+            return null;
+        }
+
+        int next = offset + references.Count;
+        return new NodePage([.. references.Select(reference => nodes[reference])], next < listing.Total ? $"{CursorPrefix}{next}" : null, listing.Total, []);
     }
 
     private Task RememberAsync(IReadOnlyList<Node> nodes, CancellationToken cancellationToken) =>

@@ -15,6 +15,7 @@ public sealed class CatalogPipelineTests
     private readonly FakeTimeProvider time = new();
     private readonly FakePluginGateway gateway = new();
     private readonly InMemoryNodeStore store = new();
+    private readonly InMemoryNodeListingStore listings = new();
     private readonly CatalogPipeline pipeline;
 
     /// <summary>Initializes a new instance of the <see cref="CatalogPipelineTests"/> class.</summary>
@@ -22,6 +23,7 @@ public sealed class CatalogPipelineTests
         this.pipeline = new CatalogPipeline(
             this.gateway,
             this.store,
+            this.listings,
             new PluginCallExecutor(
                 new PluginCallOptions(3, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)),
                 this.time));
@@ -297,5 +299,165 @@ public sealed class CatalogPipelineTests
         Assert.Equal(0, this.gateway.EnrichCalls);
     }
 
+    /// <summary>A node fetched in full is answered from the store the next time, with no plugin call.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task GetServesStoredDetailsWithoutAskingThePlugin()
+    {
+        this.gateway.OnGet = (_, ids) => Outcome.Success<IReadOnlyList<PluginNode>>([.. ids.Select(id => TestData.RawNode(id.Value))]);
+
+        await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+        Outcome<IReadOnlyList<Node>> again = await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(1, this.gateway.GetCalls);
+        Assert.Equal(TestData.Ref("a"), Assert.Single(again.Value).Ref);
+    }
+
+    /// <summary>A node only seen in a search is not trusted as full details, so the plugin is asked.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task GetDoesNotTrustNodesSeenOnlyInSearch()
+    {
+        this.gateway.OnSearch = (_, _) => Outcome.Success(TestData.RawPage(null, TestData.RawNode("s1")));
+        this.gateway.OnGet = (_, ids) => Outcome.Success<IReadOnlyList<PluginNode>>([.. ids.Select(id => TestData.RawNode(id.Value))]);
+        await this.pipeline.SearchAsync(TestData.Plugin, TestData.TextQuery("x"), CancellationToken.None).ConfigureAwait(true);
+
+        await this.pipeline.GetAsync([TestData.Ref("s1")], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(1, this.gateway.GetCalls);
+    }
+
+    /// <summary>With several references, only the ones the host does not hold in full go to the plugin, and the order asked is kept.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task GetAsksOnlyForWhatIsMissingAndKeepsOrder()
+    {
+        List<string> asked = [];
+        this.gateway.OnGet = (_, ids) =>
+        {
+            asked.AddRange(ids.Select(id => id.Value));
+            return Outcome.Success<IReadOnlyList<PluginNode>>([.. ids.Select(id => TestData.RawNode(id.Value))]);
+        };
+        await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+        asked.Clear();
+
+        Outcome<IReadOnlyList<Node>> nodes = await this.pipeline.GetAsync([TestData.Ref("b"), TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(["b"], asked);
+        Assert.Equal(["b", "a"], nodes.Value.Select(node => node.Ref.Id.Value));
+    }
+
+    /// <summary>Asking with <see cref="CacheMode.Refresh"/> always calls the plugin and replaces the stored node.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RefreshModeBypassesAndOverwritesTheStore()
+    {
+        string title = "Old";
+        this.gateway.OnGet = (_, ids) => Outcome.Success<IReadOnlyList<PluginNode>>([.. ids.Select(id => TestData.RawNode(id.Value, title: title))]);
+        await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        title = "New";
+        Outcome<IReadOnlyList<Node>> refreshed = await this.pipeline.GetAsync([TestData.Ref("a")], CacheMode.Refresh, CancellationToken.None).ConfigureAwait(true);
+        Outcome<IReadOnlyList<Node>> after = await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(2, this.gateway.GetCalls);
+        Assert.Equal("New", refreshed.Value[0].Title);
+        Assert.Equal("New", after.Value[0].Title);
+    }
+
+    /// <summary>A node's children are listed completely once, then every page is served from the stored listing with the host's own cursors.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ChildrenAreListedOnceThenServedFromTheStore()
+    {
+        await this.store.UpsertAsync([Node("s", "series")], CancellationToken.None).ConfigureAwait(true);
+        this.gateway.OnChildren = (_, parent, request) => request.Cursor is null
+            ? Outcome.Success(TestData.RawPage("p2", TestData.RawNode("c1", "chapter", parent: parent?.Value), TestData.RawNode("c2", "chapter", parent: parent?.Value)))
+            : Outcome.Success(TestData.RawPage(null, TestData.RawNode("c3", "chapter", parent: parent?.Value)));
+
+        Outcome<NodePage> first = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(null, 2), CancellationToken.None).ConfigureAwait(true);
+        int callsAfterFirst = this.gateway.ChildrenCalls;
+        Outcome<NodePage> second = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(first.Value.NextCursor, 2), CancellationToken.None).ConfigureAwait(true);
+        Outcome<NodePage> again = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(null, 2), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(["c1", "c2"], first.Value.Items.Select(node => node.Ref.Id.Value));
+        Assert.Equal("emma:2", first.Value.NextCursor);
+        Assert.Equal(3, first.Value.Total);
+        Assert.Equal(["c3"], second.Value.Items.Select(node => node.Ref.Id.Value));
+        Assert.Null(second.Value.NextCursor);
+        Assert.Equal(["c1", "c2"], again.Value.Items.Select(node => node.Ref.Id.Value));
+        Assert.Equal(2, callsAfterFirst);
+        Assert.Equal(callsAfterFirst, this.gateway.ChildrenCalls);
+    }
+
+    /// <summary>A refresh lists the children again and replaces the stored listing, including removing a child the plugin dropped.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RefreshModeRelistsTheChildren()
+    {
+        await this.store.UpsertAsync([Node("s", "series")], CancellationToken.None).ConfigureAwait(true);
+        List<string> chapters = ["c1", "c2"];
+        this.gateway.OnChildren = (_, parent, _) => Outcome.Success(TestData.RawPage(null, [.. chapters.Select(id => TestData.RawNode(id, "chapter", parent: parent?.Value))]));
+        await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+
+        chapters.Remove("c1");
+        chapters.Add("c3");
+        Outcome<NodePage> refreshed = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CacheMode.Refresh, CancellationToken.None).ConfigureAwait(true);
+        Outcome<NodePage> after = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(["c2", "c3"], refreshed.Value.Items.Select(node => node.Ref.Id.Value));
+        Assert.Equal(["c2", "c3"], after.Value.Items.Select(node => node.Ref.Id.Value));
+        Assert.Equal(2, this.gateway.ChildrenCalls);
+        Assert.NotNull(await this.store.GetAsync(TestData.Ref("c1"), CancellationToken.None).ConfigureAwait(true));
+    }
+
+    /// <summary>A failure part-way through listing stores no listing, so the next read asks the plugin again.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task AFailedListingIsNotStored()
+    {
+        await this.store.UpsertAsync([Node("s", "series")], CancellationToken.None).ConfigureAwait(true);
+        bool fail = true;
+        this.gateway.OnChildren = (_, parent, request) =>
+        {
+            if (request.Cursor is null)
+            {
+                return Outcome.Success(TestData.RawPage("p2", TestData.RawNode("c1", "chapter", parent: parent?.Value)));
+            }
+
+            return fail
+                ? Outcome.Failure<PluginNodePage>(ErrorCode.InvalidArgument, "boom")
+                : Outcome.Success(TestData.RawPage(null, TestData.RawNode("c2", "chapter", parent: parent?.Value)));
+        };
+
+        Outcome<NodePage> failed = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+        fail = false;
+        Outcome<NodePage> retried = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.False(failed.IsSuccess);
+        Assert.Equal(["c1", "c2"], retried.Value.Items.Select(node => node.Ref.Id.Value));
+    }
+
+    /// <summary>A node of a kind with no children, or one the host has not seen, is asked live and keeps the plugin's cursors.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task LeafKindsAndUnseenParentsAreAskedLive()
+    {
+        await this.store.UpsertAsync([Node("p", "page")], CancellationToken.None).ConfigureAwait(true);
+        this.gateway.OnChildren = (_, parent, _) => Outcome.Success(TestData.RawPage("plugin-cursor", TestData.RawNode("x", "page", parent: parent?.Value)));
+
+        Outcome<NodePage> leaf = await this.pipeline.ChildrenAsync(TestData.Ref("p"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+        Outcome<NodePage> unseen = await this.pipeline.ChildrenAsync(TestData.Ref("never"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+        Outcome<NodePage> foreign = await this.pipeline.ChildrenAsync(TestData.Ref("p"), new PageRequest("plugin-cursor"), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal("plugin-cursor", leaf.Value.NextCursor);
+        Assert.Equal("plugin-cursor", unseen.Value.NextCursor);
+        Assert.Equal("plugin-cursor", foreign.Value.NextCursor);
+        Assert.Equal(3, this.gateway.ChildrenCalls);
+    }
+
     private static FilterSpec LookupFilter() => TestData.Filter("tag", FilterType.Lookup) with { Lookup = new LookupSpec(2, 3, 100, false) };
+
+    private static Node Node(string id, string kind) =>
+        new(TestData.Ref(id), NodeKind.Create(kind), id, null, null, []);
 }

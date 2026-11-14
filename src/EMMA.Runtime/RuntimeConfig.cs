@@ -8,12 +8,13 @@ namespace EMMA.Runtime;
 /// <param name="User">The user whose progress and library this host reads and writes.</param>
 /// <param name="Trust">Which plugin signatures are accepted.</param>
 /// <param name="NativeLibraryDirectory">The directory holding the native libraries, when they are not next to the executable.</param>
-public sealed record RuntimeConfig(string DataDirectory, UserId User, TrustPolicy Trust, string? NativeLibraryDirectory = null)
+/// <param name="CacheDirectory">The directory for purgeable cache files, or <see langword="null"/> for <c>cache</c> inside the data directory.</param>
+public sealed record RuntimeConfig(string DataDirectory, UserId User, TrustPolicy Trust, string? NativeLibraryDirectory = null, string? CacheDirectory = null)
 {
     /// <summary>Gets the user used when the document names none.</summary>
     public static UserId DefaultUser { get; } = UserId.Create("local");
 
     /// <summary>Converts the settings to runtime options.</summary>
     /// <returns>The options.</returns>
-    public EmmaRuntimeOptions ToOptions() => new(this.DataDirectory) { Trust = this.Trust, NativeLibraryDirectory = this.NativeLibraryDirectory };
+    public EmmaRuntimeOptions ToOptions() => new(this.DataDirectory) { Trust = this.Trust, NativeLibraryDirectory = this.NativeLibraryDirectory, CacheDirectory = this.CacheDirectory };
 }

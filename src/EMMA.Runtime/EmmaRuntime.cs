@@ -23,6 +23,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
 {
     private readonly StorageInitializer storage;
     private readonly BoundedAssetCache cache;
+    private readonly SqliteNodeListingStore listings;
     private readonly DownloadFileStore downloadFiles;
     private readonly FileSecretBox secretBox;
     private readonly HttpClient? http;
@@ -56,7 +57,12 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
             this.Time);
         this.Installer = new PluginPackageInstaller(this.HostOptions, options.Trust, this.Verifier, this.Registry, this.Time);
 
-        this.cache = new BoundedAssetCache(AssetCacheOptions.Default with { DiskRoot = Path.Combine(data, "cache", "assets") }, this.Time);
+        string cacheRoot = options.CacheDirectory is { } cacheDirectory ? Path.GetFullPath(cacheDirectory) : Path.Combine(data, "cache");
+        this.cache = new BoundedAssetCache(
+            (options.AssetCache ?? AssetCacheOptions.Default) with { DiskRoot = Path.Combine(cacheRoot, "assets") },
+            this.Time,
+            new SqliteAssetCacheIndex(storageOptions));
+        this.listings = new SqliteNodeListingStore(storageOptions, this.Time);
         (IAssetFetcherPort fetcher, this.http) = CreateFetcher(options.FetcherOverride, this.Time);
 
         PluginCallExecutor executor = new(options.CallOptions, this.Time);
@@ -73,11 +79,11 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
             this.Gateway = this.wasmGateway;
         }
 
-        this.Catalog = new CatalogPipeline(this.Gateway, this.Nodes, executor);
+        this.Catalog = new CatalogPipeline(this.Gateway, this.Nodes, this.listings, executor);
         this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, executor, AssetPipelineOptions.Default, this.Time);
         this.Progress = new ProgressPipeline(this.ProgressStore, appSettings, this.Time);
         this.Library = new LibraryPipeline(this.LibraryStore, this.Nodes, this.Time);
-        this.Refresh = new RefreshPipeline(this.Library, this.Nodes, this.Catalog);
+        this.Refresh = new RefreshPipeline(this.Library, this.Nodes, this.Catalog, this.cache);
         this.downloadFiles = new DownloadFileStore(Path.Combine(data, "downloads"));
         this.Downloads = new DownloadPipeline(new SqliteDownloadStore(storageOptions), this.downloadFiles, this.Catalog, this.Assets, this.Nodes, appSettings, this.Time);
         this.AppSettings = new AppSettingsPipeline(appSettings, this.Time);

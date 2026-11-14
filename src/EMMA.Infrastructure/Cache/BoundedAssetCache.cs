@@ -4,46 +4,80 @@ using EMMA.Domain;
 namespace EMMA.Infrastructure.Cache;
 
 /// <summary>
-/// A bounded cache of fetched asset bytes shared by every plugin: least-recently-used
-/// eviction, a memory tier that spills to a disk tier, and a maximum age. All file IO
-/// happens outside the lock, and only IO failures are tolerated (a failed read is a
-/// cache miss; nothing else is swallowed).
+/// A bounded cache of fetched asset bytes shared by every plugin: least-recently-used eviction, a memory tier in front
+/// of a disk tier, and a maximum age. Every entry that fits the disk budget is written to disk when it is stored, so with
+/// an <see cref="IAssetCacheIndexPort"/> the cache survives a restart; the memory tier only keeps hot copies. All file IO
+/// happens outside the lock, and only IO failures are tolerated (a failed read is a cache miss; nothing else is swallowed).
 /// </summary>
 /// <param name="options">The budgets.</param>
 /// <param name="time">The time source used for expiry.</param>
-public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider time) : IAssetCachePort
+/// <param name="index">Remembers the disk files across runs; <see langword="null"/> makes the cache last one run.</param>
+public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider time, IAssetCacheIndexPort? index = null) : IAssetCachePort
 {
     private readonly Lock gate = new();
     private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
     private readonly LinkedList<Entry> recency = new();
+    private Dictionary<string, DateTimeOffset> touched = new(StringComparer.Ordinal);
     private long memoryBytes;
     private long diskBytes;
 
-    private enum Tier
-    {
-        Memory,
-        Spilling,
-        Disk,
-    }
-
     /// <summary>
-    /// Deletes files a previous run left behind. The cache keeps no index across restarts,
-    /// so anything already in the directory is unreachable. Call once at startup.
+    /// Reconciles the cache directory with the index: entries whose file is gone or too old are forgotten, and files no
+    /// entry names are deleted. Without an index (or a disk budget) every file a previous run left is deleted, because
+    /// nothing says what it holds. Call once at startup.
     /// </summary>
     /// <param name="cancellationToken">Cancels the cleanup.</param>
-    /// <returns>A task that completes when the directory is clear.</returns>
-    public Task InitializeAsync(CancellationToken cancellationToken)
+    /// <returns>A task that completes when the directory and index agree.</returns>
+    public async Task InitializeAsync(CancellationToken cancellationToken)
     {
-        if (options.DiskBudgetBytes > 0 && Directory.Exists(options.DiskRoot))
+        if (options.DiskBudgetBytes <= 0 || index is null)
         {
-            foreach (string path in Directory.EnumerateFiles(options.DiskRoot))
+            DeleteFiles(Directory.Exists(options.DiskRoot) ? Directory.EnumerateFiles(options.DiskRoot) : [], cancellationToken);
+            if (index is not null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                TryDelete(path);
+                await index.ClearAsync(cancellationToken).ConfigureAwait(false);
             }
+
+            return;
         }
 
-        return Task.CompletedTask;
+        IReadOnlyList<AssetCacheRecord> records = await index.LoadAsync(cancellationToken).ConfigureAwait(false);
+        DateTimeOffset now = time.GetUtcNow();
+        List<string> staleKeys = [];
+        HashSet<string> kept = new(StringComparer.Ordinal);
+        List<string> toDelete = [];
+        lock (this.gate)
+        {
+            foreach (AssetCacheRecord record in records.OrderBy(record => record.LastUsedAt))
+            {
+                string path = Path.Combine(options.DiskRoot, record.File);
+                if (now - record.FetchedAt > options.MaxAge || !File.Exists(path))
+                {
+                    staleKeys.Add(record.Key);
+                    toDelete.Add(path);
+                    continue;
+                }
+
+                Entry entry = new(record.Key, record.Node, record.Mime, record.FetchedAt, record.Bytes, bytes: null, record.File);
+                this.entries[record.Key] = entry;
+                entry.Node = this.recency.AddFirst(entry);
+                this.diskBytes += record.Bytes;
+                kept.Add(record.File);
+            }
+
+            this.EvictLocked(toDelete, staleKeys);
+        }
+
+        if (Directory.Exists(options.DiskRoot))
+        {
+            DeleteFiles(Directory.EnumerateFiles(options.DiskRoot).Where(path => !kept.Contains(Path.GetFileName(path))), cancellationToken);
+        }
+
+        DeleteFiles(toDelete, cancellationToken);
+        if (staleKeys.Count > 0)
+        {
+            await index.RemoveAsync(staleKeys, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <inheritdoc/>
@@ -51,6 +85,7 @@ public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider ti
     {
         string text = key.ToString();
         Entry entry;
+        List<string> expiredFiles = [];
         lock (this.gate)
         {
             if (!this.entries.TryGetValue(text, out Entry? found))
@@ -58,36 +93,48 @@ public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider ti
                 return null;
             }
 
-            if (time.GetUtcNow() - found.Payload.FetchedAt > options.MaxAge)
+            DateTimeOffset now = time.GetUtcNow();
+            if (now - found.FetchedAt > options.MaxAge)
             {
-                this.RemoveLocked(found);
-                return null;
+                this.RemoveLocked(found, expiredFiles);
+                entry = found;
             }
-
-            this.Touch(found);
-            if (found.Tier != Tier.Disk)
+            else
             {
-                return found.Payload;
-            }
+                this.Touch(found);
+                this.touched[text] = now;
+                if (found.Bytes is { } hot)
+                {
+                    return new AssetPayload(found.Mime, hot, found.FetchedAt);
+                }
 
-            entry = found;
+                entry = found;
+            }
+        }
+
+        if (expiredFiles.Count > 0 || entry.File is null)
+        {
+            await this.ForgetAsync(expiredFiles, [text], cancellationToken).ConfigureAwait(false);
+            return null;
         }
 
         try
         {
-            byte[] bytes = await File.ReadAllBytesAsync(entry.FilePath!, cancellationToken).ConfigureAwait(false);
-            return entry.Payload with { Payload = bytes };
+            byte[] bytes = await File.ReadAllBytesAsync(Path.Combine(options.DiskRoot, entry.File!), cancellationToken).ConfigureAwait(false);
+            return new AssetPayload(entry.Mime, bytes, entry.FetchedAt);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+            List<string> files = [];
             lock (this.gate)
             {
                 if (this.entries.TryGetValue(text, out Entry? current) && ReferenceEquals(current, entry))
                 {
-                    this.RemoveLocked(entry);
+                    this.RemoveLocked(entry, files);
                 }
             }
 
+            await this.ForgetAsync(files, [text], cancellationToken).ConfigureAwait(false);
             return null;
         }
     }
@@ -104,54 +151,74 @@ public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider ti
         }
 
         // Own the bytes: the caller's buffer may be reused or mutated after this returns.
-        AssetPayload owned = payload with { Payload = payload.Payload.ToArray() };
+        byte[] owned = payload.Payload.ToArray();
         string text = key.ToString();
-        string? file = null;
-        if (!inMemory)
+        string? file = onDisk ? await this.TryWriteAsync(owned, cancellationToken).ConfigureAwait(false) : null;
+        if (file is null && !inMemory)
         {
-            file = await this.TryWriteAsync(owned.Payload, cancellationToken).ConfigureAwait(false);
-            if (file is null)
-            {
-                return;
-            }
+            return;
         }
 
-        List<Entry> toSpill;
-        List<string> toDelete;
+        List<string> toDelete = [];
+        List<string> forgotten = [];
+        Dictionary<string, DateTimeOffset> touches = this.Insert(new Entry(text, key.Node, payload.Mime, payload.FetchedAt, size, inMemory ? owned : null, file), toDelete, forgotten);
+
+        DeleteFiles(toDelete, cancellationToken);
+        if (index is null)
+        {
+            return;
+        }
+
+        await index.RemoveAsync(forgotten, cancellationToken).ConfigureAwait(false);
+        if (touches.Count > 0)
+        {
+            await index.TouchAsync(touches, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (file is not null && !forgotten.Contains(text, StringComparer.Ordinal))
+        {
+            await index.UpsertAsync(
+                new AssetCacheRecord(text, key.Node, file, payload.Mime, size, payload.FetchedAt, time.GetUtcNow()),
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <inheritdoc/>
+    public Task RemoveNodeAsync(NodeRef node, CancellationToken cancellationToken)
+    {
+        List<string> files = [];
+        List<string> keys = [];
         lock (this.gate)
         {
-            if (this.entries.TryGetValue(text, out Entry? existing))
+            foreach (Entry entry in this.entries.Values.Where(entry => entry.Owner == node).ToList())
             {
-                toDelete = [];
-                this.RemoveLocked(existing, toDelete);
+                keys.Add(entry.Key);
+                this.RemoveLocked(entry, files);
             }
-            else
-            {
-                toDelete = [];
-            }
-
-            Entry entry = new(text, owned, size, inMemory ? Tier.Memory : Tier.Disk, file);
-            this.entries[text] = entry;
-            entry.Node = this.recency.AddFirst(entry);
-            if (inMemory)
-            {
-                this.memoryBytes += size;
-            }
-            else
-            {
-                this.diskBytes += size;
-            }
-
-            toSpill = this.PlanSpills();
-            this.EvictDiskLocked(toDelete);
         }
 
-        foreach (string path in toDelete)
+        return this.ForgetAsync(files, keys, cancellationToken);
+    }
+
+    /// <inheritdoc/>
+    public async Task ClearAsync(CancellationToken cancellationToken)
+    {
+        List<string> files = [];
+        lock (this.gate)
         {
-            TryDelete(path);
+            foreach (Entry entry in this.entries.Values.ToList())
+            {
+                this.RemoveLocked(entry, files);
+            }
+
+            this.touched.Clear();
         }
 
-        await this.SpillAsync(toSpill, cancellationToken).ConfigureAwait(false);
+        DeleteFiles(files, cancellationToken);
+        if (index is not null)
+        {
+            await index.ClearAsync(cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static void TryDelete(string path)
@@ -166,94 +233,106 @@ public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider ti
         }
     }
 
-    private List<Entry> PlanSpills()
+    private static void DeleteFiles(IEnumerable<string> paths, CancellationToken cancellationToken)
     {
-        List<Entry> victims = [];
-        long projected = this.memoryBytes;
-        LinkedListNode<Entry>? node = this.recency.Last;
-        while (projected > options.MemoryBudgetBytes && node is not null)
+        foreach (string path in paths.ToList())
         {
-            Entry candidate = node.Value;
-            node = node.Previous;
-            if (candidate.Tier == Tier.Memory)
-            {
-                candidate.Tier = Tier.Spilling;
-                victims.Add(candidate);
-                projected -= candidate.Size;
-            }
-        }
-
-        return victims;
-    }
-
-    private async Task SpillAsync(List<Entry> victims, CancellationToken cancellationToken)
-    {
-        foreach (Entry victim in victims)
-        {
-            string? file = options.DiskBudgetBytes > 0 && victim.Size <= options.DiskBudgetBytes
-                ? await this.TryWriteAsync(victim.Payload.Payload, cancellationToken).ConfigureAwait(false)
-                : null;
-
-            List<string> toDelete = [];
-            lock (this.gate)
-            {
-                bool stillCurrent = this.entries.TryGetValue(victim.Key, out Entry? current) && ReferenceEquals(current, victim);
-                if (!stillCurrent)
-                {
-                    if (file is not null)
-                    {
-                        toDelete.Add(file);
-                    }
-                }
-                else if (file is null)
-                {
-                    this.RemoveLocked(victim, toDelete);
-                }
-                else
-                {
-                    this.memoryBytes -= victim.Size;
-                    this.diskBytes += victim.Size;
-                    victim.Tier = Tier.Disk;
-                    victim.FilePath = file;
-                    victim.Payload = victim.Payload with { Payload = ReadOnlyMemory<byte>.Empty };
-                    this.EvictDiskLocked(toDelete);
-                }
-            }
-
-            foreach (string path in toDelete)
-            {
-                TryDelete(path);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            TryDelete(path);
         }
     }
 
-    private void EvictDiskLocked(List<string> filesToDelete)
+    /// <summary>Deletes the files of removed entries and drops their rows.</summary>
+    private async Task ForgetAsync(List<string> files, List<string> keys, CancellationToken cancellationToken)
     {
-        LinkedListNode<Entry>? node = this.recency.Last;
-        while (this.diskBytes > options.DiskBudgetBytes && node is not null)
+        DeleteFiles(files, cancellationToken);
+        if (index is not null && keys.Count > 0)
         {
-            Entry candidate = node.Value;
-            node = node.Previous;
-            if (candidate.Tier == Tier.Disk)
-            {
-                this.RemoveLocked(candidate, filesToDelete);
-            }
+            await index.RemoveAsync(keys, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task<string?> TryWriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    private async Task<string?> TryWriteAsync(byte[] bytes, CancellationToken cancellationToken)
     {
-        string path = Path.Combine(options.DiskRoot, Guid.NewGuid().ToString("n"));
+        string name = Guid.NewGuid().ToString("n");
+        string path = Path.Combine(options.DiskRoot, name);
         try
         {
             Directory.CreateDirectory(options.DiskRoot);
             await File.WriteAllBytesAsync(path, bytes, cancellationToken).ConfigureAwait(false);
-            return path;
+            return name;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             TryDelete(path);
             return null;
+        }
+    }
+
+    /// <summary>Brings both tiers within budget, least recently used first. A memory-only entry leaves when memory is full.</summary>
+    private void EvictLocked(List<string> filesToDelete, List<string> forgottenKeys)
+    {
+        LinkedListNode<Entry>? node = this.recency.Last;
+        while (this.memoryBytes > options.MemoryBudgetBytes && node is not null)
+        {
+            Entry candidate = node.Value;
+            node = node.Previous;
+            if (candidate.Bytes is null)
+            {
+                continue;
+            }
+
+            if (candidate.File is null)
+            {
+                forgottenKeys.Add(candidate.Key);
+                this.RemoveLocked(candidate, filesToDelete);
+            }
+            else
+            {
+                this.memoryBytes -= candidate.Size;
+                candidate.Bytes = null;
+            }
+        }
+
+        node = this.recency.Last;
+        while (this.diskBytes > options.DiskBudgetBytes && node is not null)
+        {
+            Entry candidate = node.Value;
+            node = node.Previous;
+            if (candidate.File is not null)
+            {
+                forgottenKeys.Add(candidate.Key);
+                this.RemoveLocked(candidate, filesToDelete);
+            }
+        }
+    }
+
+    /// <summary>Adds an entry, evicts what no longer fits, and hands back the pending last-use times to flush.</summary>
+    private Dictionary<string, DateTimeOffset> Insert(Entry entry, List<string> filesToDelete, List<string> forgottenKeys)
+    {
+        lock (this.gate)
+        {
+            if (this.entries.TryGetValue(entry.Key, out Entry? existing))
+            {
+                this.RemoveLocked(existing, filesToDelete);
+            }
+
+            this.entries[entry.Key] = entry;
+            entry.Node = this.recency.AddFirst(entry);
+            if (entry.Bytes is not null)
+            {
+                this.memoryBytes += entry.Size;
+            }
+
+            if (entry.File is not null)
+            {
+                this.diskBytes += entry.Size;
+            }
+
+            this.EvictLocked(filesToDelete, forgottenKeys);
+            Dictionary<string, DateTimeOffset> touches = this.touched;
+            this.touched = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+            return touches;
         }
     }
 
@@ -263,7 +342,7 @@ public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider ti
         entry.Node = this.recency.AddFirst(entry);
     }
 
-    private void RemoveLocked(Entry entry, List<string>? filesToDelete = null)
+    private void RemoveLocked(Entry entry, List<string> filesToDelete)
     {
         this.entries.Remove(entry.Key);
         if (entry.Node is { List: not null } node)
@@ -271,38 +350,35 @@ public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider ti
             this.recency.Remove(node);
         }
 
-        if (entry.Tier == Tier.Disk)
-        {
-            this.diskBytes -= entry.Size;
-            if (entry.FilePath is not null)
-            {
-                if (filesToDelete is null)
-                {
-                    TryDelete(entry.FilePath);
-                }
-                else
-                {
-                    filesToDelete.Add(entry.FilePath);
-                }
-            }
-        }
-        else
+        if (entry.Bytes is not null)
         {
             this.memoryBytes -= entry.Size;
         }
+
+        if (entry.File is not null)
+        {
+            this.diskBytes -= entry.Size;
+            filesToDelete.Add(Path.Combine(options.DiskRoot, entry.File));
+        }
+
+        this.touched.Remove(entry.Key);
     }
 
-    private sealed class Entry(string key, AssetPayload payload, long size, Tier tier, string? filePath)
+    private sealed class Entry(string key, NodeRef owner, string mime, DateTimeOffset fetchedAt, long size, byte[]? bytes, string? file)
     {
         public string Key { get; } = key;
 
-        public AssetPayload Payload { get; set; } = payload;
+        public NodeRef Owner { get; } = owner;
+
+        public string Mime { get; } = mime;
+
+        public DateTimeOffset FetchedAt { get; } = fetchedAt;
 
         public long Size { get; } = size;
 
-        public Tier Tier { get; set; } = tier;
+        public byte[]? Bytes { get; set; } = bytes;
 
-        public string? FilePath { get; set; } = filePath;
+        public string? File { get; } = file;
 
         public LinkedListNode<Entry>? Node { get; set; }
     }

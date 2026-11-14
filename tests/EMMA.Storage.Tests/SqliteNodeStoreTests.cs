@@ -182,4 +182,36 @@ public sealed class SqliteNodeStoreTests : StorageTestBase
 
         Assert.Equal(0L, await this.ScalarAsync("SELECT COUNT(*) FROM nodes"));
     }
+
+    /// <summary>A batch read returns the stored nodes in the order asked and skips the unknown.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task GetManyReturnsStoredNodesInOrder()
+    {
+        await this.Store.UpsertAsync([MakeNode("a"), MakeNode("b"), MakeNode("c")], Ct);
+
+        IReadOnlyList<Node> found = await this.Store.GetManyAsync([TestData.Ref("c"), TestData.Ref("missing"), TestData.Ref("a")], detailedOnly: false, Ct);
+
+        Assert.Equal(["c", "a"], found.Select(node => node.Ref.Id.Value));
+    }
+
+    /// <summary>Only nodes stored from a full read count as detailed, and a listing that changes one resets it.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task DetailedFlagFollowsWhatWasStored()
+    {
+        Node listed = MakeNode("a");
+        await this.Store.UpsertAsync([listed], Ct);
+        Assert.Empty(await this.Store.GetManyAsync([TestData.Ref("a")], detailedOnly: true, Ct));
+
+        Node full = listed with { Props = [new Prop("acme.count", PropValue.FromWholeNumber(5))] };
+        await this.Store.UpsertDetailedAsync([full], Ct);
+        Assert.Single(await this.Store.GetManyAsync([TestData.Ref("a")], detailedOnly: true, Ct));
+
+        // The same node seen in a listing again keeps its detail; a different one loses it.
+        await this.Store.UpsertAsync([full], Ct);
+        Assert.Single(await this.Store.GetManyAsync([TestData.Ref("a")], detailedOnly: true, Ct));
+        await this.Store.UpsertAsync([listed], Ct);
+        Assert.Empty(await this.Store.GetManyAsync([TestData.Ref("a")], detailedOnly: true, Ct));
+    }
 }

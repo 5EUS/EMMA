@@ -212,6 +212,68 @@ public sealed class AssetPipelineTests
         Assert.Equal(2, this.gateway.ReadCalls);
     }
 
+    /// <summary>A node's thumbnail is fetched once through the host and then served from the cache.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ThumbnailIsFetchedOnceThenCached()
+    {
+        await this.store.UpsertAsync([Thumbnailed("n", "img.example.com")], CancellationToken.None).ConfigureAwait(true);
+
+        Outcome<AssetPayload> first = await this.pipeline.GetThumbnailAsync(TestData.Ref("n"), CancellationToken.None).ConfigureAwait(true);
+        Outcome<AssetPayload> second = await this.pipeline.GetThumbnailAsync(TestData.Ref("n"), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal([1, 2, 3, 4], first.Value.Payload.ToArray());
+        Assert.Equal("image/png", second.Value.Mime);
+        Assert.Equal(1, this.fetcher.Calls);
+    }
+
+    /// <summary>A node whose thumbnail address changed is fetched again, because the cache key includes the address.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ChangedThumbnailAddressMissesTheCache()
+    {
+        await this.store.UpsertAsync([Thumbnailed("n", "img.example.com", "/old.png")], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.GetThumbnailAsync(TestData.Ref("n"), CancellationToken.None).ConfigureAwait(true);
+
+        await this.store.UpsertAsync([Thumbnailed("n", "img.example.com", "/new.png")], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.GetThumbnailAsync(TestData.Ref("n"), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(2, this.fetcher.Calls);
+    }
+
+    /// <summary>An unseen node and a node without a thumbnail are both not found, and nothing is fetched.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ThumbnailOfUnseenOrBareNodesIsNotFound()
+    {
+        await this.store.UpsertAsync([new Node(TestData.Ref("bare"), NodeKind.Create("series"), "t", null, null, [])], CancellationToken.None).ConfigureAwait(true);
+
+        Outcome<AssetPayload> unseen = await this.pipeline.GetThumbnailAsync(TestData.Ref("never"), CancellationToken.None).ConfigureAwait(true);
+        Outcome<AssetPayload> bare = await this.pipeline.GetThumbnailAsync(TestData.Ref("bare"), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(ErrorCode.NotFound, unseen.Error?.Code);
+        Assert.Equal(ErrorCode.NotFound, bare.Error?.Code);
+        Assert.Equal(0, this.fetcher.Calls);
+    }
+
+    /// <summary>A fetch the plugin's network policy refuses is returned as the failure it is, and is not cached.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ThumbnailFetchFailuresAreNotCached()
+    {
+        await this.store.UpsertAsync([Thumbnailed("n", "blocked.example.com")], CancellationToken.None).ConfigureAwait(true);
+        this.fetcher.OnFetch = _ => Outcome.Failure<AssetPayload>(ErrorCode.Unavailable, "blocked");
+
+        Outcome<AssetPayload> first = await this.pipeline.GetThumbnailAsync(TestData.Ref("n"), CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.GetThumbnailAsync(TestData.Ref("n"), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.False(first.IsSuccess);
+        Assert.Equal(2, this.fetcher.Calls);
+    }
+
+    private static Node Thumbnailed(string id, string host, string path = "/t.png") =>
+        new(TestData.Ref(id), NodeKind.Create("series"), id, null, TestData.Url(host, path), []);
+
     private static Asset Remote(string host, string path = "/a.png") =>
         new("image/png", new RemoteDelivery(TestData.Url(host, path), [], null), null, []);
 

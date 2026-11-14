@@ -36,6 +36,38 @@ internal sealed class SqliteDatabase(StorageOptions options)
         }
     }
 
+    /// <summary>Runs a query on an existing connection and maps every row.</summary>
+    /// <typeparam name="T">The mapped row type.</typeparam>
+    /// <param name="connection">The open connection.</param>
+    /// <param name="sql">The SQL text.</param>
+    /// <param name="bind">Binds the parameters, or <see langword="null"/>.</param>
+    /// <param name="map">Maps the current row.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The mapped rows, in query order.</returns>
+    public static async Task<IReadOnlyList<T>> QueryAsync<T>(
+        SqliteConnection connection,
+        string sql,
+        Action<SqliteParameterCollection>? bind,
+        Func<SqliteDataReader, T> map,
+        CancellationToken cancellationToken)
+    {
+        SqliteCommand command = CreateCommand(connection, sql, bind);
+        await using (command.ConfigureAwait(false))
+        {
+            SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            await using (reader.ConfigureAwait(false))
+            {
+                List<T> rows = [];
+                while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    rows.Add(map(reader));
+                }
+
+                return rows;
+            }
+        }
+    }
+
     /// <summary>Opens a connection. The caller disposes it.</summary>
     /// <param name="cancellationToken">Cancels the open.</param>
     /// <returns>An open connection.</returns>
@@ -84,21 +116,7 @@ internal sealed class SqliteDatabase(StorageOptions options)
         SqliteConnection connection = await this.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using (connection.ConfigureAwait(false))
         {
-            SqliteCommand command = CreateCommand(connection, sql, bind);
-            await using (command.ConfigureAwait(false))
-            {
-                SqliteDataReader reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-                await using (reader.ConfigureAwait(false))
-                {
-                    List<T> rows = [];
-                    while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-                    {
-                        rows.Add(map(reader));
-                    }
-
-                    return rows;
-                }
-            }
+            return await QueryAsync(connection, sql, bind, map, cancellationToken).ConfigureAwait(false);
         }
     }
 

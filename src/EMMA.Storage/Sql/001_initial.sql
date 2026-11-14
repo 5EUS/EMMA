@@ -7,10 +7,48 @@ CREATE TABLE nodes (
     thumbnail       TEXT,
     props           TEXT    NOT NULL,
     updated_at      INTEGER NOT NULL,
+    -- 1 when the row came from the plugin's `get` (full details), 0 when it came from a listing or search, which may
+    -- leave out expensive props. A later listing that changes the node resets it; one that does not change it keeps it.
+    detailed        INTEGER NOT NULL DEFAULT 0 CHECK (detailed IN (0, 1)),
     PRIMARY KEY (plugin_id, local_id)
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX idx_nodes_parent ON nodes (plugin_id, parent_local_id);
+
+-- A node's children as the host last listed them, in the plugin's order. The state row exists only once a listing is
+-- complete, so a half-written listing is never served. Child rows live in `nodes`; replacing a listing never deletes
+-- them (progress and library entries still refer to nodes a plugin has stopped listing).
+CREATE TABLE node_listing_state (
+    plugin_id       TEXT    NOT NULL,
+    parent_local_id TEXT    NOT NULL,
+    total           INTEGER NOT NULL CHECK (total >= 0),
+    listed_at       INTEGER NOT NULL,
+    PRIMARY KEY (plugin_id, parent_local_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE node_listings (
+    plugin_id       TEXT    NOT NULL,
+    parent_local_id TEXT    NOT NULL,
+    position        INTEGER NOT NULL CHECK (position >= 0),
+    local_id        TEXT    NOT NULL,
+    PRIMARY KEY (plugin_id, parent_local_id, position),
+    FOREIGN KEY (plugin_id, parent_local_id) REFERENCES node_listing_state (plugin_id, parent_local_id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+
+-- What the disk asset cache holds, so it survives a restart. `file` is a name inside the cache directory (never a
+-- path, so the directory can move). The cache is purgeable: deleting rows and files loses nothing but speed.
+CREATE TABLE asset_cache (
+    cache_key    TEXT    NOT NULL PRIMARY KEY,
+    plugin_id    TEXT    NOT NULL,
+    local_id     TEXT    NOT NULL,
+    file         TEXT    NOT NULL,
+    mime         TEXT    NOT NULL,
+    bytes        INTEGER NOT NULL CHECK (bytes >= 0),
+    fetched_at   INTEGER NOT NULL,
+    last_used_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX idx_asset_cache_node ON asset_cache (plugin_id, local_id);
 
 CREATE TABLE progress (
     user_id    TEXT    NOT NULL,

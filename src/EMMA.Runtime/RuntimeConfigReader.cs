@@ -43,7 +43,8 @@ public static class RuntimeConfigReader
         }
 
         string? nativeDirectory = document.NativeDir is null ? null : Path.GetFullPath(document.NativeDir);
-        return Outcome.Success(new RuntimeConfig(Path.GetFullPath(dataDirectory), user, trust.Value, nativeDirectory));
+        string? cacheDirectory = string.IsNullOrWhiteSpace(document.CacheDir) ? null : Path.GetFullPath(document.CacheDir);
+        return Outcome.Success(new RuntimeConfig(Path.GetFullPath(dataDirectory), user, trust.Value, nativeDirectory, cacheDirectory));
     }
 
     private static Outcome<TrustPolicy> ReadTrust(TrustDocument? trust)
