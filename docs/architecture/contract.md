@@ -468,7 +468,11 @@ asks the host for its parts (`GET /v1/stream/{session}/{part}` over HTTP, a loop
 - **Direct files** are passed through with byte ranges and not cached. A plugin-served file is read through `read` in
   1 MiB pieces as the player consumes it.
 - **Segments** (whole pieces up to 32 MiB) are fetched once and kept in the asset cache, so a seek back or a second
-  player costs no upstream request. Manifests are kept too, for repair.
+  player costs no upstream request. A ranged request for a segment (ffmpeg sends `bytes=0-` for every one) is answered
+  from the whole piece, so it does not keep the segment from being cached; one too big to keep is passed through with its
+  range. Manifests are kept too, for repair, but fetched again on every request, because a live playlist changes.
+- **Part addresses** are a number and the file extension of what they lead to (`2.ts`, `1.m3u8`): the number is all the
+  host reads, but a strict HLS client such as plain ffmpeg refuses a segment address that does not end in a known extension.
 - **Repair.** When a playlist cannot be fetched (the network dropped mid-playback, a player reloads a live playlist), the
   last copy is served cut down to what the cache still holds: a segment that is not cached is dropped and the gap marked
   `#EXT-X-DISCONTINUITY`, a master playlist keeps the variants that are cached, and a media playlist gets
