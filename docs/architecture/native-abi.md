@@ -151,8 +151,11 @@ The same two scripts take a mobile rid, and two more bundle the result for an ap
 | `ios-arm64`, `iossimulator-arm64`, `iossimulator-x64` | static `libemma_native.a` and `libemma_wasm.a` | macOS with Xcode |
 
 - `sh scripts/package-android.sh [output-dir] [rid...]` lays out `jniLibs/<abi>/` with `libemma_native.so`,
-  `libemma_wasm.so` and `libe_sqlite3.so` (taken from the `SQLitePCLRaw.lib.e_sqlite3.android` package, because the
-  desktop build of SQLite does not load on Android). It fails if a library is not 16 KiB page aligned, which Google Play
+  `libemma_wasm.so`, `libe_sqlite3.so` (taken from the `SQLitePCLRaw.lib.e_sqlite3.android` package, because the
+  desktop build of SQLite does not load on Android), and `libssl.so` and `libcrypto.so`. The last two are OpenSSL, built
+  from a pinned, checksummed source tarball with the NDK (needs `perl` and `make`): the `linux-bionic` NativeAOT runtime
+  links .NET's OpenSSL crypto shim, which aborts the process at the first SHA-256, RSA, random or TLS call when it cannot
+  `dlopen` a `libssl`, and an app cannot use the system one. It fails if a library is not 16 KiB page aligned, which Google Play
   requires for apps targeting Android 15 or later.
 - `sh scripts/package-ios.sh [output-dir] [rid...]` makes `EmmaNative.xcframework` and `EmmaWasm.xcframework`.
 - A mobile publish restores by itself, into `obj/mobile-<rid>/` (`EmmaMobileRid` in `Directory.Build.props`), because the
