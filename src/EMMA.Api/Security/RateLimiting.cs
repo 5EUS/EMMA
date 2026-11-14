@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 
 using EMMA.Api.Configuration;
+using EMMA.Api.Endpoints;
 using EMMA.Api.Http;
 
 using Microsoft.AspNetCore.RateLimiting;
@@ -37,6 +38,10 @@ internal static class RateLimiting
         };
     }
 
+    // A player asks for a part of a stream every few seconds (a playlist, then a segment each), which no request allowance
+    // is sized for. The client is still identified, the session name is unguessable, and the concurrency limit still applies.
+    private static bool IsStreamPart(HttpContext context) => context.Request.Path.StartsWithSegments(PlaybackEndpoints.StreamPath, StringComparison.Ordinal);
+
     private static PartitionedRateLimiter<HttpContext> Concurrency(RateLimitSettings settings) =>
         PartitionedRateLimiter.Create<HttpContext, string>(context => context.GetClient() is null
             ? RateLimitPartition.GetNoLimiter(Anonymous)
@@ -48,7 +53,7 @@ internal static class RateLimiting
             }));
 
     private static PartitionedRateLimiter<HttpContext> PerClient(RateLimitSettings settings) =>
-        PartitionedRateLimiter.Create<HttpContext, string>(context => context.GetClient() is { } client
+        PartitionedRateLimiter.Create<HttpContext, string>(context => context.GetClient() is { } client && !IsStreamPart(context)
             ? RateLimitPartition.GetFixedWindowLimiter(client.ClientId, _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = settings.PerClientPermits,

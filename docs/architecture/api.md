@@ -55,6 +55,15 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
   proxies (`X-Forwarded-For` is caller-controlled), so it waits for a deployment that needs it.
 - TODO(rewrite): TLS is left to the deployment (reverse proxy or Kestrel certificate configuration). The host does not
   refuse plain HTTP on a non-loopback address.
+- Playing media. `GET /v1/playback` is the typed view of a node's streams, subtitles, audio tracks and chapters, and
+  `POST /v1/playback/open` plus `GET /v1/stream/{session}/{part}` give a player an address for one of them, so a
+  stream that needs headers, cookies or the plugin itself plays without the client ever learning where it lives (see
+  `contract.md` section 13). A stream is a *session*: an unguessable name that lives six hours past its last use, at most
+  32 at once, and that registers up to 50,000 addresses (the segments of the playlists it has served). Only HLS and DASH
+  manifests are rewritten; any other file is passed through with byte ranges. The part route is exempt from the per-client
+  request allowance (a player asks for a part every few seconds), but not from authentication or the global concurrency
+  limit. A part is never served for an address the plugin could not itself reach: every hop of every fetch is checked
+  against the plugin's network permissions, and credential headers do not follow a playlist to another host.
 - Resolutions are cached. `GET /v1/assets` and `GET /v1/assets/content` reuse what the plugin said a node resolves to
   (per node, role and `hint`) for five minutes, or until shortly before a link says it expires, so reading every page of
   a chapter, or every range of a proxied video, asks the plugin once. Only remote links and proxied tokens are kept

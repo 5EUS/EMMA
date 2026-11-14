@@ -1,14 +1,9 @@
-using System.Globalization;
-using System.Net.Http.Headers;
-
 using EMMA.Api.Contracts;
 using EMMA.Api.Http;
 using EMMA.Api.Mapping;
 using EMMA.Application.Pipelines;
 using EMMA.Domain;
 using EMMA.Runtime;
-
-using Microsoft.Extensions.Primitives;
 
 namespace EMMA.Api.Endpoints;
 
@@ -19,8 +14,6 @@ namespace EMMA.Api.Endpoints;
 /// </summary>
 internal static class AssetEndpoints
 {
-    private const int MaxIndex = 1023;
-
     /// <summary>Maps the endpoints.</summary>
     /// <param name="routes">The route builder, already under <c>/v1</c>.</param>
     public static void Map(IEndpointRouteBuilder routes)
@@ -32,7 +25,7 @@ internal static class AssetEndpoints
     private static async Task<IResult> ListAsync(HttpContext context, AssetPipeline assets, CancellationToken cancellationToken)
     {
         Outcome<(NodeRef Node, AssetRole Role)> target = ReadTarget(context.Request);
-        Outcome<string?> hint = ReadHint(context.Request);
+        Outcome<string?> hint = RequestReader.Hint(context.Request);
         if (!target.IsSuccess || !hint.IsSuccess)
         {
             return ApiResults.Failure((target.Error ?? hint.Error)!);
@@ -47,15 +40,15 @@ internal static class AssetEndpoints
     private static async Task<IResult> ContentAsync(HttpContext context, EmmaRuntime runtime, CancellationToken cancellationToken)
     {
         Outcome<(NodeRef Node, AssetRole Role)> target = ReadTarget(context.Request);
-        Outcome<int> index = ReadIndex(context.Request);
-        Outcome<string?> hint = ReadHint(context.Request);
+        Outcome<int> index = RequestReader.Index(context.Request);
+        Outcome<string?> hint = RequestReader.Hint(context.Request);
         if (!target.IsSuccess || !index.IsSuccess || !hint.IsSuccess)
         {
             return ApiResults.Failure((target.Error ?? index.Error ?? hint.Error)!);
         }
 
         Outcome<AssetBytes> content = await runtime
-            .ReadAssetAsync(target.Value.Node, target.Value.Role, index.Value, ReadRange(context.Request), hint.Value, cancellationToken)
+            .ReadAssetAsync(target.Value.Node, target.Value.Role, index.Value, RequestReader.Range(context.Request), hint.Value, cancellationToken)
             .ConfigureAwait(false);
         if (!content.IsSuccess)
         {
@@ -84,45 +77,5 @@ internal static class AssetEndpoints
         return AssetRole.TryCreate(role.Value, out AssetRole parsed)
             ? Outcome.Success((node.Value, parsed))
             : Outcome.Failure<(NodeRef, AssetRole)>(ErrorCode.InvalidArgument, "'role' is not a valid asset role.");
-    }
-
-    private static Outcome<string?> ReadHint(HttpRequest request)
-    {
-        Outcome<string?> hint = RequestReader.Optional(request, "hint");
-        return hint.IsSuccess ? RequestParsing.Hint(hint.Value) : hint;
-    }
-
-    private static Outcome<int> ReadIndex(HttpRequest request)
-    {
-        StringValues values = request.Query["index"];
-        if (values.Count == 0)
-        {
-            return Outcome.Success(0);
-        }
-
-        return values.Count == 1
-            && int.TryParse(values[0], NumberStyles.None, CultureInfo.InvariantCulture, out int index)
-            && index <= MaxIndex
-            ? Outcome.Success(index)
-            : Outcome.Failure<int>(ErrorCode.InvalidArgument, $"'index' must be a whole number from 0 to {MaxIndex}.");
-    }
-
-    /// <summary>Reads a single <c>bytes=start-</c> or <c>bytes=start-end</c> range; anything else is ignored and the whole asset is sent.</summary>
-    private static ByteRange? ReadRange(HttpRequest request)
-    {
-        if (!RangeHeaderValue.TryParse(request.Headers.Range.ToString(), out RangeHeaderValue? header)
-            || !string.Equals(header.Unit, "bytes", StringComparison.OrdinalIgnoreCase)
-            || header.Ranges.Count != 1)
-        {
-            return null;
-        }
-
-        RangeItemHeaderValue item = header.Ranges.Single();
-        if (item.From is not { } start || (item.To is { } end && end < start))
-        {
-            return null;
-        }
-
-        return new ByteRange(start, item.To is { } last ? last - start + 1 : null);
     }
 }

@@ -57,6 +57,7 @@ internal static class ApiHost
         PluginEndpoints.Map(v1);
         NodeEndpoints.Map(v1);
         AssetEndpoints.Map(v1);
+        PlaybackEndpoints.Map(v1);
         ProgressEndpoints.Map(v1);
         LibraryEndpoints.Map(v1);
         AppSettingsEndpoints.Map(v1);

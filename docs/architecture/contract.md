@@ -121,20 +121,21 @@ Keys starting `emma.` are reserved. Plugin-specific data uses the author's own p
 | `emma.duration-ms` | integer | Playback length |
 | `emma.reading-direction` | text | `ltr`, `rtl`, `vertical` |
 
-Asset props: `emma.quality`, `emma.language`, `emma.width`, `emma.height`, `emma.live`,
-`emma.default`, `emma.drm.scheme`, `emma.drm.license-url`.
+Asset props: `emma.quality`, `emma.language`, `emma.label`, `emma.width`, `emma.height`, `emma.bitrate`,
+`emma.live`, `emma.default`, `emma.drm.scheme`, `emma.drm.license-url`, `emma.duration-ms`, `emma.start-ms`
+and `emma.end-ms`. The host checks their types on every asset (section 13).
 
 ### Profiles defined for v1
 
 | Profile | Shape | Roles |
 | --- | --- | --- |
 | `emma.profile.paged@1` | container kinds (series, chapter) ending in leaf page nodes, children in reading order | `image` (mime `image/*`) |
-| `emma.profile.video@1` | container kinds (series, season) ending in playable nodes | `stream` (an adaptive manifest or a direct file), optional `subtitle`, `audio` |
-| `emma.profile.audio@1` | album or show ending in track nodes | `audio` |
+| `emma.profile.video@1` | container kinds (series, season) ending in playable nodes | `stream` (an adaptive manifest or a direct file), optional `subtitle`, `audio`, `chapters` |
+| `emma.profile.audio@1` | album or show ending in track nodes | `audio`, optional `chapters` |
 | `emma.profile.text@1` | book or feed ending in article or chapter nodes | `text` (`text/html` or `text/markdown`) |
 
-Only the first two exist in `main`. The other two are listed to prove the model needs no
-core change; they are not built in v1.
+The first three are built (section 13 for video and audio); `text` is listed to prove the model needs no core
+change and has no host support beyond reading `text` assets.
 
 ## 5. Capabilities, versioning and optional packs
 
@@ -149,8 +150,8 @@ core change; they are not built in v1.
 - Resulting growth rule: the base world is a major-version event to change. Everything else
   is an optional interface or a new `emma.*` prop.
 
-Whether media-type behavior ever needs optional WIT interfaces is an open question (see
-section 11). Section 6 shows `main` needs none.
+Whether media-type behavior ever needs optional WIT interfaces was settled in phase 8 (section 11): video and audio
+needed none.
 
 ## 6. Mapping from `main`
 
@@ -166,7 +167,8 @@ section 11). Section 6 shows `main` needs none.
 | `StreamInfo` (`playlist_uri`, headers, cookies) | `asset` with `remote(url, headers)`; cookies are a `Cookie` header |
 | `is_live`, `stream_type` | `emma.live`, and the manifest `mime` |
 | `drm_protected`, `drm_scheme` | `emma.drm.scheme`, `emma.drm.license-url` |
-| audio and subtitle tracks, default track ids | extra assets for roles `audio`/`subtitle`, told apart by `emma.language`; `emma.default` |
+| audio and subtitle tracks, default track ids | extra assets for roles `audio`/`subtitle`, told apart by `emma.language` and `emma.label`; `emma.default` |
+| audio queue, chapter markers | the queue is the parent's `children`; a marker is an asset of role `chapters` with `emma.start-ms` (section 13) |
 | `GetSegment` (bytes through gRPC or base64 JSON) | removed: the client player reads the adaptive manifest; plugin-only data uses `proxied` plus `read` (raw bytes) |
 | `Search` (query only reaches the plugin) | `catalog.search(query)` with kinds, typed filters, sort, cursor |
 | `SearchSuggestions`, `EnrichSearchItems` | optional `search-assist.suggest(filter-id, text, limit)` and `enrich`. Suggest completes one `lookup` filter and returns `choice`s (the value to send back plus a label), so a client can turn the typed text into a filter token. Title-text completion is gone: a plugin that wants it declares a lookup filter |
@@ -258,7 +260,8 @@ These live in `EMMA.Domain` / `EMMA.Application` and are never seen by plugins.
   paged or video branch. A leaf is stored once however many jobs cover it, a stored leaf is
   served before the plugin is asked, and a job a killed process left running is queued again.
   What the executor never does is interpret the asset: a video stream that is a playlist of
-  segments is not downloadable until the video pack (phase 8) says what to fetch.
+  segments is not downloadable (the stream proxy of section 13 reads playlists to play them, and nothing yet reads one to
+  store it), while a direct file or an audio track within the asset size limit (64 MiB) is.
 - **Storage** (built in phase 3, SQLite with STRICT tables): `nodes` keyed `(plugin_id, local_id)`
   with `kind`, `title`, `parent_local_id`, `thumbnail` and `props` (typed JSON through a
   source-generated context); `progress` and `library` keyed by user plus the same pair (`library`
@@ -330,7 +333,12 @@ Decided by the owner (2026-11-07):
    interfaces would have no functions to carry. Paged, video, audio and text are published
    profiles (vocabulary plus host validation). Optional WIT interfaces are reserved for new
    behavior, with `search-assist` as the working example. Revisit if a media type ever needs
-   a call that `children`/`resolve` cannot express.
+   a call that `children`/`resolve` cannot express. **Phase 8 confirmed this** (2026-11-13): the video and audio packs
+   are profiles, with typed props the host validates and a typed playback view the host builds. Nothing in streams,
+   quality choice, subtitles, audio tracks, DRM, live or chapter markers needs a plugin call that `children` and
+   `resolve` cannot make, so there is no `emma:video` or `emma:audio` WIT package and the vendored copies of the WIT
+   did not change. The one candidate was a DRM `license` call, which has no client to use it (a client needs a CDM the
+   player lacks); add it as an optional interface when one does.
 2. **Settings and secrets stay in v1** (`host.setting`, `setting-spec`). Records are frozen,
    so adding them later would be a major version. In phase 5 (2026-11-07) the owner chose to
    extend the base contract while it is still unreleased, so settings are typed; see
@@ -380,3 +388,99 @@ plugin's snapshot, and no operation returns it: a client sees that it is set and
 thing that makes the secrets readable, so a backup of `emma.db` needs `secret.key` beside it; without the key a secret
 reads as not set and the user is asked again. The key file protects against a copied database, not against someone who
 can read the user's own files; keeping the key in the platform keychain is a later step.
+
+## 13. Video and audio
+
+Phase 8 built the `emma.profile.video@1` and `emma.profile.audio@1` profiles of section 4. There is no WIT for them
+(section 11): a plugin serves a tree and resolves nodes, and the profile is the vocabulary below.
+
+### Shape
+
+```text
+video:  series -> season -> episode     episode roles [stream, subtitle, audio, chapters]
+audio:  album  -> track                 track   roles [audio, chapters]
+```
+
+Kinds and nesting are the plugin's; what makes a kind playable is the roles it declares. The host plans a node as
+`stream` when its kind declares that role, otherwise as `audio`; a kind with neither has nothing to play.
+
+| Role | Assets | Meaning |
+| --- | --- | --- |
+| `stream` | one or more | alternatives of the node's own video: an adaptive manifest (`application/vnd.apple.mpegurl`, `application/dash+xml`) or a direct file (`video/mp4`), told apart by `emma.quality`, `emma.width`, `emma.height`, `emma.bitrate` |
+| `audio` | one or more | for an audio node, alternatives of its own audio (files, bitrates); for a video node, alternate tracks (dubs, commentary), told apart by `emma.language` and `emma.label` |
+| `subtitle` | one per language | `text/vtt` and the like, by `emma.language`, `emma.label` |
+| `chapters` | one per marker | `mime` `text/plain`, an empty `inline` payload; the marker is the props |
+
+The hint of a resolve (`emma.quality`) is sent for the node's own media only. A plugin may ignore it.
+
+### Props, as the host enforces them
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `emma.quality` | text | a label to show and to send back as a hint, such as `1080p` |
+| `emma.language` | text | a BCP 47 tag, 1 to 35 characters |
+| `emma.label` | text | a name for a track or chapter, up to 256 characters |
+| `emma.width`, `emma.height`, `emma.bitrate` | integer | pixels, bits per second; not negative |
+| `emma.live` | flag | the stream has no end |
+| `emma.default` | flag | the track to use when the user has not chosen |
+| `emma.drm.scheme` | text | `widevine`, `fairplay`, `playready`, or `none`; absent means not protected |
+| `emma.drm.license-url` | url | `http` or `https` |
+| `emma.duration-ms` | integer | not negative |
+| `emma.start-ms`, `emma.end-ms` | integer | a chapter's start (required for a marker) and end (optional, not before the start) |
+
+A well-known key with a value of another type, or an impossible value, is a contract violation like any other: the
+asset is rejected as `internal` and logged against the plugin, on every path that resolves (`assets.list`, a download,
+a plan, a stream). Other keys are the plugin's own.
+
+### Queue and chapters
+
+A queue is not a concept of its own: it is the `children` of the node's parent, in order, which a client already
+reads. A marker is an asset because assets are what a node resolves to and a marker needs only typed props; there is no
+bytes to fetch.
+
+### The playback plan
+
+`PlaybackPipeline` (Application) turns a node into `PlaybackPlan`: the roles its kind declares, each resolved, with the
+props read into typed `PlaybackTrack`s and `PlaybackChapter`s. It is exposed as `GET /v1/playback`, `playback.plan` and
+`emma playback plan`. The node's own media is required; subtitles, alternate audio and chapters are optional, and one
+that cannot be had (the plugin is down, or breaks the profile) leaves the list empty rather than failing the plan. A
+plan never says where bytes live, only the `role` and `index` that open them.
+
+DRM is reported, not handled: the host moves bytes and cannot decrypt, and `emma.drm.license-url` is for a client whose
+player has a CDM. A client without one must refuse a protected track.
+
+### The stream proxy
+
+A player is given an address, not a node, and many streams cannot be played from where they live: they need the plugin's
+headers or cookies, their segments are on another host, or only the plugin can read them. `StreamProxy` (Application)
+is that address. `playback.open` and `POST /v1/playback/open` resolve one asset and register a **session**; the player
+asks the host for its parts (`GET /v1/stream/{session}/{part}` over HTTP, a loopback server for an embedded app).
+
+- **Part 0** is the asset itself. Anything else is registered when a playlist or manifest is rewritten, so a part is
+  always something the host itself found in a document the plugin served.
+- **HLS** (`#EXTM3U`): every address (variant, rendition, segment, key, map, part) is resolved against the playlist and
+  replaced by the number of a part, a relative reference so no host or port is written into it. Addresses that are not
+  on the web (`skd://` keys, `data:`) are left for the player. Low-latency blocking reload is not supported.
+- **DASH** (an `MPD`): the manifest gets one `BaseURL` that the host serves as a directory, so everything that was
+  relative (templates, `SegmentList`) is fetched from where the manifest's own directory (or its stated base) is,
+  query string included; an absolute `BaseURL` further down is swapped the same way. The XML is read with DTDs refused.
+  A `SegmentTemplate` whose `media` is itself an absolute address is not rewritten.
+- **Direct files** are passed through with byte ranges and not cached. A plugin-served file is read through `read` in
+  1 MiB pieces as the player consumes it.
+- **Segments** (whole pieces up to 32 MiB) are fetched once and kept in the asset cache, so a seek back or a second
+  player costs no upstream request. Manifests are kept too, for repair.
+- **Repair.** When a playlist cannot be fetched (the network dropped mid-playback, a player reloads a live playlist), the
+  last copy is served cut down to what the cache still holds: a segment that is not cached is dropped and the gap marked
+  `#EXT-X-DISCONTINUITY`, a master playlist keeps the variants that are cached, and a media playlist gets
+  `#EXT-X-ENDLIST`, so the player plays what there is and stops instead of waiting. Keys and maps are never dropped.
+  Starting a stream with no network is not covered: opening still resolves the node, which usually needs the plugin's
+  upstream.
+- **Headers and policy.** A fetch carries the headers of the asset that led to it, except `Authorization`, `Cookie` and
+  `Proxy-Authorization` when it goes to a different host. Every hop of every fetch is checked against the plugin's
+  network permissions, as for any remote asset.
+- **A dead link** is resolved again, once, and only for part 0 and only when the plugin now answers differently.
+- **Embedded apps.** The runtime starts a server on `127.0.0.1` on the first `playback.open`. It answers `GET` and
+  `HEAD` with ranges and closes each connection after its answer; the address carries a random secret in its path and a
+  request whose `Host` is not the server's own is refused, so a web page cannot reach it whatever it does with DNS.
+  It stops with the handle.
+- **Limits.** 32 sessions, six hours of disuse, 50,000 parts a session, 8 MiB per manifest. They are `StreamProxyOptions`.

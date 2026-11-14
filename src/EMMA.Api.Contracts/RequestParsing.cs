@@ -11,6 +11,9 @@ namespace EMMA.Api.Contracts;
 /// </summary>
 public static class RequestParsing
 {
+    /// <summary>The highest <c>index</c> of a resolved asset a request may name.</summary>
+    public const int MaxAssetIndex = 1023;
+
     /// <summary>Reads a plugin id.</summary>
     /// <param name="text">The id text.</param>
     /// <returns>The id, or why it is invalid.</returns>
@@ -54,6 +57,14 @@ public static class RequestParsing
 
         return Outcome.Success<IReadOnlyList<NodeRef>>(references);
     }
+
+    /// <summary>Reads which of a node's resolved assets to use.</summary>
+    /// <param name="value">The index, or <see langword="null"/> for the first.</param>
+    /// <returns>The index, or why it is invalid.</returns>
+    public static Outcome<int> Index(int? value) =>
+        value is null or (>= 0 and <= MaxAssetIndex)
+            ? Outcome.Success(value ?? 0)
+            : Outcome.Failure<int>(ErrorCode.InvalidArgument, $"'index' must be a whole number from 0 to {MaxAssetIndex}.");
 
     /// <summary>Reads an asset role.</summary>
     /// <param name="text">The role text.</param>

@@ -19,4 +19,19 @@ public interface IAssetFetcherPort
         CapabilityPolicy policy,
         long maxBytes,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Opens the resource and hands back its body to read as it arrives, for media that is too large to buffer. The same
+    /// rules apply as for <see cref="FetchAsync"/>, except that there is no size limit: the caller decides how much to read.
+    /// </summary>
+    /// <param name="delivery">The URL and headers to use.</param>
+    /// <param name="policy">The plugin's capabilities; every hop must be allowed.</param>
+    /// <param name="range">The bytes wanted, or <see langword="null"/> for all of them. An upstream that ignores the range is skipped forward to it.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The open response, or a failure for a blocked host or an upstream error. A range beyond the end is an empty body with a total.</returns>
+    Task<Outcome<RemoteResponse>> OpenAsync(
+        RemoteDelivery delivery,
+        CapabilityPolicy policy,
+        ByteRange? range,
+        CancellationToken cancellationToken);
 }

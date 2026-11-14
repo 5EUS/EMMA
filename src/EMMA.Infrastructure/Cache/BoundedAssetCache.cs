@@ -140,6 +140,15 @@ public sealed class BoundedAssetCache(AssetCacheOptions options, TimeProvider ti
     }
 
     /// <inheritdoc/>
+    public bool Contains(AssetKey key)
+    {
+        lock (this.gate)
+        {
+            return this.entries.TryGetValue(key.ToString(), out Entry? found) && time.GetUtcNow() - found.FetchedAt <= options.MaxAge;
+        }
+    }
+
+    /// <inheritdoc/>
     public async Task SetAsync(AssetKey key, AssetPayload payload, CancellationToken cancellationToken)
     {
         long size = payload.Payload.Length;

@@ -52,6 +52,27 @@ Pages are cursor-based: return `next-cursor` and EMMA hands it back. Failures ar
 `cancelled`, `internal`); EMMA retries the transient ones for you. Props are typed (text, integer, number, flag,
 timestamp, url, text-list), never JSON blobs. The optional `search-assist` interface adds lazy enrichment (`enrich`) and completion for lookup filters (`suggest(filter-id, text, limit)`, returning choices). Give each filter a `role` such as `emma.filter.tag` or `emma.filter.language` when it means one of the well-known things: clients type-ahead and group by role, so "english" can offer your language filter. Declare a filter with the `lookup` type and a `lookup-spec` (minimum length, maximum results, debounce) when its values are too many to list in `choices`; the client then calls `suggest`.
 
+### Video and audio
+
+A plugin for video or audio needs no extra interface: declare the profile (`emma.profile.video@1` or
+`emma.profile.audio@1`) on your kinds, give the playable kind the roles it resolves, and describe what each asset is with
+typed props. A player then picks a quality, a subtitle or an audio track, shows chapters and plays from a local address
+EMMA serves, so a stream that needs your `Referer` or cookie, or that only you can read, plays like any other.
+
+```text
+episode roles [stream, subtitle, audio, chapters]
+resolve(ep, "stream", hints{emma.quality "1080p"}) -> [asset application/vnd.apple.mpegurl remote(url, headers)
+                                                         props{emma.quality "1080p", emma.width 1920, emma.height 1080}]
+resolve(ep, "subtitle")                            -> [asset text/vtt remote(..) props{emma.language "en", emma.label "English", emma.default true}, ...]
+resolve(ep, "chapters")                            -> [asset text/plain inline() props{emma.start-ms 0, emma.end-ms 90000, emma.label "Opening"}, ...]
+```
+
+The props are checked: `emma.width` as text, or a negative `emma.duration-ms`, is rejected as your bug. Mark a protected
+stream with `emma.drm.scheme` and `emma.drm.license-url`, a live one with `emma.live`. Adaptive manifests (HLS, DASH) may
+point at segments on any host your manifest permits, relative or absolute; EMMA rewrites them. A queue is just your
+`children` in order. Try it with `emma playback plan <ref>` and `emma playback serve <ref>` (then `mpv <address>`), after
+a search has made EMMA see the node. All of it is in `contract.md` section 13.
+
 ## What EMMA gives you (`wit/host.wit`)
 
 `host.http-fetch` (HTTP, restricted to the hosts in your manifest, redirects included), `host.cache-get/put` (if you ask

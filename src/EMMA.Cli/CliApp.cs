@@ -26,6 +26,10 @@ Usage:
                                             Package (and optionally sign) a plugin directory
   emma plugin run <dir|package.zip> <describe|search|children|get|assets|content> [args] [--settings <file.json>]
                                             Try a plugin in a throwaway host, reporting what EMMA would refuse
+  emma playback plan <ref> [--hint <quality>]
+                                            Show the streams, subtitles, audio tracks and chapters of a node
+  emma playback serve <ref> [--role <role>] [--index <n>] [--hint <quality>]
+                                            Serve a node's media on a local address (try it with: mpv <address>)
   emma downloads list                       List downloads and how far along they are
   emma downloads add <ref> --role <role> [--hint <quality>]
                                             Queue a download of a node (and everything beneath it)
@@ -99,6 +103,8 @@ library after it calls plugins.reload.";
         ["plugin", "new", var directory] => NewCommand.RunAsync(context, directory),
         ["plugin", "pack", var directory] => PackCommand.RunAsync(context, directory),
         ["plugin", "run", var source, var operation, .. var operands] => RunCommand.RunAsync(context, source, operation, operands),
+        ["playback", "plan", var reference] => PlaybackCommands.PlanAsync(context, reference),
+        ["playback", "serve", var reference] => PlaybackCommands.ServeAsync(context, reference),
         ["downloads", "list"] => DownloadCommands.ListAsync(context),
         ["downloads", "add", var reference] => DownloadCommands.AddAsync(context, reference),
         ["downloads", "pause", var id] => DownloadCommands.ChangeAsync(context, id, (downloads, job, token) => downloads.PauseAsync(job, token)),

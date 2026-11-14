@@ -22,6 +22,8 @@ namespace EMMA.Cli;
 [JsonSerializable(typeof(DownloadCountResponse))]
 [JsonSerializable(typeof(DownloadSettingsResponse))]
 [JsonSerializable(typeof(ErrorResponse))]
+[JsonSerializable(typeof(PlaybackPlanResponse))]
+[JsonSerializable(typeof(StreamOpenResponse))]
 internal sealed partial class CliJsonContext : JsonSerializerContext
 {
 }

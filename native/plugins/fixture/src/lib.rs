@@ -59,6 +59,57 @@ fn kind(kind: &str, label: &str, children: &[&str], roles: &[&str]) -> KindInfo 
     }
 }
 
+/// A kind that follows a published client profile, such as `emma.profile.video@1`.
+fn profiled(profile: &str, kind: KindInfo) -> KindInfo {
+    KindInfo {
+        profile: Some(profile.to_owned()),
+        ..kind
+    }
+}
+
+fn whole(key: &str, value: i64) -> Prop {
+    Prop {
+        key: key.to_owned(),
+        value: PropValue::Integer(value),
+    }
+}
+
+fn flag(key: &str, value: bool) -> Prop {
+    Prop {
+        key: key.to_owned(),
+        value: PropValue::Flag(value),
+    }
+}
+
+/// An asset the host fetches from the fixture's media host, with the headers its plugin needs.
+fn media(mime: &str, path: &str, props: Vec<Prop>) -> Asset {
+    Asset {
+        mime: mime.to_owned(),
+        delivery: Delivery::Remote(Remote {
+            url: format!("https://files.example.com/{path}"),
+            headers: vec![Header {
+                name: "referer".to_owned(),
+                value: "https://example.com/".to_owned(),
+            }],
+            expires_ms: None,
+        }),
+        size: None,
+        props,
+    }
+}
+
+/// A chapter marker: an asset with nothing to fetch, only where it starts and what it is called.
+fn marker(start_ms: i64, end_ms: Option<i64>, title: &str) -> Asset {
+    let mut props = vec![whole("emma.start-ms", start_ms), text("emma.label", title)];
+    props.extend(end_ms.map(|end| whole("emma.end-ms", end)));
+    Asset {
+        mime: "text/plain".to_owned(),
+        delivery: Delivery::Inline(Vec::new()),
+        size: None,
+        props,
+    }
+}
+
 fn setting(key: &str, label: &str, setting_type: SettingType) -> SettingSpec {
     SettingSpec {
         key: key.to_owned(),
@@ -119,6 +170,14 @@ fn recipe_nodes() -> Vec<Node> {
         node("r1", "recipe", "Lasagna", None),
         node("r2", "recipe", "Pancakes", None),
     ]
+}
+
+fn episode_nodes() -> Vec<Node> {
+    vec![node("e1", "episode", "Episode 1", None)]
+}
+
+fn track_nodes() -> Vec<Node> {
+    vec![node("t1", "track", "Track 1", None)]
 }
 
 fn probe(title: &str, props: Vec<Prop>) -> NodePage {
@@ -278,6 +337,19 @@ impl meta::Guest for Fixture {
                 kind("recipe", "Recipe", &["recipe.step"], &["image"]),
                 kind("recipe.step", "Step", &[], &["text", "image"]),
                 kind("probe", "Probe", &[], &["text", "image", "blob"]),
+                profiled(
+                    "emma.profile.video@1",
+                    kind(
+                        "episode",
+                        "Episode",
+                        &[],
+                        &["stream", "subtitle", "audio", "chapters"],
+                    ),
+                ),
+                profiled(
+                    "emma.profile.audio@1",
+                    kind("track", "Track", &[], &["audio", "chapters"]),
+                ),
             ],
             filters: filters(),
             sorts: vec![Choice {
@@ -353,6 +425,12 @@ impl catalog::Guest for Fixture {
         if text.eq_ignore_ascii_case("recipe") {
             return paged(&recipe_nodes(), query.cursor.as_deref(), query.limit);
         }
+        if text.eq_ignore_ascii_case("episode") {
+            return paged(&episode_nodes(), query.cursor.as_deref(), query.limit);
+        }
+        if text.eq_ignore_ascii_case("track") {
+            return paged(&track_nodes(), query.cursor.as_deref(), query.limit);
+        }
         run_probe(text)
     }
 
@@ -400,7 +478,12 @@ impl catalog::Guest for Fixture {
     }
 
     fn get(ids: Vec<String>) -> Result<Vec<Node>, PluginError> {
-        let known: Vec<Node> = series_nodes().into_iter().chain(recipe_nodes()).collect();
+        let known: Vec<Node> = series_nodes()
+            .into_iter()
+            .chain(recipe_nodes())
+            .chain(episode_nodes())
+            .chain(track_nodes())
+            .collect();
         Ok(ids
             .iter()
             .filter_map(|id| known.iter().find(|n| &n.id == id).cloned())
@@ -429,6 +512,59 @@ impl assets::Guest for Fixture {
                 size: Some(1000),
                 props: vec![],
             }]),
+            ("e1", "stream") => Ok(vec![
+                media(
+                    "application/vnd.apple.mpegurl",
+                    "e1/master.m3u8",
+                    vec![
+                        text("emma.quality", "1080p"),
+                        whole("emma.width", 1920),
+                        whole("emma.height", 1080),
+                        whole("emma.bitrate", 5_000_000),
+                        whole("emma.duration-ms", 1_440_000),
+                    ],
+                ),
+                media(
+                    "video/mp4",
+                    "e1.mp4",
+                    vec![
+                        text("emma.quality", "480p"),
+                        flag("emma.default", true),
+                        text("emma.drm.scheme", "none"),
+                    ],
+                ),
+            ]),
+            ("e1", "subtitle") => Ok(vec![
+                media(
+                    "text/vtt",
+                    "e1/en.vtt",
+                    vec![
+                        text("emma.language", "en"),
+                        text("emma.label", "English"),
+                        flag("emma.default", true),
+                    ],
+                ),
+                media("text/vtt", "e1/ja.vtt", vec![text("emma.language", "ja")]),
+            ]),
+            ("e1", "audio") => Ok(vec![media(
+                "audio/mp4",
+                "e1/ja.m4a",
+                vec![text("emma.language", "ja"), text("emma.label", "Japanese")],
+            )]),
+            ("e1", "chapters") => Ok(vec![
+                marker(0, Some(90_000), "Opening"),
+                marker(90_000, None, "Part one"),
+            ]),
+            ("t1", "audio") => Ok(vec![Asset {
+                mime: "audio/mpeg".to_owned(),
+                delivery: Delivery::Proxied("tok-1".to_owned()),
+                size: Some(1000),
+                props: vec![whole("emma.duration-ms", 200_000)],
+            }]),
+            ("t1", "chapters") => Ok(vec![
+                marker(0, Some(100_000), "Side A"),
+                marker(100_000, Some(200_000), "Side B"),
+            ]),
             ("probe", "blob") => Ok(vec![Asset {
                 mime: "application/octet-stream".to_owned(),
                 delivery: Delivery::Proxied("big".to_owned()),

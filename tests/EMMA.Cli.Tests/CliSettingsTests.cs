@@ -1,8 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
-using EMMA.TestSupport;
-
 using Xunit;
 
 namespace EMMA.Cli.Tests;
@@ -149,12 +147,7 @@ public sealed partial class CliSettingsTests
         DirectoryInfo data = Directory.CreateTempSubdirectory("emma-cli-settings-");
         try
         {
-            // Unsigned packages are allowed here, so the test needs no repository: it is about settings, not trust.
-            await File.WriteAllTextAsync(Path.Combine(data.FullName, "config.json"), @"{""trust"":{""require_signed"":false}}", Ct).ConfigureAwait(false);
-            string package = Path.Combine(data.FullName, "fixture.zip");
-            await File.WriteAllBytesAsync(package, await TestPackages.FixtureAsync("fixture", Id, sign: false).ConfigureAwait(false), Ct).ConfigureAwait(false);
-            CliRun installed = await CliRun.ExecuteAsync("plugin", "install", package, "--repository", "dev", "--data-dir", data.FullName).ConfigureAwait(false);
-            Assert.True(installed.ExitCode == 0, installed.Error);
+            await CliRun.InstallUnsignedFixtureAsync(data.FullName, Id, Ct).ConfigureAwait(false);
 
             await test(data.FullName).ConfigureAwait(false);
         }

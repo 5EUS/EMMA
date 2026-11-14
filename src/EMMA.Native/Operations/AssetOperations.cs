@@ -12,8 +12,6 @@ namespace EMMA.Native.Operations;
 /// </summary>
 internal static class AssetOperations
 {
-    private const int MaxIndex = 1023;
-
     /// <summary>Lists what a node offers for a role.</summary>
     /// <param name="context">The call.</param>
     /// <returns>The response.</returns>
@@ -46,10 +44,10 @@ internal static class AssetOperations
             return Envelope.Failure(target.Error);
         }
 
-        int index = call.Value.Index ?? 0;
-        if (index is < 0 or > MaxIndex)
+        Outcome<int> index = RequestParsing.Index(call.Value.Index);
+        if (!index.IsSuccess)
         {
-            return Envelope.Failure(ErrorCode.InvalidArgument, $"'index' must be a whole number from 0 to {MaxIndex}.");
+            return Envelope.Failure(index.Error);
         }
 
         ByteRange? range = null;
@@ -64,7 +62,7 @@ internal static class AssetOperations
         }
 
         Outcome<AssetBytes> content = await context.Runtime
-            .ReadAssetAsync(target.Value.Node, target.Value.Role, index, range, target.Value.Hint, context.CancellationToken)
+            .ReadAssetAsync(target.Value.Node, target.Value.Role, index.Value, range, target.Value.Hint, context.CancellationToken)
             .ConfigureAwait(false);
         if (!content.IsSuccess)
         {

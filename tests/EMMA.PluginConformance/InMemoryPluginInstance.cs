@@ -53,7 +53,13 @@ public sealed class InMemoryPluginInstance : IPluginInstance
             return this.Done(Outcome.Failure<PluginNodePage>(Failure(text["error:".Length..])), false, cancellationToken);
         }
 
-        IReadOnlyList<PluginNode> all = string.Equals(text, "recipe", StringComparison.OrdinalIgnoreCase) ? FixtureCatalog.Recipes : FixtureCatalog.Series;
+        IReadOnlyList<PluginNode> all = text.ToUpperInvariant() switch
+        {
+            "RECIPE" => FixtureCatalog.Recipes,
+            "EPISODE" => FixtureCatalog.Episodes,
+            "TRACK" => FixtureCatalog.Tracks,
+            _ => FixtureCatalog.Series,
+        };
         return this.Done(Page(all, query.Cursor, query.Limit), false, cancellationToken);
     }
 
@@ -70,7 +76,7 @@ public sealed class InMemoryPluginInstance : IPluginInstance
     /// <inheritdoc/>
     public Task<PluginCall<IReadOnlyList<PluginNode>>> GetAsync(IReadOnlyList<LocalNodeId> ids, CancellationToken cancellationToken)
     {
-        PluginNode[] known = [.. FixtureCatalog.Series, .. FixtureCatalog.Recipes];
+        PluginNode[] known = [.. FixtureCatalog.Series, .. FixtureCatalog.Recipes, .. FixtureCatalog.Episodes, .. FixtureCatalog.Tracks];
         IReadOnlyList<PluginNode> found = [.. ids.Select(id => Array.Find(known, node => string.Equals(node.Id, id.Value, StringComparison.Ordinal))).OfType<PluginNode>()];
         return this.Done(Outcome.Success(found), false, cancellationToken);
     }
@@ -80,16 +86,16 @@ public sealed class InMemoryPluginInstance : IPluginInstance
     {
         string node = request.Node.Value;
         string role = request.Role.Value;
-        Asset? asset = (node, role) switch
+        IReadOnlyList<Asset>? assets = (node, role) switch
         {
-            ("inline1", "text") => new Asset("text/plain", new InlineDelivery("hello"u8.ToArray()), 5, []),
-            ("proxied1", "image") => new Asset("application/octet-stream", new ProxiedDelivery("tok-1"), FixtureCatalog.ProxiedLength, []),
-            (_, "image") when node.Contains("-p", StringComparison.Ordinal) => RemotePage(node),
-            _ => null,
+            ("inline1", "text") => [new Asset("text/plain", new InlineDelivery("hello"u8.ToArray()), 5, [])],
+            ("proxied1", "image") => [new Asset("application/octet-stream", new ProxiedDelivery("tok-1"), FixtureCatalog.ProxiedLength, [])],
+            (_, "image") when node.Contains("-p", StringComparison.Ordinal) => [RemotePage(node)],
+            _ => FixtureCatalog.PlaybackAssets(node, role),
         };
-        Outcome<IReadOnlyList<Asset>> outcome = asset is null
+        Outcome<IReadOnlyList<Asset>> outcome = assets is null
             ? Outcome.Failure<IReadOnlyList<Asset>>(ErrorCode.Unsupported, "nothing to resolve for that node and role")
-            : Outcome.Success<IReadOnlyList<Asset>>([asset]);
+            : Outcome.Success(assets);
         return this.Done(outcome, false, cancellationToken);
     }
 

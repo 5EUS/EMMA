@@ -1,5 +1,6 @@
 using EMMA.Application.Pipelines;
 using EMMA.Application.Ports;
+using EMMA.Application.Streaming;
 using EMMA.Infrastructure.Cache;
 using EMMA.PluginHost.Runtime;
 using EMMA.PluginHost.Signing;
@@ -21,6 +22,9 @@ public sealed record EmmaRuntimeOptions(string DataDirectory)
 
     /// <summary>Gets the limits for turning assets into bytes and how long a resolution is reused; the default is <see cref="AssetPipelineOptions.Default"/>.</summary>
     public AssetPipelineOptions? AssetPipeline { get; init; }
+
+    /// <summary>Gets the limits for playing media through the host's local address; the default is <see cref="StreamProxyOptions.Default"/>.</summary>
+    public StreamProxyOptions? StreamProxy { get; init; }
 
     /// <summary>Gets the most resolutions kept in memory. Zero turns the resolution cache off.</summary>
     public int MaxResolutions { get; init; } = 512;

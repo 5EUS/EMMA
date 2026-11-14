@@ -237,7 +237,7 @@ public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvi
                 return Outcome.Failure<IReadOnlyList<Asset>>(props.Error);
             }
 
-            string? problem = DeliveryProblem(asset.Delivery, policy);
+            string? problem = PlaybackProfile.Problem(asset.Props) ?? DeliveryProblem(asset.Delivery, policy);
             if (problem is not null)
             {
                 return Violation(plugin, problem);

@@ -18,6 +18,8 @@ namespace EMMA.Native.Requests;
 [JsonSerializable(typeof(RefsCall))]
 [JsonSerializable(typeof(RangeCall))]
 [JsonSerializable(typeof(AssetCall))]
+[JsonSerializable(typeof(PlanCall))]
+[JsonSerializable(typeof(StreamCall))]
 [JsonSerializable(typeof(ProgressCall))]
 [JsonSerializable(typeof(RecentCall))]
 [JsonSerializable(typeof(InstallCall))]

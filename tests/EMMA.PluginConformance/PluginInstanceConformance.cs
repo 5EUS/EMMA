@@ -146,6 +146,43 @@ public abstract class PluginInstanceConformance
             });
     }
 
+    /// <summary>
+    /// A plugin that follows the video or audio profile declares it and the roles it resolves, and what it resolves carries the
+    /// well-known props with the types the contract gives them.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public Task PlayableNodesFollowTheVideoAndAudioProfiles()
+    {
+        return this.WithInstanceAsync(
+            assisted: false,
+            async instance =>
+            {
+                PluginInfo info = (await instance.DescribeAsync(Ct).ConfigureAwait(true)).Outcome.Value;
+                IReadOnlyList<Asset> streams = (await instance.ResolveAsync(Resolve("e1", "stream"), Ct).ConfigureAwait(true)).Outcome.Value;
+                IReadOnlyList<Asset> subtitles = (await instance.ResolveAsync(Resolve("e1", "subtitle"), Ct).ConfigureAwait(true)).Outcome.Value;
+                IReadOnlyList<Asset> alternates = (await instance.ResolveAsync(Resolve("e1", "audio"), Ct).ConfigureAwait(true)).Outcome.Value;
+                IReadOnlyList<Asset> markers = (await instance.ResolveAsync(Resolve("e1", "chapters"), Ct).ConfigureAwait(true)).Outcome.Value;
+                IReadOnlyList<Asset> track = (await instance.ResolveAsync(Resolve("t1", "audio"), Ct).ConfigureAwait(true)).Outcome.Value;
+
+                Assert.Equal("emma.profile.video@1", info.FindKind(NodeKind.Create("episode"))!.Profile);
+                Assert.Equal("emma.profile.audio@1", info.FindKind(NodeKind.Create("track"))!.Profile);
+                Assert.Equal(["stream", "subtitle", "audio", "chapters"], info.FindKind(NodeKind.Create("episode"))!.Roles.Select(role => role.Value));
+                Assert.Equal(["application/vnd.apple.mpegurl", "video/mp4"], streams.Select(asset => asset.Mime));
+                Assert.Equal(PropValue.FromText("1080p"), Prop(streams[0], "emma.quality"));
+                Assert.Equal(PropValue.FromWholeNumber(1920), Prop(streams[0], "emma.width"));
+                Assert.Equal(PropValue.FromWholeNumber(1_440_000), Prop(streams[0], "emma.duration-ms"));
+                Assert.Equal(PropValue.FromFlag(true), Prop(streams[1], "emma.default"));
+                Assert.Equal(PropValue.FromText("none"), Prop(streams[1], "emma.drm.scheme"));
+                Assert.Equal(["en", "ja"], subtitles.Select(asset => Prop(asset, "emma.language").Text));
+                Assert.Equal(PropValue.FromText("Japanese"), Prop(alternates.Single(), "emma.label"));
+                Assert.Equal([0L, 90_000L], markers.Select(asset => Prop(asset, "emma.start-ms").WholeNumber));
+                Assert.Null(markers[1].Props.SingleOrDefault(prop => string.Equals(prop.Key, "emma.end-ms", StringComparison.Ordinal)));
+                Assert.Equal("tok-1", Assert.IsType<ProxiedDelivery>(track.Single().Delivery).Token);
+                Assert.Equal("audio/mpeg", track.Single().Mime);
+            });
+    }
+
     /// <summary>Read returns the bytes, honours ranges and reports the total; an unknown token is not found.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
@@ -285,6 +322,9 @@ public abstract class PluginInstanceConformance
     protected abstract Task<IPluginInstance> CreateAsync(bool searchAssist);
 
     private static Query Text(string text, int? limit = null, string? cursor = null) => new(text, [], [], null, cursor, limit);
+
+    private static PropValue Prop(Asset asset, string key) =>
+        asset.Props.Single(prop => string.Equals(prop.Key, key, StringComparison.Ordinal)).Value;
 
     private static ResolveRequest Resolve(string node, string role) => new(LocalNodeId.Create(node), AssetRole.Create(role), []);
 

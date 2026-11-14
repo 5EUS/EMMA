@@ -309,6 +309,26 @@ public sealed class BoundedAssetCacheTests : IDisposable
         Assert.Empty(index.Keys);
     }
 
+    /// <summary>Contains says whether an entry is there without reading it: not before it is stored, not once it is old, not once its node is dropped.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ContainsAnswersWithoutReading()
+    {
+        BoundedAssetCache cache = this.Cache(memory: 100, disk: 0);
+        Assert.False(cache.Contains(Key("a")));
+
+        await cache.SetAsync(Key("a"), this.Payload(1), CancellationToken.None).ConfigureAwait(true);
+        bool stored = cache.Contains(Key("a"));
+        this.time.Advance(TimeSpan.FromDays(2));
+        bool old = cache.Contains(Key("a"));
+        await cache.SetAsync(Key("b"), this.Payload(1), CancellationToken.None).ConfigureAwait(true);
+        await cache.RemoveNodeAsync(TestData.Ref("n"), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.True(stored);
+        Assert.False(old);
+        Assert.False(cache.Contains(Key("b")));
+    }
+
     private static AssetKey Key(string variant) =>
         new(TestData.Ref("n"), AssetRole.Create("image"), variant);
 

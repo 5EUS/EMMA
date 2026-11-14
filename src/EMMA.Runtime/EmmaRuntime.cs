@@ -1,5 +1,6 @@
 using EMMA.Application.Pipelines;
 using EMMA.Application.Ports;
+using EMMA.Application.Streaming;
 using EMMA.Domain;
 using EMMA.Infrastructure.Cache;
 using EMMA.Infrastructure.Downloads;
@@ -30,6 +31,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     private readonly HttpClient? http;
     private readonly LazyWasmTransport? transport;
     private readonly WasmPluginGateway? wasmGateway;
+    private readonly LoopbackStreamServer loopback;
 
     /// <summary>Initializes a new instance of the <see cref="EmmaRuntime"/> class.</summary>
     /// <param name="options">The host's choices.</param>
@@ -88,6 +90,8 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.Refresh = new RefreshPipeline(this.Library, this.Nodes, this.Catalog, this.cache, this.resolutions);
         this.downloadFiles = new DownloadFileStore(Path.Combine(data, "downloads"));
         this.Downloads = new DownloadPipeline(new SqliteDownloadStore(storageOptions), this.downloadFiles, this.Catalog, this.Assets, this.Nodes, appSettings, this.Time);
+        this.Playback = new PlaybackPipeline(this.Catalog, this.Assets, this.Nodes);
+        (this.Streams, this.loopback) = CreateStreams(this, fetcher, executor, options.StreamProxy ?? StreamProxyOptions.Default);
         this.AppSettings = new AppSettingsPipeline(appSettings, this.Time);
         this.PluginSettings = new PluginSettingsPipeline(this.Gateway, settings);
     }
@@ -131,6 +135,12 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     /// <summary>Gets asset resolution and bytes.</summary>
     public AssetPipeline Assets { get; }
 
+    /// <summary>Gets what a player needs to play a node: its streams, subtitles, audio tracks and chapters.</summary>
+    public PlaybackPipeline Playback { get; }
+
+    /// <summary>Gets the local proxy that gives a player an address for media that cannot be played from where it lives. A host with a web server serves it itself; others use <see cref="OpenStreamUrlAsync"/>.</summary>
+    public StreamProxy Streams { get; }
+
     /// <summary>Gets progress and history.</summary>
     public ProgressPipeline Progress { get; }
 
@@ -162,6 +172,24 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         await this.downloadFiles.InitializeAsync().ConfigureAwait(false);
 
         return await this.RefreshPoliciesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Opens an asset of a node for playing and gives it an address on this machine, for a player that lives in the same
+    /// process or on the same device. The first call starts the local server.
+    /// </summary>
+    /// <param name="node">The node.</param>
+    /// <param name="role">The role to open, usually <c>stream</c> or <c>audio</c>.</param>
+    /// <param name="index">Which of the resolved assets to open.</param>
+    /// <param name="hint">A quality preference passed to the plugin.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The address to give the player, or why the asset could not be opened.</returns>
+    public async Task<Outcome<OpenedPlayback>> OpenStreamUrlAsync(NodeRef node, AssetRole role, int index, string? hint, CancellationToken cancellationToken)
+    {
+        Outcome<StreamLink> link = await this.Streams.OpenAsync(node, role, index, hint, cancellationToken).ConfigureAwait(false);
+        return link.IsSuccess
+            ? Outcome.Success(new OpenedPlayback(new Uri(this.loopback.Start(), link.Value.Path), link.Value.Mime))
+            : Outcome.Failure<OpenedPlayback>(link.Error);
     }
 
     /// <summary>Installs a package and makes it available to this runtime straight away.</summary>
@@ -275,6 +303,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     /// <inheritdoc/>
     public async ValueTask DisposeAsync()
     {
+        await this.loopback.DisposeAsync().ConfigureAwait(false);
         await this.Downloads.DisposeAsync().ConfigureAwait(false);
         if (this.wasmGateway is not null)
         {
@@ -284,6 +313,12 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         this.transport?.Dispose();
         this.http?.Dispose();
         this.secretBox.Dispose();
+    }
+
+    private static (StreamProxy Proxy, LoopbackStreamServer Server) CreateStreams(EmmaRuntime runtime, IAssetFetcherPort fetcher, PluginCallExecutor executor, StreamProxyOptions options)
+    {
+        StreamProxy proxy = new(runtime.Assets, runtime.Policies, fetcher, runtime.cache, runtime.Downloads, executor, options, runtime.Time);
+        return (proxy, new LoopbackStreamServer(proxy));
     }
 
     private static (IAssetFetcherPort Fetcher, HttpClient? Http) CreateFetcher(IAssetFetcherPort? custom, TimeProvider time)

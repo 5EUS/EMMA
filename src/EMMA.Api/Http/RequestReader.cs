@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 
@@ -15,6 +16,8 @@ namespace EMMA.Api.Http;
 /// </summary>
 internal static class RequestReader
 {
+    private const int MaxAssetIndex = 1023;
+
     /// <summary>Reads a plugin id from a route value.</summary>
     /// <param name="text">The value.</param>
     /// <returns>The id, or why it is invalid.</returns>
@@ -131,5 +134,53 @@ internal static class RequestReader
         {
             return Outcome.Failure<T>(ErrorCode.InvalidArgument, "The body is too large or could not be read.");
         }
+    }
+
+    /// <summary>Reads the optional <c>hint</c> parameter: a quality preference passed to the plugin.</summary>
+    /// <param name="request">The request.</param>
+    /// <returns>The hint, <see langword="null"/> when absent, or why it is invalid.</returns>
+    public static Outcome<string?> Hint(HttpRequest request)
+    {
+        Outcome<string?> hint = Optional(request, "hint");
+        return hint.IsSuccess ? RequestParsing.Hint(hint.Value) : hint;
+    }
+
+    /// <summary>Reads the optional <c>index</c> parameter: which of the resolved assets to use.</summary>
+    /// <param name="request">The request.</param>
+    /// <returns>The index, zero when absent, or why it is invalid.</returns>
+    public static Outcome<int> Index(HttpRequest request)
+    {
+        StringValues values = request.Query["index"];
+        if (values.Count == 0)
+        {
+            return Outcome.Success(0);
+        }
+
+        return values.Count == 1
+            && int.TryParse(values[0], NumberStyles.None, CultureInfo.InvariantCulture, out int index)
+            && index <= MaxAssetIndex
+            ? Outcome.Success(index)
+            : Outcome.Failure<int>(ErrorCode.InvalidArgument, $"'index' must be a whole number from 0 to {MaxAssetIndex}.");
+    }
+
+    /// <summary>Reads a single <c>bytes=start-</c> or <c>bytes=start-end</c> range; anything else is ignored and the whole asset is sent.</summary>
+    /// <param name="request">The request.</param>
+    /// <returns>The range, or <see langword="null"/> when there is none this API honours.</returns>
+    public static ByteRange? Range(HttpRequest request)
+    {
+        if (!RangeHeaderValue.TryParse(request.Headers.Range.ToString(), out RangeHeaderValue? header)
+            || !string.Equals(header.Unit, "bytes", StringComparison.OrdinalIgnoreCase)
+            || header.Ranges.Count != 1)
+        {
+            return null;
+        }
+
+        RangeItemHeaderValue item = header.Ranges.Single();
+        if (item.From is not { } start || (item.To is { } end && end < start))
+        {
+            return null;
+        }
+
+        return new ByteRange(start, item.To is { } last ? last - start + 1 : null);
     }
 }

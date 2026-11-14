@@ -85,8 +85,11 @@ load.) Never export a name without the prefix from this library, and never reuse
   cannot vouch for), and the host recompiles on every open. A cache needs an integrity story first.
 - TODO(rewrite): the loader hashes the entrypoint and the host then opens it by path, a small race
   if the install directory is writable by others. An open-from-bytes call would close it.
-- TODO(rewrite): the binary lane exists only for `read`. If `inline` assets or other results grow
-  large, move them there too.
+- The binary lane exists only for `read`, and that is enough (decided in phase 8). The one large payload the video and
+  audio profiles add is a file only the plugin can read, and the stream proxy already pulls that through `read` in 1 MiB
+  pieces as the player consumes it, so it never crosses the boundary at once. Everything else a plugin returns is a
+  list of nodes or assets (small, and capped by `contract.md` section 9) or an inline asset (capped at 1 MiB). If the
+  inline cap is ever raised, move `inline` to the lane first.
 - TODO(rewrite): canned HTTP responses for a plugin author (`emma plugin run --canned <file>`), so a plugin that calls
   `host.http-fetch` can be tried without its real upstream. `--settings` already gives a plugin its settings. What is
   missing is a `testing.canned` list in the Rust plugin config that `Network::fetch` answers from (after the usual

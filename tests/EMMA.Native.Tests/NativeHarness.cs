@@ -68,10 +68,15 @@ internal sealed class NativeHarness : IAsyncDisposable
     }
 
     /// <summary>Installs the fixture plugin from a signed package file.</summary>
+    /// <param name="networkHosts">The hosts the plugin may reach; none by default.</param>
     /// <returns>The call result.</returns>
-    internal async Task<CallResult> InstallFixtureAsync()
+    internal async Task<CallResult> InstallFixtureAsync(params string[] networkHosts)
     {
-        byte[] package = await TestPackages.FixtureAsync("fixture", Plugin, signedAt: TimeProvider.System.GetUtcNow()).ConfigureAwait(false);
+        byte[] package = await TestPackages.FixtureAsync(
+            "fixture",
+            Plugin,
+            adjust: manifest => manifest with { Permissions = manifest.Permissions with { Network = networkHosts } },
+            signedAt: TimeProvider.System.GetUtcNow()).ConfigureAwait(false);
         string path = Path.Combine(this.root.FullName, "fixture.zip");
         await File.WriteAllBytesAsync(path, package).ConfigureAwait(false);
         return this.Call("plugins.install", new JsonObject { ["package_path"] = path, ["repository"] = TestPki.RepositoryId });

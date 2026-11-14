@@ -35,6 +35,23 @@ internal sealed record CliRun(int ExitCode, string Output, string Error)
         return new CliRun(exitCode, output.ToString(), error.ToString());
     }
 
+    /// <summary>Installs the built fixture plugin into a data directory that allows unsigned packages, so a test needs no repository.</summary>
+    /// <param name="data">The data directory.</param>
+    /// <param name="id">The plugin id to install it under.</param>
+    /// <param name="cancellationToken">Cancels the setup.</param>
+    /// <returns>A task that completes when the plugin is installed.</returns>
+    public static async Task InstallUnsignedFixtureAsync(string data, string id, CancellationToken cancellationToken)
+    {
+        await File.WriteAllTextAsync(Path.Combine(data, "config.json"), @"{""trust"":{""require_signed"":false}}", cancellationToken).ConfigureAwait(false);
+        string package = Path.Combine(data, "fixture.zip");
+        await File.WriteAllBytesAsync(package, await TestPackages.FixtureAsync("fixture", id, sign: false).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+        CliRun installed = await ExecuteAsync("plugin", "install", package, "--repository", "dev", "--data-dir", data).ConfigureAwait(false);
+        if (installed.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"The fixture did not install: {installed.Error}");
+        }
+    }
+
     /// <summary>Makes a plugin directory the way an author would have one: the template's manifest and a built component.</summary>
     /// <param name="adjust">Changes the manifest text, if needed.</param>
     /// <param name="component">Which built test plugin to use as the component: <c>template</c>, or <c>fixture</c> (which declares settings).</param>

@@ -18,6 +18,8 @@ public static class FixtureCatalog
             Kind("recipe", "Recipe", ["recipe.step"], ["image"]),
             Kind("recipe.step", "Step", [], ["text", "image"]),
             Kind("probe", "Probe", [], ["text", "image", "blob"]),
+            Kind("episode", "Episode", [], ["stream", "subtitle", "audio", "chapters"], "emma.profile.video@1"),
+            Kind("track", "Track", [], ["audio", "chapters"], "emma.profile.audio@1"),
         ],
         [],
         [new Choice("recent", "Recent", null, true)],
@@ -42,6 +44,12 @@ public static class FixtureCatalog
         new PluginNode("r1", "recipe", "Lasagna", null, null, []),
         new PluginNode("r2", "recipe", "Pancakes", null, null, []),
     ];
+
+    /// <summary>Gets the playable video node.</summary>
+    public static IReadOnlyList<PluginNode> Episodes { get; } = [new PluginNode("e1", "episode", "Episode 1", null, null, [])];
+
+    /// <summary>Gets the playable audio node.</summary>
+    public static IReadOnlyList<PluginNode> Tracks { get; } = [new PluginNode("t1", "track", "Track 1", null, null, [])];
 
     /// <summary>Gets the number of chapters of the first series.</summary>
     public static int ChapterCount => 120;
@@ -71,10 +79,49 @@ public static class FixtureCatalog
         _ => null,
     };
 
-    private static KindInfo Kind(string kind, string label, string[] children, string[] roles) => new(
+    /// <summary>Gets what the fixture resolves a playable node to, mirroring <c>native/plugins/fixture</c>.</summary>
+    /// <param name="node">The plugin-local id.</param>
+    /// <param name="role">The role.</param>
+    /// <returns>The assets, or <see langword="null"/> when the node has nothing for the role.</returns>
+    public static IReadOnlyList<Asset>? PlaybackAssets(string node, string role) => (node, role) switch
+    {
+        ("e1", "stream") =>
+        [
+            Media("application/vnd.apple.mpegurl", "e1/master.m3u8", Text("emma.quality", "1080p"), Whole("emma.width", 1920), Whole("emma.height", 1080), Whole("emma.bitrate", 5_000_000), Whole("emma.duration-ms", 1_440_000)),
+            Media("video/mp4", "e1.mp4", Text("emma.quality", "480p"), new Prop("emma.default", PropValue.FromFlag(true)), Text("emma.drm.scheme", "none")),
+        ],
+        ("e1", "subtitle") =>
+        [
+            Media("text/vtt", "e1/en.vtt", Text("emma.language", "en"), Text("emma.label", "English"), new Prop("emma.default", PropValue.FromFlag(true))),
+            Media("text/vtt", "e1/ja.vtt", Text("emma.language", "ja")),
+        ],
+        ("e1", "audio") => [Media("audio/mp4", "e1/ja.m4a", Text("emma.language", "ja"), Text("emma.label", "Japanese"))],
+        ("e1", "chapters") => [Marker(0, 90_000, "Opening"), Marker(90_000, null, "Part one")],
+        ("t1", "audio") => [new Asset("audio/mpeg", new ProxiedDelivery("tok-1"), ProxiedLength, [Whole("emma.duration-ms", 200_000)])],
+        ("t1", "chapters") => [Marker(0, 100_000, "Side A"), Marker(100_000, 200_000, "Side B")],
+        _ => null,
+    };
+
+    private static Prop Text(string key, string value) => new(key, PropValue.FromText(value));
+
+    private static Prop Whole(string key, long value) => new(key, PropValue.FromWholeNumber(value));
+
+    private static Asset Media(string mime, string path, params Prop[] props) => new(
+        mime,
+        new RemoteDelivery(new UriBuilder("https", "files.example.com", 443, path).Uri, [new HttpHeader("referer", "https://example.com/")], null),
+        null,
+        props);
+
+    private static Asset Marker(long start, long? end, string title) => new(
+        "text/plain",
+        new InlineDelivery(Array.Empty<byte>()),
+        null,
+        [Whole("emma.start-ms", start), Text("emma.label", title), .. end is { } stop ? new[] { Whole("emma.end-ms", stop) } : []]);
+
+    private static KindInfo Kind(string kind, string label, string[] children, string[] roles, string? profile = null) => new(
         NodeKind.Create(kind),
         label,
         [.. children.Select(NodeKind.Create)],
         [.. roles.Select(AssetRole.Create)],
-        null);
+        profile);
 }
