@@ -272,8 +272,13 @@ These live in `EMMA.Domain` / `EMMA.Application` and are never seen by plugins.
   transaction after every page was read, so a half-listed node is never served. Asset bytes (thumbnails and remote
   assets) live in the bounded cache (`BoundedAssetCache`): LRU, a memory tier in front of a disk tier, a maximum age.
   Each entry is written to disk when stored, and the `asset_cache` table indexes the files so the cache survives a
-  restart; the directory is configurable (`cache_dir`) so an app can keep it in the OS cache location. Refreshing a
-  node replaces its stored details and listing and drops its cached bytes.
+  restart; the directory is configurable (`cache_dir`) so an app can keep it in the OS cache location. Resolutions
+  (what a plugin said a node resolves to for a role and hint) are kept in memory only, by `BoundedResolutionCache`
+  (LRU, 512 entries by default): they may hold cookies and are short-lived. An entry lives five minutes, or until
+  30 seconds before a link's stated expiry, and is kept only when every asset is a remote link or a proxied token
+  (the contract keeps a token valid until the plugin says otherwise, and a dead one is `not-found`, which the host
+  answers by resolving again and retrying once). Refreshing a node replaces its stored details and listing and drops
+  its cached bytes and resolutions; closing or reloading a plugin drops the resolutions it gave.
 - All timestamps come from an injected `IClock`; plugins use `host.now-ms`.
 
 ## 9. Limits the host enforces

@@ -19,6 +19,12 @@ public sealed record EmmaRuntimeOptions(string DataDirectory)
     /// <summary>Gets the asset cache budgets and maximum age. The directory is always <see cref="CacheDirectory"/>; the default is <see cref="AssetCacheOptions.Default"/>.</summary>
     public AssetCacheOptions? AssetCache { get; init; }
 
+    /// <summary>Gets the limits for turning assets into bytes and how long a resolution is reused; the default is <see cref="AssetPipelineOptions.Default"/>.</summary>
+    public AssetPipelineOptions? AssetPipeline { get; init; }
+
+    /// <summary>Gets the most resolutions kept in memory. Zero turns the resolution cache off.</summary>
+    public int MaxResolutions { get; init; } = 512;
+
     /// <summary>Gets which plugin signatures are accepted. The default trusts no repository, so nothing can be installed.</summary>
     public TrustPolicy Trust { get; init; } = TrustPolicy.TrustNothing;
 

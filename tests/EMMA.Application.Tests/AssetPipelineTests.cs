@@ -19,18 +19,21 @@ public sealed class AssetPipelineTests
     private readonly FakePluginGateway gateway = new();
     private readonly FakeAssetFetcher fetcher;
     private readonly InMemoryNodeStore store = new();
+    private readonly BoundedResolutionCache resolutions;
     private readonly AssetPipeline pipeline;
 
     /// <summary>Initializes a new instance of the <see cref="AssetPipelineTests"/> class.</summary>
     public AssetPipelineTests()
     {
         this.fetcher = new FakeAssetFetcher(this.time);
+        this.resolutions = new BoundedResolutionCache(64, this.time);
         this.pipeline = new AssetPipeline(
             this.gateway,
             new FakePolicies().Allow(TestData.Plugin, "img.example.com"),
             this.store,
             this.fetcher,
             new BoundedAssetCache(new AssetCacheOptions(1024 * 1024, 0, "unused", TimeSpan.FromDays(1)), this.time),
+            this.resolutions,
             new PluginCallExecutor(
                 new PluginCallOptions(1, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(30)),
                 this.time),
@@ -269,6 +272,137 @@ public sealed class AssetPipelineTests
 
         Assert.False(first.IsSuccess);
         Assert.Equal(2, this.fetcher.Calls);
+    }
+
+    /// <summary>Resolving the same node and role again is answered from memory, so reading every page of a chapter asks the plugin once.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task ARepeatedResolveDoesNotCallThePlugin()
+    {
+        this.ResolvesTo(Remote("img.example.com"));
+
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Outcome<IReadOnlyList<Asset>> again = await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(1, this.gateway.ResolveCalls);
+        Assert.Single(again.Value);
+    }
+
+    /// <summary>Each hint, role and node is its own entry, because a plugin may answer differently for each.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task HintsRolesAndNodesAreSeparateEntries()
+    {
+        this.ResolvesTo(Remote("img.example.com"));
+
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, AssetHint.ToProps("720p"), CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, AssetHint.ToProps("1080p"), CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("p2"), Image, AssetHint.ToProps("720p"), CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, AssetHint.ToProps("720p"), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(3, this.gateway.ResolveCalls);
+    }
+
+    /// <summary>A resolution is reused for the configured time and not after.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task AResolutionExpiresAfterItsTimeToLive()
+    {
+        this.ResolvesTo(Remote("img.example.com"));
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+
+        this.time.Advance(TimeSpan.FromMinutes(4));
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(1, this.gateway.ResolveCalls);
+
+        this.time.Advance(TimeSpan.FromMinutes(2));
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(2, this.gateway.ResolveCalls);
+    }
+
+    /// <summary>A link that says it expires soon is reused only until shortly before then, and one about to die is not kept at all.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task AnExpiringLinkLimitsHowLongItsResolutionIsKept()
+    {
+        this.gateway.OnResolve = (_, request) => Outcome.Success<IReadOnlyList<Asset>>(
+        [
+            new Asset("image/png", new RemoteDelivery(TestData.Url("img.example.com"), [], this.time.GetUtcNow().AddSeconds(string.Equals(request.Node.Value, "soon", StringComparison.Ordinal) ? 20 : 120)), null, []),
+        ]);
+
+        await this.pipeline.ResolveAsync(TestData.Ref("soon"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("soon"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(2, this.gateway.ResolveCalls);
+
+        await this.pipeline.ResolveAsync(TestData.Ref("later"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        this.time.Advance(TimeSpan.FromSeconds(80));
+        await this.pipeline.ResolveAsync(TestData.Ref("later"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(3, this.gateway.ResolveCalls);
+
+        this.time.Advance(TimeSpan.FromSeconds(20));
+        await this.pipeline.ResolveAsync(TestData.Ref("later"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(4, this.gateway.ResolveCalls);
+    }
+
+    /// <summary>A proxied resolution is reused (a video is read in ranges); inline bytes, empty answers and failures are not kept.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task OnlyRemoteAndProxiedResolutionsAreKept()
+    {
+        this.ResolvesTo(new Asset("video/mp4", new ProxiedDelivery("tok"), null, []));
+        await this.pipeline.ResolveAsync(TestData.Ref("v"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("v"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(1, this.gateway.ResolveCalls);
+
+        this.ResolvesTo(new Asset("text/plain", new InlineDelivery(new byte[] { 1 }), null, []));
+        await this.pipeline.ResolveAsync(TestData.Ref("i"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("i"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(3, this.gateway.ResolveCalls);
+
+        this.ResolvesTo();
+        await this.pipeline.ResolveAsync(TestData.Ref("e"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("e"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(5, this.gateway.ResolveCalls);
+
+        this.gateway.OnResolve = (_, _) => Outcome.Failure<IReadOnlyList<Asset>>(ErrorCode.Unavailable, "down");
+        await this.pipeline.ResolveAsync(TestData.Ref("f"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("f"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(7, this.gateway.ResolveCalls);
+    }
+
+    /// <summary>An answer that breaks the contract is refused and not kept.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task InvalidResolutionsAreNotKept()
+    {
+        this.ResolvesTo(Remote("blocked.example.com"));
+
+        Outcome<IReadOnlyList<Asset>> first = await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.False(first.IsSuccess);
+        Assert.Equal(2, this.gateway.ResolveCalls);
+    }
+
+    /// <summary>Refresh mode asks the plugin and replaces what was kept, and dropping a node forgets its resolutions.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task RefreshAndRemoveForgetResolutions()
+    {
+        string host = "img.example.com";
+        this.gateway.OnResolve = (_, _) => Outcome.Success<IReadOnlyList<Asset>>([Remote(host)]);
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+
+        this.ResolvesTo(Remote("img.example.com", "/new.png"));
+        Outcome<IReadOnlyList<Asset>> refreshed = await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CacheMode.Refresh, CancellationToken.None).ConfigureAwait(true);
+        Outcome<IReadOnlyList<Asset>> after = await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(2, this.gateway.ResolveCalls);
+        Assert.Equal("/new.png", ((RemoteDelivery)after.Value[0].Delivery).Url.AbsolutePath);
+        Assert.Equal("/new.png", ((RemoteDelivery)refreshed.Value[0].Delivery).Url.AbsolutePath);
+
+        await this.resolutions.RemoveNodeAsync(TestData.Ref("p1"), CancellationToken.None).ConfigureAwait(true);
+        await this.pipeline.ResolveAsync(TestData.Ref("p1"), Image, [], CancellationToken.None).ConfigureAwait(true);
+        Assert.Equal(3, this.gateway.ResolveCalls);
     }
 
     private static Node Thumbnailed(string id, string host, string path = "/t.png") =>

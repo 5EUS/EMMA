@@ -16,25 +16,50 @@ namespace EMMA.Application.Pipelines;
 /// <param name="store">Where seen nodes are remembered; used to check roles.</param>
 /// <param name="fetcher">Fetches remote assets.</param>
 /// <param name="cache">Caches fetched bytes.</param>
+/// <param name="resolutions">Remembers what nodes resolved to, for a while.</param>
 /// <param name="executor">Runs plugin calls with retries and timeouts.</param>
 /// <param name="options">Size limits.</param>
 /// <param name="time">The time source.</param>
-public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvider policies, INodeStorePort store, IAssetFetcherPort fetcher, IAssetCachePort cache, PluginCallExecutor executor, AssetPipelineOptions options, TimeProvider time)
+public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvider policies, INodeStorePort store, IAssetFetcherPort fetcher, IAssetCachePort cache, IResolutionCachePort resolutions, PluginCallExecutor executor, AssetPipelineOptions options, TimeProvider time)
 {
     private static readonly AssetRole ThumbnailRole = AssetRole.Create("emma.thumbnail");
 
-    /// <summary>Resolves a node to its assets for a role.</summary>
+    /// <summary>
+    /// Resolves a node to its assets for a role. A resolution of remote links or proxied tokens is reused for a few minutes
+    /// (shorter when a link says it expires), so reading every page of a chapter, or every range of a video, asks the plugin once.
+    /// </summary>
     /// <param name="node">The node.</param>
     /// <param name="role">What the assets are for.</param>
     /// <param name="hints">Optional preferences such as <c>emma.quality</c>.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The validated assets, or why resolving failed.</returns>
+    public Task<Outcome<IReadOnlyList<Asset>>> ResolveAsync(
+        NodeRef node,
+        AssetRole role,
+        IReadOnlyList<Prop> hints,
+        CancellationToken cancellationToken) =>
+        this.ResolveAsync(node, role, hints, CacheMode.Use, cancellationToken);
+
+    /// <summary>Resolves a node to its assets for a role, choosing whether a stored resolution may answer; see the overload that takes no mode.</summary>
+    /// <param name="node">The node.</param>
+    /// <param name="role">What the assets are for.</param>
+    /// <param name="hints">Optional preferences such as <c>emma.quality</c>.</param>
+    /// <param name="mode"><see cref="CacheMode.Refresh"/> asks the plugin and replaces what was stored.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The validated assets, or why resolving failed.</returns>
     public async Task<Outcome<IReadOnlyList<Asset>>> ResolveAsync(
         NodeRef node,
         AssetRole role,
         IReadOnlyList<Prop> hints,
+        CacheMode mode,
         CancellationToken cancellationToken)
     {
+        ResolutionKey key = ResolutionKey.For(node, role, hints);
+        if (mode == CacheMode.Use && await resolutions.GetAsync(key, cancellationToken).ConfigureAwait(false) is { } stored)
+        {
+            return Outcome.Success(stored);
+        }
+
         PluginError? unsupported = await this.CheckRoleAsync(node, role, cancellationToken).ConfigureAwait(false);
         if (unsupported is not null)
         {
@@ -45,12 +70,21 @@ public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvi
         Outcome<IReadOnlyList<Asset>> raw = await executor
             .ExecuteAsync(token => gateway.ResolveAsync(node.Plugin, request, token), cancellationToken)
             .ConfigureAwait(false);
-        return raw.IsSuccess
-            ? this.ValidateAssets(node.Plugin, raw.Value)
-            : raw;
+        if (!raw.IsSuccess)
+        {
+            return raw;
+        }
+
+        Outcome<IReadOnlyList<Asset>> validated = this.ValidateAssets(node.Plugin, raw.Value);
+        if (validated.IsSuccess && this.ExpiryOf(validated.Value) is { } expiresAt)
+        {
+            await resolutions.SetAsync(key, validated.Value, expiresAt, cancellationToken).ConfigureAwait(false);
+        }
+
+        return validated;
     }
 
-    /// <summary>Gets the bytes of an asset returned by <see cref="ResolveAsync"/>.</summary>
+    /// <summary>Gets the bytes of an asset returned by <c>ResolveAsync</c>.</summary>
     /// <param name="node">The node the asset was resolved for.</param>
     /// <param name="role">The role it was resolved for.</param>
     /// <param name="asset">The asset.</param>
@@ -139,6 +173,31 @@ public sealed class AssetPipeline(IPluginGateway gateway, ICapabilityPolicyProvi
             "returned a proxied asset with an empty or oversized token",
         _ => null,
     };
+
+    /// <summary>
+    /// Works out how long a resolution may be reused. Remote links and proxied tokens qualify (the contract keeps a token
+    /// valid until the plugin says otherwise, and a dead one is retried by the caller); inline bytes do not, because
+    /// they would sit in memory for as long as the entry does.
+    /// </summary>
+    private DateTimeOffset? ExpiryOf(IReadOnlyList<Asset> assets)
+    {
+        if (options.ResolutionTtl <= TimeSpan.Zero || assets.Count == 0 || assets.Any(asset => asset.Delivery is InlineDelivery))
+        {
+            return null;
+        }
+
+        DateTimeOffset now = time.GetUtcNow();
+        DateTimeOffset expiresAt = now + options.ResolutionTtl;
+        foreach (RemoteDelivery remote in assets.Select(asset => asset.Delivery).OfType<RemoteDelivery>())
+        {
+            if (remote.ExpiresAt is { } linkExpires && linkExpires - options.ExpiryMargin < expiresAt)
+            {
+                expiresAt = linkExpires - options.ExpiryMargin;
+            }
+        }
+
+        return expiresAt > now ? expiresAt : null;
+    }
 
     private async Task<PluginError?> CheckRoleAsync(NodeRef node, AssetRole role, CancellationToken cancellationToken)
     {

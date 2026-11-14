@@ -24,6 +24,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
     private readonly StorageInitializer storage;
     private readonly BoundedAssetCache cache;
     private readonly SqliteNodeListingStore listings;
+    private readonly BoundedResolutionCache resolutions;
     private readonly DownloadFileStore downloadFiles;
     private readonly FileSecretBox secretBox;
     private readonly HttpClient? http;
@@ -63,6 +64,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
             this.Time,
             new SqliteAssetCacheIndex(storageOptions));
         this.listings = new SqliteNodeListingStore(storageOptions, this.Time);
+        this.resolutions = new BoundedResolutionCache(options.MaxResolutions, this.Time);
         (IAssetFetcherPort fetcher, this.http) = CreateFetcher(options.FetcherOverride, this.Time);
 
         PluginCallExecutor executor = new(options.CallOptions, this.Time);
@@ -80,10 +82,10 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         }
 
         this.Catalog = new CatalogPipeline(this.Gateway, this.Nodes, this.listings, executor);
-        this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, executor, AssetPipelineOptions.Default, this.Time);
+        this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, this.resolutions, executor, options.AssetPipeline ?? AssetPipelineOptions.Default, this.Time);
         this.Progress = new ProgressPipeline(this.ProgressStore, appSettings, this.Time);
         this.Library = new LibraryPipeline(this.LibraryStore, this.Nodes, this.Time);
-        this.Refresh = new RefreshPipeline(this.Library, this.Nodes, this.Catalog, this.cache);
+        this.Refresh = new RefreshPipeline(this.Library, this.Nodes, this.Catalog, this.cache, this.resolutions);
         this.downloadFiles = new DownloadFileStore(Path.Combine(data, "downloads"));
         this.Downloads = new DownloadPipeline(new SqliteDownloadStore(storageOptions), this.downloadFiles, this.Catalog, this.Assets, this.Nodes, appSettings, this.Time);
         this.AppSettings = new AppSettingsPipeline(appSettings, this.Time);
@@ -265,6 +267,8 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
             await this.wasmGateway.UnloadAllAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        // Every plugin reopens, so the links and tokens it handed out are no longer ones to trust.
+        await this.resolutions.ClearAsync(cancellationToken).ConfigureAwait(false);
         return unreadable;
     }
 
@@ -320,6 +324,13 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
         return unreadable;
     }
 
-    private Task UnloadAsync(PluginId plugin, CancellationToken cancellationToken) =>
-        this.wasmGateway?.UnloadAsync(plugin, cancellationToken) ?? Task.CompletedTask;
+    private async Task UnloadAsync(PluginId plugin, CancellationToken cancellationToken)
+    {
+        if (this.wasmGateway is not null)
+        {
+            await this.wasmGateway.UnloadAsync(plugin, cancellationToken).ConfigureAwait(false);
+        }
+
+        await this.resolutions.RemovePluginAsync(plugin, cancellationToken).ConfigureAwait(false);
+    }
 }

@@ -13,7 +13,8 @@ namespace EMMA.Application.Pipelines;
 /// <param name="nodes">The nodes the host has seen.</param>
 /// <param name="catalog">Asks plugins.</param>
 /// <param name="assets">The cached asset bytes; a refreshed node's are dropped.</param>
-public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort nodes, CatalogPipeline catalog, IAssetCachePort assets)
+/// <param name="resolutions">The remembered resolutions; a refreshed node's are dropped.</param>
+public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort nodes, CatalogPipeline catalog, IAssetCachePort assets, IResolutionCachePort resolutions)
 {
     /// <summary>
     /// Lists the children of every saved node again and reports which are new. A node whose children the host
@@ -63,7 +64,7 @@ public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort node
 
     /// <summary>
     /// Asks the plugin for a node again, which replaces what the host stored, including its thumbnail address, and drops
-    /// the node's cached asset bytes (such as its thumbnail) so they are fetched fresh.
+    /// the node's cached asset bytes (such as its thumbnail) and remembered resolutions so they are fetched fresh.
     /// </summary>
     /// <param name="node">The node; the host must have seen it.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
@@ -82,6 +83,7 @@ public sealed class RefreshPipeline(LibraryPipeline library, INodeStorePort node
         }
 
         await assets.RemoveNodeAsync(node, cancellationToken).ConfigureAwait(false);
+        await resolutions.RemoveNodeAsync(node, cancellationToken).ConfigureAwait(false);
 
         return found.Value.Count == 1
             ? Outcome.Success(found.Value[0])

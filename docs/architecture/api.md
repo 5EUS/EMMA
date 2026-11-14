@@ -55,10 +55,14 @@ before authentication and keyed on the *claimed* key, streaming calls that skipp
   proxies (`X-Forwarded-For` is caller-controlled), so it waits for a deployment that needs it.
 - TODO(rewrite): TLS is left to the deployment (reverse proxy or Kestrel certificate configuration). The host does not
   refuse plain HTTP on a non-loopback address.
-- TODO(rewrite): `GET /v1/assets/content` re-resolves the node on every call. Remote bytes are cached by URL, but a
-  video player seeking through a proxied asset resolves once per range request. Downloads do not need a resolution
-  cache (they resolve each leaf once, and a stored leaf is served without resolving). Cache resolutions per request key
-  when the video player (phase 8) shows it in measurements.
+- Resolutions are cached. `GET /v1/assets` and `GET /v1/assets/content` reuse what the plugin said a node resolves to
+  (per node, role and `hint`) for five minutes, or until shortly before a link says it expires, so reading every page of
+  a chapter, or every range of a proxied video, asks the plugin once. Only remote links and proxied tokens are kept
+  (inline bytes are not), and only in memory: a resolution can carry cookies, so it is never written to disk. A read
+  that fails on a remembered link or token asks the plugin again and retries once if the answer changed. Refreshing a
+  node, changing or reloading its plugin, and `POST /v1/cache/clear` forget the matching resolutions. A plugin that
+  revokes a token early is covered by that retry; one that rotates content under the same link is not (wait out the
+  five minutes, or refresh the node). Downloads resolve each leaf once, so the cache does not matter to them.
 - TODO(rewrite): API keys carry no scopes or expiry; every client may use every endpoint. A read-only key is easy to add
   to `ApiClientKey` when a client needs one.
 - TODO(rewrite): plugin settings are host-wide, not per client, and every client key may read and change them (a secret
