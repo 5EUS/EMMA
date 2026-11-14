@@ -6,9 +6,11 @@ namespace EMMA.Domain;
 /// <param name="Children">Kinds allowed beneath this one; empty means a leaf.</param>
 /// <param name="Roles">Asset roles the kind can resolve.</param>
 /// <param name="Profile">An optional client profile name such as <c>emma.profile.paged@1</c>.</param>
+/// <param name="MaxAge">How long the host may serve what it stored about a node of this kind before asking the plugin again; <see langword="null"/> keeps it until a refresh.</param>
 public sealed record KindInfo(
     NodeKind Kind,
     string Label,
     IReadOnlyList<NodeKind> Children,
     IReadOnlyList<AssetRole> Roles,
-    string? Profile);
+    string? Profile,
+    TimeSpan? MaxAge = null);

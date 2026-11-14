@@ -45,13 +45,15 @@ public static class TestData
     /// <param name="kind">The kind.</param>
     /// <param name="children">Child kinds.</param>
     /// <param name="roles">Resolvable roles.</param>
+    /// <param name="maxAge">How long stored copies stay fresh; <see langword="null"/> for ever.</param>
     /// <returns>The declaration.</returns>
-    public static KindInfo Kind(string kind, string[]? children = null, string[]? roles = null) => new(
+    public static KindInfo Kind(string kind, string[]? children = null, string[]? roles = null, TimeSpan? maxAge = null) => new(
         NodeKind.Create(kind),
         kind,
         [.. (children ?? []).Select(NodeKind.Create)],
         [.. (roles ?? []).Select(AssetRole.Create)],
-        null);
+        null,
+        maxAge);
 
     /// <summary>
     /// Builds the declaration of a small three-level tree (<c>series</c>, <c>chapter</c>,

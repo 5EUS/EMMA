@@ -30,6 +30,12 @@ public interface INodeStorePort
     /// <returns>The nodes found, in the order requested; references the host has not seen (or not in detail) are omitted.</returns>
     Task<IReadOnlyList<Node>> GetManyAsync(IReadOnlyList<NodeRef> nodes, bool detailedOnly, CancellationToken cancellationToken);
 
+    /// <summary>Says when the plugin last described each node in full, so a kind's maximum age can be applied.</summary>
+    /// <param name="nodes">The node references.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    /// <returns>The time of the last full description of each node that has one; others are omitted.</returns>
+    Task<IReadOnlyDictionary<NodeRef, DateTimeOffset>> DetailedAtAsync(IReadOnlyList<NodeRef> nodes, CancellationToken cancellationToken);
+
     /// <summary>Lists the ids of the children the host has stored for a node, so a refresh can tell which children are new.</summary>
     /// <param name="parent">The parent node.</param>
     /// <param name="cancellationToken">Cancels the call.</param>

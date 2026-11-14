@@ -103,6 +103,12 @@ profile. A **profile** is a published vocabulary (kinds, roles, well-known props
 client can build a typed experience on. Profiles are documentation plus host-side
 validation, not WIT. They cost nothing in the core.
 
+`max-age-ms` is the kind's freshness: how long the host may serve what it stored about a node of
+that kind (its `get` details and its listed children) before asking the plugin again. A site whose
+counts, feeds and comments change under the user declares it; a catalog that rarely changes leaves
+it out and keeps the copy until a refresh. `0` means always ask. The core only compares ages, so it
+still never learns what a kind is.
+
 ### Well-known `emma.*` props
 
 Keys starting `emma.` are reserved. Plugin-specific data uses the author's own prefix.
@@ -287,7 +293,9 @@ These live in `EMMA.Domain` / `EMMA.Application` and are never seen by plugins.
   by user, scope and key; `download_jobs` and `download_items` (the leaves each job stores). Migrations are scripts under `src/EMMA.Storage/Sql/`. There is no foreign key from user state to `nodes`: nodes are
   a cache that may be purged, while progress and library entries must survive that.
 - **Caching** (SQLite plus a cache directory). Reads go through the stores before the plugin; only a miss or a
-  refresh asks the plugin, and nothing expires by itself. `nodes.detailed` is 1 for a row stored from the plugin's
+  refresh asks the plugin, and nothing expires by itself unless the plugin's kind declares a `max-age-ms`: then
+  a node's details (`nodes.detailed_at`) or a listing (`node_listing_state.listed_at`) older than that are fetched
+  again, and the expired copy is served only if the plugin cannot be reached. `nodes.detailed` is 1 for a row stored from the plugin's
   `get` and 0 for one seen in a listing or search (which may omit expensive props): `get` answers from rows with 1
   only. `node_listing_state` and `node_listings` hold a node's complete, ordered child listing, written in one
   transaction after every page was read, so a half-listed node is never served. Asset bytes (thumbnails and remote

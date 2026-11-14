@@ -195,6 +195,27 @@ public sealed class SqliteNodeStoreTests : StorageTestBase
         Assert.Equal(["c", "a"], found.Select(node => node.Ref.Id.Value));
     }
 
+    /// <summary>A node remembers when it was last described in full; seeing it unchanged in a listing does not renew that, and a change drops it.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task DetailedAtIsWhenTheNodeWasLastDescribedInFull()
+    {
+        Node listed = MakeNode("a");
+        Node full = listed with { Props = [new Prop("acme.count", PropValue.FromWholeNumber(5))] };
+        NodeRef reference = TestData.Ref("a");
+        await this.Store.UpsertAsync([listed], Ct);
+        Assert.Empty(await this.Store.DetailedAtAsync([reference], Ct));
+
+        DateTimeOffset described = this.Time.GetUtcNow();
+        await this.Store.UpsertDetailedAsync([full], Ct);
+        this.Time.Advance(TimeSpan.FromMinutes(5));
+        await this.Store.UpsertAsync([full], Ct);
+        Assert.Equal(described, (await this.Store.DetailedAtAsync([reference], Ct))[reference]);
+
+        await this.Store.UpsertAsync([listed], Ct);
+        Assert.Empty(await this.Store.DetailedAtAsync([reference], Ct));
+    }
+
     /// <summary>Only nodes stored from a full read count as detailed, and a listing that changes one resets it.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]

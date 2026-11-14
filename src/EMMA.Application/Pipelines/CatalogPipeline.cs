@@ -13,7 +13,8 @@ namespace EMMA.Application.Pipelines;
 /// <param name="store">Where seen nodes are remembered.</param>
 /// <param name="listings">Where complete child listings are remembered.</param>
 /// <param name="executor">Runs plugin calls with retries and timeouts.</param>
-public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store, INodeListingPort listings, PluginCallExecutor executor)
+/// <param name="time">The clock that decides when a stored copy is older than its kind allows.</param>
+public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store, INodeListingPort listings, PluginCallExecutor executor, TimeProvider time)
 {
     private const int MaxPagesPerListing = 200;
     private const string CursorPrefix = "emma:";
@@ -148,7 +149,8 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
     /// <summary>
     /// Lists the children of a node in natural order: chapters, pages, episodes, tracks. For a node whose kind declares
     /// children the host lists them completely once and then serves every page from that stored listing, with cursors
-    /// of its own; <see cref="CacheMode.Refresh"/> lists them again. A kind without children is asked live.
+    /// of its own; <see cref="CacheMode.Refresh"/> lists them again, and so does a read once the listing is older than the
+    /// parent kind's maximum age (the stale listing is served if the plugin cannot be reached). A kind without children is asked live.
     /// </summary>
     /// <param name="parent">The parent node.</param>
     /// <param name="request">Cursor and limit.</param>
@@ -191,15 +193,22 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         }
 
         int limit = request.Limit ?? ContractLimits.MaxNodesPerPage;
-        if (mode == CacheMode.Use && await this.ReadStoredPageAsync(parent, offset, limit, cancellationToken).ConfigureAwait(false) is { } hit)
+        StoredPage? hit = mode == CacheMode.Use
+            ? await this.ReadStoredPageAsync(parent, offset, limit, cancellationToken).ConfigureAwait(false)
+            : null;
+        if (hit is not null && !IsStale(time.GetUtcNow() - hit.ListedAt, info.Value.FindKind(stored.Kind)?.MaxAge))
         {
-            return Outcome.Success(hit);
+            return Outcome.Success(hit.Page);
         }
 
         Outcome<IReadOnlyList<Node>> all = await this.RelistChildrenAsync(parent, cancellationToken).ConfigureAwait(false);
-        return all.IsSuccess
-            ? Outcome.Success(SlicePage(all.Value, offset, limit))
-            : Outcome.Failure<NodePage>(all.Error);
+        if (all.IsSuccess)
+        {
+            return Outcome.Success(SlicePage(all.Value, offset, limit));
+        }
+
+        // A stale listing beats none when the plugin cannot be reached.
+        return hit is not null ? Outcome.Success(hit.Page) : Outcome.Failure<NodePage>(all.Error);
     }
 
     /// <summary>
@@ -266,11 +275,17 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
 
         List<NodeRef> distinct = [.. references.Distinct()];
         Dictionary<NodeRef, Node> found = [];
+        Dictionary<NodeRef, Node> stale = [];
         if (mode == CacheMode.Use)
         {
-            foreach (Node node in await store.GetManyAsync(distinct, detailedOnly: true, cancellationToken).ConfigureAwait(false))
+            IReadOnlyList<Node> stored = await store.GetManyAsync(distinct, detailedOnly: true, cancellationToken).ConfigureAwait(false);
+            foreach (IGrouping<PluginId, Node> group in stored.GroupBy(node => node.Ref.Plugin))
             {
-                found[node.Ref] = node;
+                HashSet<NodeRef> expired = await this.FindExpiredAsync(group.Key, [.. group], cancellationToken).ConfigureAwait(false);
+                foreach (Node node in group)
+                {
+                    (expired.Contains(node.Ref) ? stale : found)[node.Ref] = node;
+                }
             }
         }
 
@@ -279,6 +294,17 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
             Outcome<IReadOnlyList<Node>> nodes = await this.GetFromPluginAsync(group.Key, [.. group], cancellationToken).ConfigureAwait(false);
             if (!nodes.IsSuccess)
             {
+                // Expired copies still answer when the plugin cannot be reached, but only if they cover everything asked.
+                if (group.All(stale.ContainsKey))
+                {
+                    foreach (NodeRef reference in group)
+                    {
+                        found[reference] = stale[reference];
+                    }
+
+                    continue;
+                }
+
                 return nodes;
             }
 
@@ -304,6 +330,8 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
             ? info
             : Outcome.Failure<PluginInfo>(ErrorCode.Internal, $"Plugin {plugin} {problem}.");
     }
+
+    private static bool IsStale(TimeSpan age, TimeSpan? maxAge) => maxAge is { } limit && age >= limit;
 
     private static bool TryReadOffset(string? cursor, out int offset)
     {
@@ -468,7 +496,28 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         return page;
     }
 
-    private async Task<NodePage?> ReadStoredPageAsync(NodeRef parent, int offset, int limit, CancellationToken cancellationToken)
+    /// <summary>Finds which stored nodes are older than their kind's maximum age.</summary>
+    private async Task<HashSet<NodeRef>> FindExpiredAsync(PluginId plugin, IReadOnlyList<Node> nodes, CancellationToken cancellationToken)
+    {
+        Outcome<PluginInfo> info = await this.DescribeAsync(plugin, cancellationToken).ConfigureAwait(false);
+        if (!info.IsSuccess)
+        {
+            // The plugin cannot be asked anyway, so what is stored has to do.
+            return [];
+        }
+
+        List<Node> aging = [.. nodes.Where(node => info.Value.FindKind(node.Kind)?.MaxAge is not null)];
+        if (aging.Count == 0)
+        {
+            return [];
+        }
+
+        IReadOnlyDictionary<NodeRef, DateTimeOffset> at = await store.DetailedAtAsync([.. aging.Select(node => node.Ref)], cancellationToken).ConfigureAwait(false);
+        DateTimeOffset now = time.GetUtcNow();
+        return [.. aging.Where(node => at.TryGetValue(node.Ref, out DateTimeOffset when) && IsStale(now - when, info.Value.FindKind(node.Kind)?.MaxAge)).Select(node => node.Ref)];
+    }
+
+    private async Task<StoredPage?> ReadStoredPageAsync(NodeRef parent, int offset, int limit, CancellationToken cancellationToken)
     {
         StoredListing? listing = await listings.GetPageAsync(parent, offset, limit, cancellationToken).ConfigureAwait(false);
         if (listing is null)
@@ -486,9 +535,13 @@ public sealed class CatalogPipeline(IPluginGateway gateway, INodeStorePort store
         }
 
         int next = offset + references.Count;
-        return new NodePage([.. references.Select(reference => nodes[reference])], next < listing.Total ? $"{CursorPrefix}{next}" : null, listing.Total, []);
+        return new StoredPage(
+            new NodePage([.. references.Select(reference => nodes[reference])], next < listing.Total ? $"{CursorPrefix}{next}" : null, listing.Total, []),
+            listing.ListedAt);
     }
 
     private Task RememberAsync(IReadOnlyList<Node> nodes, CancellationToken cancellationToken) =>
         nodes.Count == 0 ? Task.CompletedTask : store.UpsertAsync(nodes, cancellationToken);
+
+    private sealed record StoredPage(NodePage Page, DateTimeOffset ListedAt);
 }

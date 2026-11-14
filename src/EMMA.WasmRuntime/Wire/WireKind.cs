@@ -6,4 +6,5 @@ namespace EMMA.WasmRuntime.Wire;
 /// <param name="Children">The child kinds.</param>
 /// <param name="Roles">The asset roles.</param>
 /// <param name="Profile">The client profile.</param>
-internal sealed record WireKind(string Kind, string Label, IReadOnlyList<string> Children, IReadOnlyList<string> Roles, string? Profile);
+/// <param name="MaxAgeMs">How long stored copies stay fresh, in milliseconds.</param>
+internal sealed record WireKind(string Kind, string Label, IReadOnlyList<string> Children, IReadOnlyList<string> Roles, string? Profile, long? MaxAgeMs);

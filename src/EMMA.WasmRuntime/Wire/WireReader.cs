@@ -109,7 +109,8 @@ internal static class WireReader
         kind.Label,
         [.. kind.Children.Select(KindName)],
         [.. kind.Roles.Select(Role)],
-        kind.Profile);
+        kind.Profile,
+        kind.MaxAgeMs is { } maxAge ? TimeSpan.FromMilliseconds(maxAge) : null);
 
     private static FilterSpec Filter(WireFilter filter) => new(
         filter.Id,

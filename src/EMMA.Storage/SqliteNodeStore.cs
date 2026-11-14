@@ -15,9 +15,15 @@ namespace EMMA.Storage;
 public sealed class SqliteNodeStore(StorageOptions options, TimeProvider time) : INodeStorePort
 {
     private const string Upsert = @"
-        INSERT INTO nodes (plugin_id, local_id, kind, title, parent_local_id, thumbnail, props, updated_at, detailed)
-        VALUES ($plugin, $local, $kind, $title, $parent, $thumbnail, $props, $updatedAt, $detailed)
+        INSERT INTO nodes (plugin_id, local_id, kind, title, parent_local_id, thumbnail, props, updated_at, detailed, detailed_at)
+        VALUES ($plugin, $local, $kind, $title, $parent, $thumbnail, $props, $updatedAt, $detailed, CASE WHEN $detailed = 1 THEN $updatedAt END)
         ON CONFLICT (plugin_id, local_id) DO UPDATE SET
+            detailed_at = CASE
+                WHEN excluded.detailed = 1 THEN excluded.updated_at
+                WHEN nodes.kind = excluded.kind AND nodes.title = excluded.title AND nodes.thumbnail IS excluded.thumbnail
+                    AND nodes.props = excluded.props AND nodes.parent_local_id IS excluded.parent_local_id THEN nodes.detailed_at
+                ELSE NULL
+            END,
             detailed = CASE
                 WHEN excluded.detailed = 1 THEN 1
                 WHEN nodes.kind = excluded.kind AND nodes.title = excluded.title AND nodes.thumbnail IS excluded.thumbnail
@@ -40,6 +46,12 @@ public sealed class SqliteNodeStore(StorageOptions options, TimeProvider time) :
 
     private const string SelectDetailed = @"
         SELECT plugin_id, local_id, kind, title, parent_local_id, thumbnail, props
+        FROM nodes
+        WHERE plugin_id = $plugin AND local_id = $local AND detailed = 1;
+    ";
+
+    private const string SelectDetailedAt = @"
+        SELECT detailed_at
         FROM nodes
         WHERE plugin_id = $plugin AND local_id = $local AND detailed = 1;
     ";
@@ -97,6 +109,40 @@ public sealed class SqliteNodeStore(StorageOptions options, TimeProvider time) :
                     ReadNode,
                     cancellationToken).ConfigureAwait(false);
                 found.AddRange(rows);
+            }
+        }
+
+        return found;
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyDictionary<NodeRef, DateTimeOffset>> DetailedAtAsync(IReadOnlyList<NodeRef> nodes, CancellationToken cancellationToken)
+    {
+        Dictionary<NodeRef, DateTimeOffset> found = [];
+        if (nodes.Count == 0)
+        {
+            return found;
+        }
+
+        SqliteConnection connection = await this.database.OpenAsync(cancellationToken).ConfigureAwait(false);
+        await using (connection.ConfigureAwait(false))
+        {
+            foreach (NodeRef reference in nodes)
+            {
+                IReadOnlyList<DateTimeOffset?> rows = await SqliteDatabase.QueryAsync(
+                    connection,
+                    SelectDetailedAt,
+                    parameters =>
+                    {
+                        parameters.Bind("$plugin", reference.Plugin.Value);
+                        parameters.Bind("$local", reference.Id.Value);
+                    },
+                    reader => reader.GetNullableTimestamp(0),
+                    cancellationToken).ConfigureAwait(false);
+                if (rows.Count > 0 && rows[0] is { } at)
+                {
+                    found[reference] = at;
+                }
             }
         }
 

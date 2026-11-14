@@ -109,6 +109,8 @@ impl meta::Guest for Plugin {
                     children: vec![ENTRY.to_owned()],
                     roles: vec![],
                     profile: None,
+                    // Set a number of milliseconds for content that changes under the user (counts, feeds).
+                    max_age_ms: None,
                 },
                 KindInfo {
                     kind: ENTRY.to_owned(),
@@ -116,6 +118,8 @@ impl meta::Guest for Plugin {
                     children: vec![],
                     roles: vec!["text".to_owned()],
                     profile: None,
+                    // Set a number of milliseconds for content that changes under the user (counts, feeds).
+                    max_age_ms: None,
                 },
             ],
             filters: vec![],

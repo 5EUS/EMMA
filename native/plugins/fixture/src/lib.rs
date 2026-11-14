@@ -56,6 +56,15 @@ fn kind(kind: &str, label: &str, children: &[&str], roles: &[&str]) -> KindInfo 
         children: children.iter().map(|c| (*c).to_owned()).collect(),
         roles: roles.iter().map(|r| (*r).to_owned()).collect(),
         profile: None,
+        max_age_ms: None,
+    }
+}
+
+/// A kind whose stored details and listings the host may serve for only `max_age_ms`.
+fn aging(max_age_ms: u32, kind: KindInfo) -> KindInfo {
+    KindInfo {
+        max_age_ms: Some(max_age_ms),
+        ..kind
     }
 }
 
@@ -334,7 +343,10 @@ impl meta::Guest for Fixture {
                 kind("series", "Series", &["chapter"], &[]),
                 kind("chapter", "Chapter", &["page"], &[]),
                 kind("page", "Page", &[], &["image"]),
-                kind("recipe", "Recipe", &["recipe.step"], &["image"]),
+                aging(
+                    3_600_000,
+                    kind("recipe", "Recipe", &["recipe.step"], &["image"]),
+                ),
                 kind("recipe.step", "Step", &[], &["text", "image"]),
                 kind("probe", "Probe", &[], &["text", "image", "blob"]),
                 profiled(

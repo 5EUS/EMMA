@@ -14,7 +14,7 @@ namespace EMMA.Storage;
 public sealed class SqliteNodeListingStore(StorageOptions options, TimeProvider time) : INodeListingPort
 {
     private const string SelectTotal = @"
-        SELECT total
+        SELECT total, listed_at
         FROM node_listing_state
         WHERE plugin_id = $plugin AND parent_local_id = $parent;
     ";
@@ -52,11 +52,11 @@ public sealed class SqliteNodeListingStore(StorageOptions options, TimeProvider 
         SqliteConnection connection = await this.database.OpenAsync(cancellationToken).ConfigureAwait(false);
         await using (connection.ConfigureAwait(false))
         {
-            IReadOnlyList<long> total = await SqliteDatabase.QueryAsync(
+            IReadOnlyList<(long Total, long ListedAt)> total = await SqliteDatabase.QueryAsync(
                 connection,
                 SelectTotal,
                 parameters => BindParent(parameters, parent),
-                reader => reader.GetInt64(0),
+                reader => (reader.GetInt64(0), reader.GetInt64(1)),
                 cancellationToken).ConfigureAwait(false);
             if (total.Count == 0)
             {
@@ -76,7 +76,7 @@ public sealed class SqliteNodeListingStore(StorageOptions options, TimeProvider 
                     ? id
                     : throw new InvalidDataException("A stored listing has an invalid local id."),
                 cancellationToken).ConfigureAwait(false);
-            return new StoredListing(ids, checked((int)total[0]));
+            return new StoredListing(ids, checked((int)total[0].Total), SqliteValues.FromStored(total[0].ListedAt));
         }
     }
 

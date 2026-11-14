@@ -8,14 +8,19 @@ namespace EMMA.Infrastructure.InMemory;
 /// <summary>A listing store that forgets everything on exit. For tests and development; SQLite is the real store.</summary>
 public sealed class InMemoryNodeListingStore : INodeListingPort
 {
-    private readonly ConcurrentDictionary<NodeRef, IReadOnlyList<LocalNodeId>> listings = new();
+    private readonly ConcurrentDictionary<NodeRef, (IReadOnlyList<LocalNodeId> Children, DateTimeOffset ListedAt)> listings = new();
+    private readonly TimeProvider time;
+
+    /// <summary>Initializes a new instance of the <see cref="InMemoryNodeListingStore"/> class.</summary>
+    /// <param name="time">The time source that stamps each listing; the system clock when <see langword="null"/>.</param>
+    public InMemoryNodeListingStore(TimeProvider? time = null) => this.time = time ?? TimeProvider.System;
 
     /// <inheritdoc/>
     public Task<StoredListing?> GetPageAsync(NodeRef parent, int offset, int limit, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        StoredListing? page = this.listings.TryGetValue(parent, out IReadOnlyList<LocalNodeId>? children)
-            ? new StoredListing([.. children.Skip(offset).Take(limit)], children.Count)
+        StoredListing? page = this.listings.TryGetValue(parent, out (IReadOnlyList<LocalNodeId> Children, DateTimeOffset ListedAt) listing)
+            ? new StoredListing([.. listing.Children.Skip(offset).Take(limit)], listing.Children.Count, listing.ListedAt)
             : null;
         return Task.FromResult(page);
     }
@@ -24,7 +29,7 @@ public sealed class InMemoryNodeListingStore : INodeListingPort
     public Task ReplaceAsync(NodeRef parent, IReadOnlyList<LocalNodeId> children, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        this.listings[parent] = [.. children];
+        this.listings[parent] = ([.. children], this.time.GetUtcNow());
         return Task.CompletedTask;
     }
 

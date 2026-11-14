@@ -32,7 +32,7 @@ public sealed class PlaybackPipelineTests
             executor,
             new AssetPipelineOptions(1024),
             this.time);
-        this.playback = new PlaybackPipeline(new CatalogPipeline(this.gateway, this.nodes, new InMemoryNodeListingStore(), executor), assets, this.nodes);
+        this.playback = new PlaybackPipeline(new CatalogPipeline(this.gateway, this.nodes, new InMemoryNodeListingStore(), executor, new FakeTimeProvider()), assets, this.nodes);
         this.gateway.OnDescribe = _ => Outcome.Success(new PluginInfo(
             [
                 TestData.Kind("show", ["episode"]),

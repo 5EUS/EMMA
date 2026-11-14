@@ -22,6 +22,8 @@ public sealed class PluginCatalogTests(RuntimeFixture runtime) : IClassFixture<R
         KindInfo series = info.FindKind(NodeKind.Create("series"))!;
         Assert.Equal([NodeKind.Create("chapter")], series.Children);
         Assert.Equal(AssetRole.Create("image"), info.FindKind(NodeKind.Create("page"))!.Roles.Single());
+        Assert.Null(series.MaxAge);
+        Assert.Equal(TimeSpan.FromHours(1), info.FindKind(NodeKind.Create("recipe"))!.MaxAge);
         SettingSpec token = info.Settings.Single(setting => string.Equals(setting.Key, "connection.token", StringComparison.Ordinal));
         Assert.Equal(SettingType.Secret, token.Type);
         Assert.True(token.Required);

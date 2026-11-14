@@ -10,6 +10,9 @@ CREATE TABLE nodes (
     -- 1 when the row came from the plugin's `get` (full details), 0 when it came from a listing or search, which may
     -- leave out expensive props. A later listing that changes the node resets it; one that does not change it keeps it.
     detailed        INTEGER NOT NULL DEFAULT 0 CHECK (detailed IN (0, 1)),
+    -- When the plugin last described the node in full (`get`), kept while the node is unchanged; NULL while `detailed`
+    -- is 0. A kind may declare a maximum age, after which the host asks the plugin again.
+    detailed_at     INTEGER,
     PRIMARY KEY (plugin_id, local_id)
 ) STRICT, WITHOUT ROWID;
 

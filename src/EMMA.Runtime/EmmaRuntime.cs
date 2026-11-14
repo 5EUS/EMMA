@@ -84,7 +84,7 @@ public sealed partial class EmmaRuntime : IAsyncDisposable
             this.Gateway = this.wasmGateway;
         }
 
-        this.Catalog = new CatalogPipeline(this.Gateway, this.Nodes, this.listings, executor);
+        this.Catalog = new CatalogPipeline(this.Gateway, this.Nodes, this.listings, executor, this.Time);
         this.Assets = new AssetPipeline(this.Gateway, this.Policies, this.Nodes, fetcher, this.cache, this.resolutions, executor, options.AssetPipeline ?? AssetPipelineOptions.Default, this.Time);
         this.Progress = new ProgressPipeline(this.ProgressStore, appSettings, this.Time);
         this.Library = new LibraryPipeline(this.LibraryStore, this.Nodes, this.Time);

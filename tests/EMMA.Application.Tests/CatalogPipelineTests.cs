@@ -14,19 +14,22 @@ public sealed class CatalogPipelineTests
 {
     private readonly FakeTimeProvider time = new();
     private readonly FakePluginGateway gateway = new();
-    private readonly InMemoryNodeStore store = new();
-    private readonly InMemoryNodeListingStore listings = new();
+    private readonly InMemoryNodeStore store;
     private readonly CatalogPipeline pipeline;
 
     /// <summary>Initializes a new instance of the <see cref="CatalogPipelineTests"/> class.</summary>
-    public CatalogPipelineTests() =>
+    public CatalogPipelineTests()
+    {
+        this.store = new InMemoryNodeStore(this.time);
         this.pipeline = new CatalogPipeline(
             this.gateway,
             this.store,
-            this.listings,
+            new InMemoryNodeListingStore(this.time),
             new PluginCallExecutor(
                 new PluginCallOptions(3, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(30)),
-                this.time));
+                this.time),
+            this.time);
+    }
 
     /// <summary>Search results are namespaced under the plugin and remembered in the store.</summary>
     /// <returns>A task that completes when the test has run.</returns>
@@ -365,6 +368,70 @@ public sealed class CatalogPipelineTests
         Assert.Equal("New", after.Value[0].Title);
     }
 
+    /// <summary>A kind with a maximum age is asked for again once its stored details are older than that, and not before.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task GetAsksAgainOnceTheKindsMaxAgeHasPassed()
+    {
+        this.gateway.OnDescribe = _ => Outcome.Success(Aging(TimeSpan.FromMinutes(10)));
+        string title = "Old";
+        this.gateway.OnGet = (_, ids) => Outcome.Success<IReadOnlyList<PluginNode>>([.. ids.Select(id => TestData.RawNode(id.Value, title: title))]);
+        await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        this.time.Advance(TimeSpan.FromMinutes(9));
+        await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+        int callsWhileFresh = this.gateway.GetCalls;
+        title = "New";
+        this.time.Advance(TimeSpan.FromMinutes(2));
+        Outcome<IReadOnlyList<Node>> expired = await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(1, callsWhileFresh);
+        Assert.Equal(2, this.gateway.GetCalls);
+        Assert.Equal("New", Assert.Single(expired.Value).Title);
+    }
+
+    /// <summary>An expired node is still served when the plugin cannot be reached.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task GetServesAnExpiredNodeWhenThePluginIsDown()
+    {
+        this.gateway.OnDescribe = _ => Outcome.Success(Aging(TimeSpan.FromMinutes(1)));
+        this.gateway.OnGet = (_, ids) => Outcome.Success<IReadOnlyList<PluginNode>>([.. ids.Select(id => TestData.RawNode(id.Value, title: "Kept"))]);
+        await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        this.time.Advance(TimeSpan.FromHours(1));
+        this.gateway.OnGet = (_, _) => Outcome.Failure<IReadOnlyList<PluginNode>>(ErrorCode.InvalidArgument, "down");
+        Outcome<IReadOnlyList<Node>> served = await this.pipeline.GetAsync([TestData.Ref("a")], CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal("Kept", Assert.Single(served.Value).Title);
+    }
+
+    /// <summary>A listing under a kind with a maximum age is listed again once it is older than that, and a stale one answers when the plugin is down.</summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public async Task AStoredListingExpiresWithItsParentKindsMaxAge()
+    {
+        this.gateway.OnDescribe = _ => Outcome.Success(Aging(TimeSpan.FromMinutes(5)));
+        await this.store.UpsertAsync([Node("s", "series")], CancellationToken.None).ConfigureAwait(true);
+        List<string> chapters = ["c1"];
+        this.gateway.OnChildren = (_, parent, _) => Outcome.Success(TestData.RawPage(null, [.. chapters.Select(id => TestData.RawNode(id, "chapter", parent: parent?.Value))]));
+        await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+
+        this.time.Advance(TimeSpan.FromMinutes(4));
+        await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+        int callsWhileFresh = this.gateway.ChildrenCalls;
+        chapters.Add("c2");
+        this.time.Advance(TimeSpan.FromMinutes(2));
+        Outcome<NodePage> relisted = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+        this.gateway.OnChildren = (_, _, _) => Outcome.Failure<PluginNodePage>(ErrorCode.InvalidArgument, "down");
+        this.time.Advance(TimeSpan.FromHours(1));
+        Outcome<NodePage> stale = await this.pipeline.ChildrenAsync(TestData.Ref("s"), new PageRequest(), CancellationToken.None).ConfigureAwait(true);
+
+        Assert.Equal(1, callsWhileFresh);
+        Assert.Equal(["c1", "c2"], relisted.Value.Items.Select(node => node.Ref.Id.Value));
+        Assert.Equal(["c1", "c2"], stale.Value.Items.Select(node => node.Ref.Id.Value));
+    }
+
     /// <summary>A node's children are listed completely once, then every page is served from the stored listing with the host's own cursors.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
@@ -457,6 +524,11 @@ public sealed class CatalogPipelineTests
     }
 
     private static FilterSpec LookupFilter() => TestData.Filter("tag", FilterType.Lookup) with { Lookup = new LookupSpec(2, 3, 100, false) };
+
+    private static PluginInfo Aging(TimeSpan maxAge) => TestData.Info() with
+    {
+        Kinds = [TestData.Kind("series", ["chapter"], maxAge: maxAge), TestData.Kind("chapter", ["page"]), TestData.Kind("page", roles: ["image"])],
+    };
 
     private static Node Node(string id, string kind) =>
         new(TestData.Ref(id), NodeKind.Create(kind), id, null, null, []);

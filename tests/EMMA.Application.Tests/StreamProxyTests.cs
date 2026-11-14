@@ -46,7 +46,7 @@ public sealed class StreamProxyTests : IAsyncDisposable
         this.policies = new FakePolicies().Allow(TestData.Plugin, "cdn.example.com", "seg.example.com");
         this.cache = new BoundedAssetCache(new AssetCacheOptions(8 * 1024 * 1024, 0, "unused", TimeSpan.FromDays(1)), this.time);
         this.assets = new AssetPipeline(this.gateway, this.policies, nodes, this.fetcher, this.cache, new BoundedResolutionCache(64, this.time), this.executor, new AssetPipelineOptions(8 * 1024 * 1024), this.time);
-        CatalogPipeline catalog = new(this.gateway, nodes, new InMemoryNodeListingStore(), this.executor);
+        CatalogPipeline catalog = new(this.gateway, nodes, new InMemoryNodeListingStore(), this.executor, this.time);
         this.downloads = new DownloadPipeline(new FakeDownloadStore(), new FakeDownloadFiles(), catalog, this.assets, nodes, new FakeAppSettings(), this.time);
         this.proxy = this.Proxy(new StreamProxyOptions { MaxSessions = 2, ProxiedChunkBytes = 1000 });
     }

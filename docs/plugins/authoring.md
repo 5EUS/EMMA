@@ -32,7 +32,10 @@ EMMA never switches on it. A manga plugin declares `manga`, `manga.chapter`, `ma
 `season`, `episode`; a recipe plugin `recipe`, `recipe.step`. Each kind says which kinds can be its children and which
 **roles** of asset it can resolve (`image`, `stream`, `subtitle`, `audio`, `text`, anything). That declaration is the
 schema generic clients navigate by. A kind may name a **profile** (`emma.profile.paged@1`) to tell clients it follows a
-known vocabulary so they can offer a typed experience without EMMA changing.
+known vocabulary so they can offer a typed experience without EMMA changing. A kind may also set `max_age_ms`: the
+host keeps what it stored about such a node (its details and its listed children) for that long, then asks you again.
+Set it where content changes under the user (view counts, feeds, comments); leave it out for a catalog that rarely
+changes, and the host keeps the copy until the user refreshes. If you cannot be reached, the expired copy is served.
 
 You implement three interfaces (`wit/meta.wit`, `catalog.wit`, `assets.wit`):
 

@@ -98,7 +98,7 @@ public sealed class PluginInfoValidatorTests
         {
             OnDescribe = _ => Outcome.Success(WithSettings([], Setting("a", SettingType.Secret) with { DefaultValues = ["leak"] })),
         };
-        CatalogPipeline pipeline = new(gateway, new EMMA.Infrastructure.InMemory.InMemoryNodeStore(), new EMMA.Infrastructure.InMemory.InMemoryNodeListingStore(), new PluginCallExecutor(PluginCallOptions.Default, TimeProvider.System));
+        CatalogPipeline pipeline = new(gateway, new EMMA.Infrastructure.InMemory.InMemoryNodeStore(), new EMMA.Infrastructure.InMemory.InMemoryNodeListingStore(), new PluginCallExecutor(PluginCallOptions.Default, TimeProvider.System), TimeProvider.System);
 
         Outcome<NodePage> result = await pipeline.SearchAsync(TestData.Plugin, TestData.TextQuery("x"), TestContext.Current.CancellationToken).ConfigureAwait(true);
 
