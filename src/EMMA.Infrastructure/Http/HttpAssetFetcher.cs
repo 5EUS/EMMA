@@ -23,12 +23,16 @@ public sealed class HttpAssetFetcher(HttpClient client, TimeProvider time) : IAs
     private static readonly string[] CredentialHeaders = ["Authorization", "Cookie", "Proxy-Authorization"];
 
     /// <summary>Creates a handler configured the way this fetcher requires.</summary>
-    /// <returns>A handler that does not follow redirects and does not use cookies.</returns>
+    /// <returns>A handler that does not follow redirects, does not use cookies and does not ask for compressed answers.</returns>
     public static SocketsHttpHandler CreateHandler() => new()
     {
         AllowAutoRedirect = false,
         UseCookies = false,
-        AutomaticDecompression = DecompressionMethods.All,
+
+        // Nothing is compressed on the way: a ranged answer must describe the bytes the player gets, and a server that
+        // compresses whatever accepts compression (Invidious does, media included) would otherwise send a length and a
+        // range for the compressed form, then have the handler decompress the body into something they no longer fit.
+        AutomaticDecompression = DecompressionMethods.None,
     };
 
     /// <inheritdoc/>
@@ -263,7 +267,11 @@ public sealed class HttpAssetFetcher(HttpClient client, TimeProvider time) : IAs
         {
             ContentRangeHeaderValue? served = response.Content.Headers.ContentRange;
             long start = served?.From ?? range?.Start ?? 0;
-            return Outcome.Success(new RemoteResponse(mime, response.Content.Headers.ContentLength, start, served?.Length, acceptsRanges: true, body, response));
+
+            // The length header is gone when the handler decompressed the body, or the upstream sent it in chunks; the range it
+            // served says how long this part is, and a player needs that to be told where the part ends.
+            long? partLength = response.Content.Headers.ContentLength ?? (served is { From: { } from, To: { } to } ? to - from + 1 : null);
+            return Outcome.Success(new RemoteResponse(mime, partLength, start, served?.Length, acceptsRanges: true, body, response));
         }
 
         long? whole = response.Content.Headers.ContentLength;

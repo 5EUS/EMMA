@@ -10,12 +10,6 @@ namespace EMMA.Application.Streaming;
 /// </summary>
 internal static class DashManifest
 {
-    /// <summary>
-    /// A stand-in for the address the host serves the manifest at. Only the shape matters: the host's directories sit
-    /// beside the manifest, so a rewritten address is worked out as a reference from one stand-in directory to another.
-    /// </summary>
-    private static readonly Uri ProxyManifest = new("http://proxy.invalid/s/0");
-
     /// <summary>Says whether some text is a DASH manifest.</summary>
     /// <param name="text">The text.</param>
     /// <returns><see langword="true"/> when it holds an <c>MPD</c> element.</returns>
@@ -24,9 +18,10 @@ internal static class DashManifest
     /// <summary>Rewrites a manifest.</summary>
     /// <param name="text">The manifest.</param>
     /// <param name="baseUri">The address the manifest was fetched from.</param>
+    /// <param name="sessionPath">The full address of the directory the host serves this stream's parts from, ending in a slash.</param>
     /// <param name="registerBase">Registers a directory the host will serve and gives the relative path that reaches it.</param>
     /// <returns>The new manifest, or <see langword="null"/> when the text is not a manifest this can read.</returns>
-    public static string? Rewrite(string text, Uri baseUri, Func<Uri, string> registerBase)
+    public static string? Rewrite(string text, Uri baseUri, string sessionPath, Func<Uri, string> registerBase)
     {
         XDocument document;
         try
@@ -48,45 +43,40 @@ internal static class DashManifest
         XName baseName = root.Name.Namespace + "BaseURL";
         List<XElement> topLevel = [.. root.Elements(baseName)];
         Uri originalBase;
-        Uri proxyBase;
         if (topLevel.Count == 0)
         {
-            string part = registerBase(Directory(baseUri));
-            root.AddFirst(new XElement(baseName, part));
+            root.AddFirst(new XElement(baseName, registerBase(Directory(baseUri))));
             originalBase = baseUri;
-            proxyBase = new Uri(ProxyManifest, part);
         }
         else
         {
             // Only the first applies when a manifest lists several; the rest are alternates for the same media.
             XElement first = topLevel[0];
             Uri target = Uri.TryCreate(baseUri, first.Value.Trim(), out Uri? resolved) ? resolved : baseUri;
-            string part = RelativeTo(target, registerBase);
-            first.Value = part;
+            first.Value = RelativeTo(target, registerBase);
             foreach (XElement alternate in topLevel.Skip(1))
             {
                 alternate.Remove();
             }
 
             originalBase = target;
-            proxyBase = new Uri(ProxyManifest, part);
         }
 
-        Descend(root, baseName, originalBase, proxyBase, registerBase);
+        Descend(root, baseName, originalBase, sessionPath, registerBase);
         return document.ToString(SaveOptions.DisableFormatting);
     }
 
     /// <summary>
-    /// Rewrites the <c>BaseURL</c> elements beneath <paramref name="parent"/>. A base is resolved against the base of
-    /// its parent, so a rewritten address is made relative to the parent's rewritten base, not to the manifest: with a
-    /// base of <c>1/</c> above it, the way to the host's directory 2 is <c>../2/</c>.
+    /// Rewrites the <c>BaseURL</c> elements beneath <paramref name="parent"/>. A base that names a place of its own (an
+    /// absolute address, or a path from the root of a host) becomes the full address of the host's directory for it, so it
+    /// reaches that directory whatever bases sit above it and however a player resolves references. A plain relative base
+    /// follows its parent, which the host serves, and is left as it is.
     /// </summary>
-    private static void Descend(XElement parent, XName baseName, Uri originalBase, Uri proxyBase, Func<Uri, string> registerBase)
+    private static void Descend(XElement parent, XName baseName, Uri originalBase, string sessionPath, Func<Uri, string> registerBase)
     {
         foreach (XElement child in parent.Elements().Where(element => element.Name != baseName))
         {
             Uri childOriginal = originalBase;
-            Uri childProxy = proxyBase;
             List<XElement> bases = [.. child.Elements(baseName)];
             if (bases.Count > 0)
             {
@@ -95,25 +85,21 @@ internal static class DashManifest
                 if (target is not null)
                 {
                     string name = target.AbsoluteUri[Directory(target).AbsoluteUri.Length..];
-                    Uri served = new(ProxyManifest, registerBase(Directory(target)) + name);
-                    string relative = proxyBase.MakeRelativeUri(served).ToString();
+                    string rewritten = sessionPath + registerBase(Directory(target)) + name;
                     foreach (XElement element in bases)
                     {
-                        element.Value = relative;
+                        element.Value = rewritten;
                     }
 
                     childOriginal = target;
-                    childProxy = served;
                 }
-                else if (Uri.TryCreate(originalBase, value, out Uri? original) && Uri.TryCreate(proxyBase, value, out Uri? proxy))
+                else if (Uri.TryCreate(originalBase, value, out Uri? original))
                 {
-                    // A relative base follows its parent, which the host serves: it is left as it is.
                     childOriginal = original;
-                    childProxy = proxy;
                 }
             }
 
-            Descend(child, baseName, childOriginal, childProxy, registerBase);
+            Descend(child, baseName, childOriginal, sessionPath, registerBase);
         }
     }
 

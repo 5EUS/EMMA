@@ -8,6 +8,8 @@ namespace EMMA.Application.Tests;
 /// <summary>Tests for <see cref="DashManifest"/>.</summary>
 public sealed class DashManifestTests
 {
+    private static readonly string SessionPath = new UriBuilder("http", "127.0.0.1", 5, "/s/0/").Uri.AbsoluteUri;
+
     private static readonly Uri Origin = TestData.Url("cdn.example.com", "/show/ep1/manifest.mpd");
 
     /// <summary>A manifest with no base gets one that points at its own directory.</summary>
@@ -18,6 +20,7 @@ public sealed class DashManifestTests
         string? result = DashManifest.Rewrite(
             "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"><Period/></MPD>",
             Origin,
+            SessionPath,
             directory =>
             {
                 registered.Add(directory);
@@ -36,6 +39,7 @@ public sealed class DashManifestTests
         string? result = DashManifest.Rewrite(
             "<MPD><BaseURL>../media/</BaseURL><BaseURL>https://mirror.example.net/media/</BaseURL></MPD>",
             Origin,
+            SessionPath,
             directory =>
             {
                 registered.Add(directory);
@@ -48,8 +52,8 @@ public sealed class DashManifestTests
     }
 
     /// <summary>
-    /// A file named by an absolute base further down keeps its name and gets its directory served by the host. It is a
-    /// reference from the manifest's base (the host's directory 0), so it climbs out of it first.
+    /// A file named by an absolute base further down keeps its name and gets its directory served by the host, named by
+    /// absolute path so that no base above it, and no way a player resolves references, can send it elsewhere.
     /// </summary>
     [Fact]
     public void AnAbsoluteBaseOnARepresentationKeepsItsFileName()
@@ -57,9 +61,10 @@ public sealed class DashManifestTests
         string? result = DashManifest.Rewrite(
             "<MPD><Period><AdaptationSet><Representation><BaseURL>https://files.example.org/v/video.mp4?token=a</BaseURL></Representation></AdaptationSet></Period></MPD>",
             Origin,
+            SessionPath,
             directory => string.Equals(directory.Host, "files.example.org", StringComparison.Ordinal) ? "9/" : "0/");
 
-        Assert.Contains("<BaseURL>../9/video.mp4?token=a</BaseURL>", result, StringComparison.Ordinal);
+        Assert.Contains("<BaseURL>http://127.0.0.1:5/s/0/9/video.mp4?token=a</BaseURL>", result, StringComparison.Ordinal);
         Assert.DoesNotContain("files.example.org", result, StringComparison.Ordinal);
     }
 
@@ -75,6 +80,7 @@ public sealed class DashManifestTests
         string? result = DashManifest.Rewrite(
             "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"><Period><AdaptationSet><Representation><BaseURL>/companion/videoplayback?expire=1&amp;id=2</BaseURL></Representation></AdaptationSet></Period></MPD>",
             TestData.Url("inv.example.org", "/api/manifest/dash/id/abc"),
+            SessionPath,
             directory =>
             {
                 registered.Add(directory);
@@ -85,7 +91,7 @@ public sealed class DashManifestTests
             ["https://inv.example.org/api/manifest/dash/id/", "https://inv.example.org/companion/"],
             registered.Select(uri => uri.AbsoluteUri));
         Assert.Contains("<BaseURL>1/</BaseURL>", result, StringComparison.Ordinal);
-        Assert.Contains("<BaseURL>../2/videoplayback?expire=1&amp;id=2</BaseURL>", result, StringComparison.Ordinal);
+        Assert.Contains("<BaseURL>http://127.0.0.1:5/s/0/2/videoplayback?expire=1&amp;id=2</BaseURL>", result, StringComparison.Ordinal);
         Assert.DoesNotContain("file:", result, StringComparison.Ordinal);
     }
 
@@ -97,6 +103,7 @@ public sealed class DashManifestTests
         string? result = DashManifest.Rewrite(
             "<MPD><Period><BaseURL>https://a.example.com/x/</BaseURL><AdaptationSet><Representation><BaseURL>/y/seg.mp4</BaseURL></Representation></AdaptationSet></Period></MPD>",
             Origin,
+            SessionPath,
             directory =>
             {
                 registered.Add(directory);
@@ -104,7 +111,7 @@ public sealed class DashManifestTests
             });
 
         Assert.Contains("https://a.example.com/y/", registered.Select(uri => uri.AbsoluteUri));
-        Assert.Contains("<BaseURL>../3/seg.mp4</BaseURL>", result, StringComparison.Ordinal);
+        Assert.Contains("<BaseURL>http://127.0.0.1:5/s/0/3/seg.mp4</BaseURL>", result, StringComparison.Ordinal);
     }
 
     /// <summary>A relative base further down is left alone: it follows its parent, which is served by the host.</summary>
@@ -114,6 +121,7 @@ public sealed class DashManifestTests
         string? result = DashManifest.Rewrite(
             "<MPD><Period><BaseURL>video/</BaseURL></Period></MPD>",
             Origin,
+            SessionPath,
             _ => "1/");
 
         Assert.Contains("<BaseURL>video/</BaseURL>", result, StringComparison.Ordinal);
@@ -123,9 +131,9 @@ public sealed class DashManifestTests
     [Fact]
     public void ThingsThatAreNotManifestsAreRefused()
     {
-        Assert.Null(DashManifest.Rewrite("<html/>", Origin, _ => "x"));
-        Assert.Null(DashManifest.Rewrite("not xml", Origin, _ => "x"));
-        Assert.Null(DashManifest.Rewrite("<!DOCTYPE MPD [<!ENTITY e SYSTEM \"file:///etc/passwd\">]><MPD>&e;</MPD>", Origin, _ => "x"));
+        Assert.Null(DashManifest.Rewrite("<html/>", Origin, SessionPath, _ => "x"));
+        Assert.Null(DashManifest.Rewrite("not xml", Origin, SessionPath, _ => "x"));
+        Assert.Null(DashManifest.Rewrite("<!DOCTYPE MPD [<!ENTITY e SYSTEM \"file:///etc/passwd\">]><MPD>&e;</MPD>", Origin, SessionPath, _ => "x"));
         Assert.True(DashManifest.Looks("<?xml version=\"1.0\"?><MPD/>"));
     }
 }

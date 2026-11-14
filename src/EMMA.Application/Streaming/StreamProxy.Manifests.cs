@@ -33,7 +33,7 @@ public sealed partial class StreamProxy
         return extension.Length is > 1 and <= MaxExtensionLength && extension.Skip(1).All(char.IsAsciiLetterOrDigit) ? extension : string.Empty;
     }
 
-    private async Task<Outcome<StreamResponse>> ServeManifestAsync(StreamSession session, int part, StreamTarget target, CancellationToken cancellationToken)
+    private async Task<Outcome<StreamResponse>> ServeManifestAsync(StreamSession session, int part, StreamTarget target, string sessionPath, CancellationToken cancellationToken)
     {
         Outcome<AssetPayload> fetched = await this.FetchManifestAsync(session, target, cancellationToken).ConfigureAwait(false);
         if (!fetched.IsSuccess
@@ -80,7 +80,7 @@ public sealed partial class StreamProxy
         }
 
         string? dash = DashManifest.Looks(text)
-            ? DashManifest.Rewrite(text, baseUri, directory => this.Register(session, StreamPartKind.Directory, directory, origin) + "/")
+            ? DashManifest.Rewrite(text, baseUri, sessionPath, directory => this.Register(session, StreamPartKind.Directory, directory, origin) + "/")
             : null;
         return dash is null
             ? Outcome.Failure<StreamResponse>(ErrorCode.Unsupported, "The stream's manifest is neither an HLS playlist nor a DASH manifest the host can serve.")

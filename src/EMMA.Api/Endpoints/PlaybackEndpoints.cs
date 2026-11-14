@@ -68,7 +68,7 @@ internal static class PlaybackEndpoints
         string path = string.IsNullOrEmpty(rest) ? $"{session}/{part}" : $"{session}/{part}/{rest}";
         string? query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value![1..] : null;
         Outcome<StreamResponse> response = await streams
-            .ServeAsync(new StreamRequest(path, RequestReader.Range(context.Request), query), cancellationToken)
+            .ServeAsync(new StreamRequest(path, RequestReader.Range(context.Request), query, $"{context.Request.Scheme}://{context.Request.Host}{StreamPath}/"), cancellationToken)
             .ConfigureAwait(false);
         return response.IsSuccess
             ? new StreamResult(response.Value, string.Equals(context.Request.Method, HttpMethods.Head, StringComparison.Ordinal))

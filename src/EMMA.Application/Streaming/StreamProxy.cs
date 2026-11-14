@@ -34,6 +34,7 @@ public sealed partial class StreamProxy(
     TimeProvider time)
 {
     private const string SegmentMime = "application/octet-stream";
+    private const char Slash = '/';
 
     private static readonly string[] CredentialHeaders = ["Authorization", "Cookie", "Proxy-Authorization"];
 
@@ -121,7 +122,7 @@ public sealed partial class StreamProxy(
         }
 
         return target.Kind == StreamPartKind.Manifest
-            ? await this.ServeManifestAsync(session, part, target, cancellationToken).ConfigureAwait(false)
+            ? await this.ServeManifestAsync(session, part, target, $"{request.PathBase}{segments[0]}{Slash}", cancellationToken).ConfigureAwait(false)
             : await this.ServeMediaAsync(session, part, target, request.Range, cancellationToken).ConfigureAwait(false);
     }
 

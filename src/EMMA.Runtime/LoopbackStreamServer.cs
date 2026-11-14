@@ -95,6 +95,41 @@ internal sealed class LoopbackStreamServer(StreamProxy proxy) : IAsyncDisposable
         _ => 502,
     };
 
+    /// <summary>
+    /// Resolves <c>.</c> and <c>..</c> segments the way an HTTP server does (RFC 3986 section 5.2.4). A player resolves the
+    /// relative addresses in a manifest itself, but some (ffmpeg) send them as they are: <c>1/../2/file</c> is the
+    /// manifest's way of reaching a sibling directory. Done before anything is looked up, so a path that climbs out of
+    /// the secret and session is simply not one of ours.
+    /// </summary>
+    /// <param name="segments">The path's segments, still percent-encoded.</param>
+    /// <returns>The segments with those resolved, or <see langword="null"/> when a <c>..</c> would climb above the first segment.</returns>
+    private static string[]? CollapseDotSegments(string[] segments)
+    {
+        List<string> kept = [];
+        foreach (string segment in segments)
+        {
+            if (string.Equals(segment, ".", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (string.Equals(segment, "..", StringComparison.Ordinal))
+            {
+                if (kept.Count == 0)
+                {
+                    return null;
+                }
+
+                kept.RemoveAt(kept.Count - 1);
+                continue;
+            }
+
+            kept.Add(segment);
+        }
+
+        return [.. kept];
+    }
+
     /// <summary>Reads one <c>bytes=start-</c> or <c>bytes=start-end</c> range; anything else is ignored and the whole part is sent.</summary>
     private static ByteRange? ParseRange(string? value)
     {
@@ -297,8 +332,8 @@ internal sealed class LoopbackStreamServer(StreamProxy proxy) : IAsyncDisposable
         int question = target.IndexOf('?', StringComparison.Ordinal);
         string path = question < 0 ? target : target[..question];
         string? query = question < 0 ? null : target[(question + 1)..];
-        string[] segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 3 || !this.FixedTimeEquals(segments[0]))
+        string[]? segments = CollapseDotSegments(path.Split('/', StringSplitOptions.RemoveEmptyEntries));
+        if (segments is null || segments.Length < 3 || !this.FixedTimeEquals(segments[0]))
         {
             return null;
         }
@@ -316,7 +351,7 @@ internal sealed class LoopbackStreamServer(StreamProxy proxy) : IAsyncDisposable
         }
 
         headers.TryGetValue("Range", out string? range);
-        return new StreamRequest(string.Join('/', decoded), ParseRange(range), query);
+        return new StreamRequest(string.Join('/', decoded), ParseRange(range), query, $"http://127.0.0.1:{((IPEndPoint?)this.listener?.LocalEndpoint)?.Port}/{segments[0]}/");
     }
 
     private bool FixedTimeEquals(string presented) =>

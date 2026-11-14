@@ -82,6 +82,40 @@ public sealed class PlaybackTests
         Assert.Equal(new HttpHeader("Referer", "https://example.com/"), fetcher.Opens.Single().Delivery.Headers.Single());
     });
 
+    /// <summary>
+    /// A DASH manifest points at media on the manifest's own host (a path from the root, as Invidious writes them) by an
+    /// absolute path to the host's directory for it, which any player can follow. A <c>..</c> a client sends anyway is
+    /// resolved like an HTTP server resolves it, and a path that climbs out of the stream is not answered.
+    /// </summary>
+    /// <returns>A task that completes when the test has run.</returns>
+    [Fact]
+    public Task ADashManifestPointsAtItsMediaByFullAddress() => WithRuntimeAsync(async (runtime, gateway, fetcher, _) =>
+    {
+        const string Mpd = "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"><Period><AdaptationSet><Representation><BaseURL>/media/seg.mp4?t=1</BaseURL></Representation></AdaptationSet></Period></MPD>";
+        gateway.OnResolve = (_, _) => Outcome.Success<IReadOnlyList<Asset>>(
+            [new Asset("application/dash+xml", new RemoteDelivery(TestData.Url("cdn.example.com", "/v/manifest.mpd"), [], null), null, [])]);
+        fetcher.OnFetch = delivery => Outcome.Success(new AssetPayload(
+            "application/octet-stream",
+            delivery.Url.AbsolutePath.EndsWith(".mpd", StringComparison.Ordinal) ? Encoding.UTF8.GetBytes(Mpd) : new byte[] { 9, 9, 9 },
+            DateTimeOffset.UnixEpoch));
+        OpenedPlayback opened = (await runtime.OpenStreamUrlAsync(Track, Stream, 0, null, Ct).ConfigureAwait(true)).Value;
+        using HttpClient http = new();
+        string manifest = await http.GetStringAsync(opened.Url, Ct).ConfigureAwait(true);
+        List<string> bases = [.. System.Xml.Linq.XDocument.Parse(manifest).Descendants().Where(element => string.Equals(element.Name.LocalName, "BaseURL", StringComparison.Ordinal)).Select(element => element.Value)];
+        string reference = bases.Single(value => value.Contains("seg.mp4", StringComparison.Ordinal));
+        string directory = opened.Url.AbsolutePath[..(opened.Url.AbsolutePath.LastIndexOf('/') + 1)];
+
+        byte[] media = await http.GetByteArrayAsync(new Uri(opened.Url, reference), Ct).ConfigureAwait(true);
+        string collapsed = await RawGetAsync(opened.Url, directory + "1/../0").ConfigureAwait(true);
+        string climbing = await RawGetAsync(opened.Url, directory + "../../../x/0").ConfigureAwait(true);
+
+        Assert.StartsWith(new Uri(opened.Url, directory).AbsoluteUri, reference, StringComparison.Ordinal);
+        Assert.DoesNotContain("..", reference, StringComparison.Ordinal);
+        Assert.Equal([9, 9, 9], media);
+        Assert.StartsWith("HTTP/1.1 200", collapsed, StringComparison.Ordinal);
+        Assert.StartsWith("HTTP/1.1 404", climbing, StringComparison.Ordinal);
+    });
+
     /// <summary>Only a caller that knows the secret in the path, and addresses the server as itself, is answered; only GET and HEAD are.</summary>
     /// <returns>A task that completes when the test has run.</returns>
     [Fact]
@@ -153,6 +187,19 @@ public sealed class PlaybackTests
         using HttpClient http = new();
 
         await Assert.ThrowsAsync<HttpRequestException>(() => http.GetByteArrayAsync(address, Ct)).ConfigureAwait(true);
+    }
+
+    private static async Task<string> RawGetAsync(Uri server, string path)
+    {
+        using TcpClient client = new();
+        await client.ConnectAsync(server.Host, server.Port, Ct).ConfigureAwait(true);
+        NetworkStream stream = client.GetStream();
+        await using (stream.ConfigureAwait(true))
+        {
+            await stream.WriteAsync(Encoding.ASCII.GetBytes($"GET {path} HTTP/1.1\r\nHost: {server.Authority}\r\nConnection: close\r\n\r\n"), Ct).ConfigureAwait(true);
+            using StreamReader reader = new(stream, Encoding.ASCII, leaveOpen: true);
+            return await reader.ReadToEndAsync(Ct).ConfigureAwait(true);
+        }
     }
 
     private static async Task WithRuntimeAsync(Func<EmmaRuntime, FakePluginGateway, FakeAssetFetcher, RuntimeHarness, Task> body)
