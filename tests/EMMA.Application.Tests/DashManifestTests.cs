@@ -47,7 +47,10 @@ public sealed class DashManifestTests
         Assert.DoesNotContain("mirror", result, StringComparison.Ordinal);
     }
 
-    /// <summary>A file named by an absolute base further down keeps its name and gets its directory served by the host.</summary>
+    /// <summary>
+    /// A file named by an absolute base further down keeps its name and gets its directory served by the host. It is a
+    /// reference from the manifest's base (the host's directory 0), so it climbs out of it first.
+    /// </summary>
     [Fact]
     public void AnAbsoluteBaseOnARepresentationKeepsItsFileName()
     {
@@ -56,8 +59,52 @@ public sealed class DashManifestTests
             Origin,
             directory => string.Equals(directory.Host, "files.example.org", StringComparison.Ordinal) ? "9/" : "0/");
 
-        Assert.Contains("<BaseURL>9/video.mp4?token=a</BaseURL>", result, StringComparison.Ordinal);
+        Assert.Contains("<BaseURL>../9/video.mp4?token=a</BaseURL>", result, StringComparison.Ordinal);
         Assert.DoesNotContain("files.example.org", result, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A base that starts at the root of the host (<c>/companion/videoplayback?...</c>, as Invidious writes them) is a
+    /// file on the manifest's host: it is served by the host and reached from the manifest's base, and is never taken
+    /// for a <c>file:</c> address.
+    /// </summary>
+    [Fact]
+    public void ARootRelativeBaseIsServedByTheHost()
+    {
+        List<Uri> registered = [];
+        string? result = DashManifest.Rewrite(
+            "<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"><Period><AdaptationSet><Representation><BaseURL>/companion/videoplayback?expire=1&amp;id=2</BaseURL></Representation></AdaptationSet></Period></MPD>",
+            TestData.Url("inv.example.org", "/api/manifest/dash/id/abc"),
+            directory =>
+            {
+                registered.Add(directory);
+                return registered.Count == 1 ? "1/" : "2/";
+            });
+
+        Assert.Equal(
+            ["https://inv.example.org/api/manifest/dash/id/", "https://inv.example.org/companion/"],
+            registered.Select(uri => uri.AbsoluteUri));
+        Assert.Contains("<BaseURL>1/</BaseURL>", result, StringComparison.Ordinal);
+        Assert.Contains("<BaseURL>../2/videoplayback?expire=1&amp;id=2</BaseURL>", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("file:", result, StringComparison.Ordinal);
+    }
+
+    /// <summary>A base is resolved against its parent, so a root-relative one under an absolute one follows that one's host.</summary>
+    [Fact]
+    public void ARootRelativeBaseFollowsItsParentsHost()
+    {
+        List<Uri> registered = [];
+        string? result = DashManifest.Rewrite(
+            "<MPD><Period><BaseURL>https://a.example.com/x/</BaseURL><AdaptationSet><Representation><BaseURL>/y/seg.mp4</BaseURL></Representation></AdaptationSet></Period></MPD>",
+            Origin,
+            directory =>
+            {
+                registered.Add(directory);
+                return $"{registered.Count}/";
+            });
+
+        Assert.Contains("https://a.example.com/y/", registered.Select(uri => uri.AbsoluteUri));
+        Assert.Contains("<BaseURL>../3/seg.mp4</BaseURL>", result, StringComparison.Ordinal);
     }
 
     /// <summary>A relative base further down is left alone: it follows its parent, which is served by the host.</summary>
